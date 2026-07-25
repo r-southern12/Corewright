@@ -1,0 +1,137 @@
+# Corewright
+
+A browser game about mining crystal and carving it into machine cores. You dig
+an infinite procedural world for raw stone, then take it to a lapidary bench and
+shape it — cleaving, bruting, faceting, polishing — until it fits a component
+template well enough to seat in a housing. How well you carve it decides how
+much power the part makes, which decides what you can dig next.
+
+The loop is: **dig → carve → seat → better drill → dig deeper.**
+
+## Layout
+
+| File | What it is |
+|---|---|
+| `corewrightv95.html` | The entire game. CSS in `<style>` (lines 7–437), everything else in one inline `<script>` (717–6572). |
+| `assets.js` | Three base64 JPEGs — `ASSET_ENV`, `ASSET_BACKDROP`, `ASSET_ROUGH`. Must load before the game script; they're read as globals. |
+
+Single-file by design: the game runs from `file://` with no server and no build
+step. Assets are base64-inlined for the same reason. **Preserve this.** Don't
+introduce a bundler, a package manager, or an `import` statement without asking
+— it would break the way the game is actually played and distributed.
+
+The one exception is Three.js r128, pulled from `cdnjs.cloudflare.com` at line
+714. See "Running it" below — this is currently a live problem.
+
+## Running it
+
+Open `corewrightv95.html` in a browser. That's it.
+
+**Known issue: the game needs network at load.** Three.js comes from a CDN, so
+with no connection — or behind a proxy that blocks cdnjs — the page throws
+`THREE is not defined`. The 2D world and HUD still render; every 3D bench is
+dead. This is reproducible in the sandbox (cdnjs returns 403 through the agent
+proxy), which means **automated verification of any bench code is blocked until
+Three.js is vendored locally.** Vendoring `three.min.js` r128 next to
+`assets.js` fixes both the offline case and the testing case.
+
+Verifying a change in a headless browser:
+
+```js
+chromium.launch({
+  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader']
+})
+```
+
+Install Playwright into a scratch directory, not the repo — no `node_modules`
+in here.
+
+**Testing shortcut:** `Ctrl+Shift+A` anywhere jumps to admin mode — infinite
+power and potions, so you can reach a late-game bench without playing to it.
+Guarded by `adminOn` throughout.
+
+## Architecture
+
+One script, ~240 top-level functions and ~245 top-level `const`/`let` in a
+single global scope. There are no modules and no namespacing, so **any new
+top-level name is a global** — check for collisions before adding one.
+
+Navigate by the section banner comments (`// ---------- name ----------`),
+not by line number; the numbers below are for the v95 baseline and will drift.
+
+**The bench (Three.js).** A core is a voxel grid of shards. `TIERS` (1–3) sets
+voxel size and grain: finer tier, more cubes, better achievable fit. Shaping
+stations each mutate that grid:
+
+- **Cleaving block** — potion-driven, never needs power. Splits coarse cubes.
+- **Bruting wheel** — crude preform, does *not* refine grain.
+- **Faceting saw** — twin blades closing on the template centre. Two-stage per
+  shard: split, then wear. Triggered by contact, not by buttons.
+- **Polishing lamp** — click-and-hold lap, aimed like the rinse hose.
+- **Scribe / jet rinse / sandblast** — the fine tools. Jets and sandblast draw
+  from *persistent tanks*, not per-use bottles.
+- **Seating bench** — the housing is real geometry. Turn the core, drop it down
+  the approach axis, contact resolves against actual cubes.
+
+**Scoring.** The part of the code most worth reading before you touch it. A
+template is a hard gate (strict membership — the *whole* shard must sit inside),
+then packing, face contact and stud contact are scored. The comments record why
+each formula is what it is — the packing note explains a 0.44 floor that was
+removed in v19 and why. Read those before rebalancing.
+
+**The world (2D canvas).** Infinite, generated per-column on demand and cached
+by absolute x. Planets are pure data (`PLANET_TERRA`, `PLANET_FERRIC`);
+`genColumn` reads the descriptor and nothing below reaches into its internals.
+Biomes are seeded 2D value-noise regions, not fixed x-ranges. Gate tiles
+(`T_WALL`) only yield when the drill's power meets a stamped tier demand.
+
+**Readiness gate:** `<0.60` locked, `0.60–0.95` crawl, `≥0.95` full, with
+overkill scaling as `r^OVERKILL_EXP` past parity.
+
+**Lab.** A placed world structure with four wings (`LAB_WINGS`): Lapidary,
+Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
+`LAB_RECALL_DIST`.
+
+## Saves
+
+`localStorage`, key `corewright.save.v2`, `SAVE_VERSION = 10`. **A version
+mismatch deletes the save** rather than migrating it.
+
+That's fine while you're the only player and it isn't fine after that. Any
+change to the shape of what `saveGame()` writes needs a `SAVE_VERSION` bump —
+and once real players exist, a migration path instead of a wipe. The world
+itself isn't serialised: only the seed plus tiles that differ from virgin
+generation, which is why saves stay small on an infinite map.
+
+## Conventions
+
+**Comments explain why, not what.** This is the strongest convention in the
+codebase and the most valuable thing in it. Comments record the decision and the
+rejected alternative — that the template profile is data because two consumers
+would otherwise drift apart, that a hoisting order bug made `tut.on` throw, that
+red damage tinting is set outright rather than blended because both states read
+as dark red. There are no `TODO`s in 6,574 lines.
+
+When you change tuned behaviour, update the reasoning next to it. A stale
+rationale is worse than none.
+
+**Version notes live in comments.** `v19)`, `(v16:` and similar mark when and
+why a rule changed. Git history covers this going forward, but don't strip the
+existing ones — they document decisions made before the repo existed.
+
+**Style:** terse, dense, `Georgia` serif UI on a dark palette defined as CSS
+custom properties in `:root`. Direct DOM manipulation via `getElementById` — no
+framework, no reactive layer.
+
+## Working here
+
+- The baseline commit is v95 exactly as it came out of the Claude project.
+  Every change diffs against it.
+- Prefer surgical edits. This file is ~328 KB; regenerating regions of it is how
+  helpers get silently dropped and tuned constants quietly revert.
+- The filename still says `v95` and the `<title>` says `v10`. Git tracks
+  versions now, so both are vestigial — renaming to `index.html` is a reasonable
+  cleanup whenever you want it.
+- The scoring chain is pure math over plain data and could be unit-tested in
+  Node without a browser. Worth doing before the next balance pass.

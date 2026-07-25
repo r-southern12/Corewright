@@ -1,0 +1,5 @@
+# Local session permissions — machine-specific, not project config
+.claude/settings.local.json
+
+# No build step in this project; nothing here should ever be committed
+node_modules/
