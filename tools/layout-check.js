@@ -19,7 +19,7 @@ const TAG = process.argv[4] || 'before';
   const p = await ctx.newPage();
   const errs = [];
   p.on('pageerror', e => errs.push(e.message));
-  await p.goto('file:///home/user/Corewright/corewrightv95.html');
+  await p.goto('file:///home/user/Corewright/index.html');
   await p.waitForTimeout(4000);
 
   // Report anything that overflows the viewport — the concrete layout failures.

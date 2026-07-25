@@ -25,7 +25,7 @@ async function run(tier, throttle) {
   p.on('pageerror', e => errs.push(e.message));
   const cdp = await p.context().newCDPSession(p);
   if (throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
-  await p.goto('file:///home/user/Corewright/corewrightv95.html');
+  await p.goto('file:///home/user/Corewright/index.html');
   await p.waitForTimeout(4000);
 
   const out = await p.evaluate(async ({ tier }) => {

@@ -12,7 +12,7 @@ The loop is: **dig → carve → seat → better drill → dig deeper.**
 
 | File | What it is |
 |---|---|
-| `corewrightv95.html` | The entire game. CSS in `<style>` (lines 7–437), everything else in one inline `<script>` (717–6572). |
+| `index.html` | The entire game. CSS in `<style>`, everything else in one inline `<script>`. Named index.html so GitHub Pages serves it. |
 | `assets.js` | Three base64 JPEGs — `ASSET_ENV`, `ASSET_BACKDROP`, `ASSET_ROUGH`. Must load before the game script; they're read as globals. |
 | `three.min.js` | Three.js r128 (three@0.128.0), vendored. MIT, licence in `three.LICENSE`. |
 
@@ -25,7 +25,7 @@ packaged mobile app.
 
 ## Running it
 
-Open `corewrightv95.html` in a browser. That's it. No server, no connection.
+Open `index.html` in a browser. That's it. No server, no connection.
 
 Three.js used to come from `cdnjs.cloudflare.com`, which meant no network = no
 3D bench: the 2D world and HUD rendered, then every bench died on `THREE is not
