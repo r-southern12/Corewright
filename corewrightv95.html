@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover puts the page under the notch; the safe-area insets below
+     pull the controls back out. user-scalable=no because a pinch on the bench is
+     meant to turn the core, not zoom the document. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B0E1A">
 <title>Corewright v10</title>
 <style>
   :root{
@@ -13,7 +19,16 @@
   }
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;overflow:hidden;background:var(--void);color:var(--ink);
-    font-family:Georgia,'Times New Roman',serif}
+    font-family:Georgia,'Times New Roman',serif;
+    /* A drag on the bench turns the core. Without these a phone reads the same
+       drag as pull-to-refresh or a rubber-band scroll and steals it. */
+    overscroll-behavior:none;touch-action:none;
+    -webkit-user-select:none;user-select:none;
+    -webkit-text-size-adjust:100%}
+  /* Panels that legitimately scroll have to opt back in, since touch-action is
+     inherited from the body. */
+  #toolbar,#chips,#stationBar,#instrumentRail,.overlay .wrap,#tut,#labMain,#optsMain{
+    touch-action:pan-y}
   #scene,#world2d{position:fixed;inset:0}
   #benchBack{position:fixed;inset:0;z-index:-1;display:none;
     background-size:cover;background-position:center;
@@ -376,6 +391,7 @@
       radial-gradient(circle at calc(100% - 6px) 6px,#e2b967 0 2px,#55391d 3px 4px,transparent 5px),
       linear-gradient(105deg,#ddd4bf 0 3%,#8b8374 4%,#2a3040 8% 88%,#151a29 89% 100%);
     border:1px solid #8f6938;box-shadow:inset 0 0 0 2px #111725,0 5px 18px #0008}
+  #instrumentRail.hid{display:none}
   #instrumentRail::before{content:'FIELD REAGENTS';position:absolute;left:9px;top:-11px;padding:1px 6px;
     font:8px 'Courier New',monospace;letter-spacing:.12em;color:#d5b06f;background:#171c2a;border:1px solid #72512b}
   /* Width was previously supplied by the old fixed grid; in a flex row the vials
@@ -434,6 +450,165 @@
     #status{top:236px}
   }
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;animation:none !important} }
+
+  /* ============================================================
+     PHONE LANDSCAPE.
+
+     The desktop layout stacks fixed bands down the screen — header at
+     0, nav at 42, stationBar at 94, chips at 138, status at 210, then
+     a toolbar off the bottom. That is fine on a tall window and
+     impossible on a phone held sideways: seven bands into ~390px of
+     height, so they collide and bury the very thing you are carving.
+
+     Landscape has the opposite budget — plenty of width, almost no
+     height. So the bands become COLUMNS: stations down the left,
+     template/view chips down the right, and the middle left clear for
+     the core. Nothing here touches the desktop layout; it all lives
+     behind the query.
+
+     Gated on max-height rather than max-width because it is the short
+     axis that breaks, and a 700px-wide breakpoint never fires on a
+     phone in landscape (844px wide) — which is why the existing
+     max-width:700px rules were never reaching the case they were
+     written for.
+     ============================================================ */
+  @media (orientation:landscape) and (max-height:520px){
+    :root{
+      --railL:84px;                       /* station column */
+      --railR:98px;                       /* template & view column */
+      --hudH:26px;
+      --safeL:env(safe-area-inset-left,0px);
+      --safeR:env(safe-area-inset-right,0px);
+      --safeB:env(safe-area-inset-bottom,0px);
+    }
+
+    /* ---- HUD: one row, never wrapping, clear of the notch ---- */
+    header{padding:3px 8px 0;height:var(--hudH);align-items:flex-start;
+      padding-left:calc(8px + var(--safeL));padding-right:calc(42px + var(--safeR))}
+    header h1{font-size:9px;letter-spacing:.22em}
+    #meters{font-size:9px;gap:6px;flex-wrap:nowrap;white-space:nowrap}
+    .minibar{width:52px}
+    .minibar .lbl{font-size:8px}
+    .minibar .track{height:3px}
+    #optsBtn{width:26px;height:26px;font-size:13px;top:4px;
+      right:calc(6px + var(--safeR))}
+
+    /* ---- Wing tiles: a thin strip under the HUD, not a band of cards ---- */
+    #nav.wings{position:fixed;top:var(--hudH);left:calc(4px + var(--safeL));right:auto;
+      justify-content:flex-start;gap:4px;padding:2px;flex-wrap:nowrap;max-width:none}
+    .wingTile{min-width:0;padding:3px 7px;font-size:9px;flex-direction:row;gap:4px;border-radius:6px}
+    .wingTile b{font-size:9px}
+    .wingArt{font-size:10px;width:18px;height:18px;border-radius:4px}
+
+    /* ---- Stations become the LEFT column, clearing the wing strip above ---- */
+    #stationBar{top:calc(var(--hudH) + 40px);left:calc(2px + var(--safeL));right:auto;bottom:auto;
+      width:var(--railL);max-height:calc(100vh - var(--hudH) - 46px);
+      flex-direction:column;flex-wrap:nowrap;gap:3px;padding:2px;
+      overflow-y:auto;overscroll-behavior:contain;justify-content:flex-start}
+    #stationBar::before{content:'STATION';position:static;transform:none;display:block;
+      text-align:center;margin-bottom:1px;background:transparent}
+    #stationBar .chip{min-height:0;font-size:10px;padding:6px 4px;width:100%;
+      border-radius:6px;text-align:center;line-height:1.15}
+
+    /* ---- Template & view chips become the RIGHT column ---- */
+    #chips{top:calc(var(--hudH) + 20px);right:calc(2px + var(--safeR));left:auto;bottom:auto;
+      width:var(--railR);max-width:none;margin:0;
+      max-height:calc(100vh - var(--hudH) - 26px);
+      flex-direction:column;flex-wrap:nowrap;gap:3px;padding:2px;
+      overflow-y:auto;overscroll-behavior:contain;justify-content:flex-start}
+    #chips::before{content:'TEMPLATE & VIEW';position:static;transform:none;display:block;
+      text-align:center;margin-bottom:1px;background:transparent;font-size:7px}
+    #chips .chip{min-height:0;font-size:10px;padding:6px 5px;width:100%;
+      border-radius:6px;text-align:center;line-height:1.15}
+
+    /* ---- Status: two clamped lines in the clear band above the core. It used
+            to sit at top:210px — the middle of this screen, straight across the
+            crystal — and the bottom is already spoken for by the toolbar. ---- */
+    #status{top:calc(var(--hudH) + 52px);bottom:auto;
+      left:calc(var(--railL) + var(--safeL) + 8px);right:calc(var(--railR) + var(--safeR) + 100px);
+      font-size:10px;line-height:1.25;max-height:2.5em;overflow:hidden;padding:0;z-index:11}
+
+    /* ---- Toolbar: bottom of the centre column, capped and scrollable ---- */
+    #toolbar{left:calc(var(--railL) + var(--safeL));right:calc(var(--railR) + var(--safeR));
+      bottom:0;padding:3px 6px calc(16px + var(--safeB));
+      max-height:46vh;overflow-y:auto;overscroll-behavior:contain}
+    #machineName{font-size:9px;letter-spacing:.14em}
+    .row{gap:4px;margin-top:3px}
+    #toolbar .potion,#toolbar .act,#toolbar button{min-height:0;font-size:10px;padding:6px 8px}
+    /* The bench hints run to three or four lines, which shoves the actual
+       controls off the bottom of the screen. Clamp to two lines — the text is
+       read once and the buttons are needed every cut. */
+    .toolhint{font-size:9px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
+      -webkit-box-orient:vertical;overflow:hidden}
+    .sliderRow{gap:5px}
+    /* The decorative brass end-caps cost width the controls need. */
+    #toolbar::before,#toolbar::after{display:none}
+
+    /* ---- Zoom/reset: tucked under the HUD at the top of the centre column.
+            Anchoring them to the toolbar put them in the middle of the screen,
+            across the core. ---- */
+    #viewControls{top:calc(var(--hudH) + 20px);bottom:auto;right:calc(var(--railR) + var(--safeR) + 6px);
+      flex-direction:row;gap:4px}
+    .vbtn{width:28px;height:28px;font-size:13px;border-radius:6px}
+
+    #nudge{top:calc(var(--hudH) + 36px);bottom:auto;right:calc(var(--railR) + var(--safeR) + 6px);padding:4px}
+    #nudge .ntitle{font-size:8px;margin-bottom:3px}
+
+    /* ---- Instrument rail: 600px of glassware will not fit in 390px, so it
+            becomes a drawer. Hidden until you ask for it. ---- */
+    #railBtn{display:flex}
+    body.noRail #railBtn{display:none}          /* suppressed on the benches */
+    #instrumentRail{top:var(--hudH);left:calc(2px + var(--safeL));
+      width:132px;max-height:calc(100vh - var(--hudH) - 4px);
+      overflow-y:auto;overscroll-behavior:contain;transform:scale(.86);transform-origin:top left;
+      z-index:40;display:none}
+    body.railOpen #instrumentRail:not(.hid){display:grid}
+    body.railOpen #stationBar{opacity:.12;pointer-events:none}
+
+    /* ---- Expedition: joystick and toolbar share the bottom, so keep the
+            stick clear of the rails. ---- */
+    #padWrap{bottom:calc(4px + var(--safeB));left:calc(6px + var(--safeL))}
+    #joystick{width:96px;height:96px}
+    #joystick::before{height:64px;left:46px;top:14px}
+    #joystick::after{width:64px;left:14px;top:46px}
+
+    /* The overlay is already the scroller (inset:0, overflow-y:auto). Its 96px
+       of top padding exists to clear the desktop header and nav bands; here
+       that is a quarter of the screen, and capping .wrap on top of it just
+       nests a second scrollbar inside the first. Shrink the padding, let the
+       overlay scroll, leave the wrap its natural height. */
+    /* Top padding clears the wing strip — which is the navigation BETWEEN these
+       overlays, so it has to stay on top of them rather than be covered. */
+    .overlay{padding:calc(var(--hudH) + 50px) calc(10px + var(--safeR)) calc(10px + var(--safeB)) calc(10px + var(--safeL))}
+    .overlay .wrap{max-height:none;overflow:visible;padding:10px 12px;border-width:3px}
+    .overlay .wrap::before{font-size:13px;letter-spacing:4px;right:10px;top:7px}
+    .overlay h2{font-size:9px;margin:12px 0 6px;letter-spacing:.24em}
+    .card,.slot{padding:7px 10px 7px 16px;margin-bottom:5px;font-size:11px}
+    .closeX{width:34px;height:34px;font-size:16px}
+    #tut{max-width:78vw;font-size:11px;max-height:76vh;overflow-y:auto}
+    #tut .act,#tut button{min-height:0;padding:7px 11px;font-size:11px}
+  }
+
+  /* The drawer handle for the instrument rail. Desktop shows the rail
+     outright, so the button only exists in the landscape layout above. */
+  #railBtn{position:fixed;display:none;z-index:41;left:4px;top:30px;
+    width:26px;height:26px;align-items:center;justify-content:center;
+    background:rgba(20,26,44,.92);border:1px solid var(--brass-dark);border-radius:6px;
+    color:var(--brass);font-size:13px;cursor:pointer;padding:0}
+  body.railOpen #railBtn{border-color:var(--crystal);color:var(--crystal)}
+
+  /* ---- Held the wrong way. The bench needs the long axis; asking for a
+          rotation beats reflowing every screen twice. ---- */
+  #rotateGate{position:fixed;inset:0;z-index:9999;display:none;
+    flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:var(--void);color:var(--ink);text-align:center;padding:24px}
+  #rotateGate .glyph{font-size:44px;color:var(--crystal);
+    animation:rotateHint 2.4s ease-in-out infinite}
+  #rotateGate p{font-size:15px;color:var(--dim);font-style:italic;max-width:16em;line-height:1.5}
+  @keyframes rotateHint{0%,40%{transform:rotate(0)}60%,100%{transform:rotate(-90deg)}}
+  @media (orientation:portrait) and (max-width:900px){
+    #rotateGate{display:flex}
+  }
 </style>
 </head>
 <body>
@@ -453,6 +628,13 @@
       <span class="track"><span class="fill" id="drillFillBar"></span></span></span>
   </div>
 </header>
+
+<button id="railBtn" title="Reagents and ores" aria-label="Show reagents and ores">⚗</button>
+
+<div id="rotateGate">
+  <div class="glyph">▭</div>
+  <p>Corewright works on the long axis. Turn your phone sideways.</p>
+</div>
 
 <div id="instrumentRail" aria-label="Field reagent instruments">
   <div class="railLbl">FIELD REAGENTS</div>
@@ -5984,6 +6166,9 @@ function showView(name){
     name='dig';
   }
   view=name;
+  // The reagent drawer (phone landscape only) covers the station column, so a
+  // view change always closes it.
+  document.body.classList.remove('railOpen');
   const isMachine=['dig','cleave','brute','facet','polish','seatbench'].includes(name);
   const isShaping=SHAPING_STATIONS.includes(name);   // clean-core stations
   const isExped=name==='exped';
@@ -6001,7 +6186,12 @@ function showView(name){
   document.getElementById('stationBar').classList.toggle('on',isShaping);
   document.getElementById('toolbar').classList.toggle('on',isMachine);
   document.getElementById('pad').classList.toggle('on',isExped);
-  document.getElementById('instrumentRail').style.display=isMachine?'none':'grid';
+  /* A class, not an inline display: on a phone the rail is a drawer, and an
+     inline style would outrank the stylesheet rule that hides it. The bench
+     stations still suppress it outright — glassware is no use mid-cut. */
+  document.getElementById('instrumentRail').classList.toggle('hid',isMachine);
+  // Mirrored onto the body so the phone drawer handle can hide with it.
+  document.body.classList.toggle('noRail',isMachine);
   document.getElementById('expedHud').classList.toggle('on',isExped);
   document.getElementById('nudge').classList.remove('on');
   document.getElementById('alignChip').classList.remove('lit');
@@ -6073,6 +6263,12 @@ document.getElementById('finishChip').onclick=()=>{
 };
 // Options live behind the gear, top-right, reachable from anywhere.
 document.getElementById('optsBtn').onclick=()=>showView(view==='opts'?'exped':'opts');
+
+/* The reagent rail is 600px of glassware. On a phone in landscape that is more
+   than the whole screen is tall, so there it lives in a drawer — see the
+   landscape block in the stylesheet. The button is display:none elsewhere, so
+   wiring it unconditionally costs nothing on desktop. */
+document.getElementById('railBtn').onclick=()=>document.body.classList.toggle('railOpen');
 document.getElementById('x_lab').onclick=()=>showView('exped');
 document.getElementById('x_brew').onclick=()=>showView('lab');
 document.getElementById('x_forge').onclick=()=>showView('lab');

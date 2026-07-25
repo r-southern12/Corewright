@@ -98,6 +98,50 @@ overkill scaling as `r^OVERKILL_EXP` past parity.
 Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
 `LAB_RECALL_DIST`.
 
+## Phone landscape
+
+The game targets a phone held sideways. `#rotateGate` asks for a rotation in
+portrait; everything else lives behind
+`@media (orientation:landscape) and (max-height:520px)` at the end of the
+stylesheet. Desktop is untouched by all of it.
+
+The desktop layout stacks fixed bands down the screen — header 0, nav 42,
+stationBar 94, chips 138, status 210, toolbar off the bottom. That is seven
+bands into ~390px of height, so on a phone they collide and bury the core. In
+landscape those bands become **columns**: stations left, template/view chips
+right, centre clear for the crystal.
+
+Gate on `max-height`, not `max-width`. The short axis is what breaks, and the
+pre-existing `max-width:700px` rules never fired on a phone in landscape
+(844px wide) — they were written for a case they could not reach.
+
+Things worth knowing before editing this:
+
+- **The reagent rail is a drawer** on phones (600px of glassware into 390px).
+  `#railBtn` toggles `body.railOpen`. `showView` clears it. The bench stations
+  suppress the rail entirely via `.hid` on the rail and `body.noRail`.
+- **Don't set `display` inline on `#instrumentRail`.** It used to, and an
+  inline style outranks the stylesheet rule that hides the drawer. Use classes.
+- **`touch-action:none` on the body** so a drag on the bench turns the core
+  instead of scrolling the page. Scrollable panels opt back in with
+  `touch-action:pan-y` — add new ones to that list or they will not scroll.
+- **The column offsets are hand-tuned constants** (`--railL`, `--railR`,
+  `--hudH`, and `calc()` offsets against them). They are the weak point: change
+  a font size or the wing tile height and things drift into each other. Re-run
+  the layout check below after any change in this block.
+
+Layout check — reports anything the player cannot reach, at three phone sizes:
+
+```
+node shots.js 844 390 tag    # iPhone 14 landscape, the tightest common case
+node shots.js 915 412 tag    # typical Android landscape
+node shots.js 740 360 tag    # small/older
+```
+
+It ignores content inside a scrollable ancestor, since that is reachable. Zero
+is the expected result on every screen. Screenshots still need a human eye:
+the checker catches overflow, not two things sitting on top of each other.
+
 ## Rendering cost (measured, v95)
 
 `tools/perf.js` drives a core onto the faceting saw and samples the scene.
