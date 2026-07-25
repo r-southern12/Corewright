@@ -142,6 +142,30 @@ It ignores content inside a scrollable ancestor, since that is reachable. Zero
 is the expected result on every screen. Screenshots still need a human eye:
 the checker catches overflow, not two things sitting on top of each other.
 
+## Visual language
+
+The chrome is meant to read as an instrument-maker's workshop sealed inside a
+hull — brass, glass, oiled steel and lamplight, hard vacuum outside. Not web UI
+with a dark theme. The "workshop pass" block in the stylesheet defines it, and
+four rules carry most of the weight. Follow them for anything new:
+
+1. **Chamfer, never `border-radius`.** Machined metal is cut, not moulded. Two
+   opposite corners cut (`--chamfer`) reads as a milled plate; four rounded
+   corners reads as a div. Thin tracks and small chips override `--chamfer`
+   down to 3–4px or the cut eats the whole element.
+2. **Thickness.** Inset top highlight + inset bottom shadow + a hard drop edge
+   (`--thick`). One light source, top-left, everywhere.
+3. **Engraved labels** (`--engrave`): dark below, faint highlight above, so
+   type is stamped into the metal rather than printed on it.
+4. **Grain.** `#grain` is one noise layer over the whole screen. It does more
+   for "not a web page" than any amount of colour work. `#lamp` under it gives
+   the scene a warm overhead source and a vignette.
+
+`clip-path` clips overflow, so don't put it on a scrolling container — chamfer
+the children instead. And watch what you target: `#tut` is a full-width
+positioning wrapper, `#tutCard` is the actual card. Styling the wrapper paints
+a plate across the whole screen.
+
 ## How shards are drawn
 
 **A shard Mesh is a logical handle, not a picture.** This is the single most
