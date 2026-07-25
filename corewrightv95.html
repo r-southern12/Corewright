@@ -1604,6 +1604,9 @@ function clearBench(){
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
   voxels=[]; dying=[];
+  // The drawn representation outlives the shard list unless it is torn down
+  // here too — otherwise the old core hangs in the air over the new one.
+  if (typeof disposeBatches==='function'){ disposeBatches(); batchMass=-1; batchTint=-1; }
 }
 function loadCore(core){
   if (core.cells===null) generateCells(core);
@@ -1720,10 +1723,160 @@ function addVoxelMesh(c,polish){
     transparent:false}));
   m.position.set(c.px,c.py,c.pz);
   m.userData.base=base; m.userData.baseEmissive=emis; m.userData.conc=c.conc;
+  /* The shard no longer draws itself — see the instanced draw layer below.
+     It stays in the scene graph because getWorldPosition needs the parent
+     chain, and it stays raycastable because r128 does not skip invisible
+     objects when picking. */
+  m.visible=false;
   mineral.add(m);
   voxels.push({mesh:m,cell:c});
   massVersion++;
   return m;
+}
+
+/* ============================================================
+   INSTANCED DRAW LAYER
+
+   Every shard used to be its own Mesh carrying its own
+   MeshPhysicalMaterial. Measured on a Tier III core that is 819
+   materials against ONE geometry and 8 shader programs — and a unique
+   material means nothing can merge, so each shard cost a draw call:
+   373 at rest, 629 at the peak of a cut. Triangles were never the
+   problem (9.3k at that same peak); the draw calls were, and they are
+   what a phone GPU feels.
+
+   The shard Meshes are kept. Sixty-odd call sites use them as the
+   IDENTITY of a piece of crystal — held in Sets for the cut queue,
+   compared against a raycast hit, asked for world positions. Replacing
+   that identity would be a rewrite of the whole bench. So instead they
+   stop drawing and become pure logical handles, and the picture comes
+   from a handful of InstancedMeshes rebuilt from them.
+
+   Their materials stay too, and stay the source of truth for colour:
+   the tint code goes on writing to v.mesh.material exactly as before,
+   and this layer reads it back. That is why none of the tint, preview,
+   scar or polish logic needed touching.
+
+   WHAT AN INSTANCE CAN AND CANNOT CARRY. Per-instance colour is free
+   (instanceColor). Emissive is not — it lives on the shared material —
+   and crystal glow varies continuously with concentration, which is
+   what produced 362 distinct materials in the first place. So the glow
+   is QUANTISED into GLOW_STEPS bands and each band becomes one batch.
+   That is the one real compromise here. GLOW_STEPS was calibrated by
+   photographing the same core before and after and diffing the pixels:
+   at 14 bands 2.9% of pixels moved by more than 8/255 (visible banding
+   on the hot cells), at 40 it is 0.20% and the mean difference across
+   the frame is 0.15/255. The extra bands cost 9 draw calls. Cheap.
+
+   NOTE: the batch material must have vertexColors OFF. In r128 turning
+   it on makes the shader expect a per-vertex colour attribute that this
+   geometry does not have, and every shard renders black. Verified, not
+   assumed — the shader chunks read as though the opposite were true.
+   ============================================================ */
+const SHARD_UNIT_GEO=cubeGeo(1);   // cubeGeo is self-similar: cubeGeo(s) === this, scaled by s
+const GLOW_STEPS=40;
+const batches=new Map();           // batch key -> InstancedMesh
+let tintVersion=0;                 // bumped whenever shard colours change
+let batchMass=-1, batchTint=-1;
+const _bm=new THREE.Matrix4(), _bp=new THREE.Vector3(), _bq=new THREE.Quaternion(), _bs=new THREE.Vector3();
+
+const qStep=(x,n)=>Math.round(x*n)/n;
+
+/* The properties a shared material has to pin down, with the glow banded.
+   Colour is absent on purpose: it rides on the instance. */
+function batchKey(mat){
+  const e=mat.emissive;
+  return qStep(e.r,GLOW_STEPS)+','+qStep(e.g,GLOW_STEPS)+','+qStep(e.b,GLOW_STEPS)+','+
+         qStep(mat.emissiveIntensity/2,GLOW_STEPS)+','+
+         mat.roughness.toFixed(2)+','+mat.clearcoat.toFixed(2)+','+
+         mat.clearcoatRoughness.toFixed(2)+','+mat.envMapIntensity.toFixed(2);
+}
+
+function batchMaterialFrom(mat,key){
+  const p=key.split(',');
+  return new THREE.MeshPhysicalMaterial({
+    color:0xffffff,                       // white: the instance supplies the colour
+    emissive:new THREE.Color(+p[0],+p[1],+p[2]),
+    emissiveIntensity:+p[3]*2,
+    metalness:0,
+    roughness:+p[4],
+    roughnessMap:mat.roughnessMap,
+    clearcoat:+p[5],
+    clearcoatRoughness:+p[6],
+    transmission:0,
+    ior:1.7,
+    flatShading:true,
+    envMapIntensity:+p[7],
+    vertexColors:false,                   // see the note above — true renders black
+    transparent:false});
+}
+
+/* Materials are CACHED FOR THE LIFETIME OF THE PAGE and never disposed.
+   This is not a micro-optimisation. A new material means a new shader
+   program, and three compiles it on the next render — so rebuilding the
+   batches with fresh materials recompiled ~29 programs every time a shard
+   changed colour. Measured: p50 frame time went from 166ms to 583ms, four
+   times WORSE than the per-shard meshes this replaced. The keys are bounded
+   (GLOW_STEPS bands x a handful of finishes), so the cache cannot run away. */
+const batchMats=new Map();
+function batchMaterial(key,proto){
+  let m=batchMats.get(key);
+  if (!m){ m=batchMaterialFrom(proto,key); batchMats.set(key,m); }
+  return m;
+}
+
+function disposeBatches(){
+  for (const b of batches.values()){ mineral.remove(b.im); b.im.dispose(); }
+  batches.clear();     // materials deliberately survive — see above
+}
+
+/* Rebuild the drawn representation from the shard list. Runs only when the
+   shards changed (massVersion) or their colours did (tintVersion), so a
+   still bench costs nothing.
+
+   InstancedMeshes are reused too, with spare capacity, so a cut that adds a
+   few shards refills existing buffers instead of reallocating them. */
+function rebuildBatches(){
+  const groups=new Map();
+  for (const v of voxels){
+    if (v.buried) continue;                 // cullInterior already decided this
+    const k=batchKey(v.mesh.material);
+    let g=groups.get(k);
+    if (!g){ g=[]; groups.set(k,g); }
+    g.push(v);
+  }
+  for (const [k,items] of groups){
+    let b=batches.get(k);
+    if (!b || b.cap<items.length){
+      if (b){ mineral.remove(b.im); b.im.dispose(); }
+      const cap=Math.max(32,Math.ceil(items.length*1.5));
+      const im=new THREE.InstancedMesh(SHARD_UNIT_GEO,batchMaterial(k,items[0].mesh.material),cap);
+      im.frustumCulled=false;               // the core is always on screen; the test is pure cost
+      mineral.add(im);
+      b={im,cap}; batches.set(k,b);
+    }
+    const im=b.im;
+    for (let i=0;i<items.length;i++){
+      const c=items[i].cell;
+      _bp.set(c.px,c.py,c.pz); _bq.identity(); _bs.setScalar(c.size);
+      _bm.compose(_bp,_bq,_bs);
+      im.setMatrixAt(i,_bm);
+      im.setColorAt(i,items[i].mesh.material.color);
+    }
+    im.count=items.length;
+    im.instanceMatrix.needsUpdate=true;
+    if (im.instanceColor) im.instanceColor.needsUpdate=true;
+  }
+  // A batch nobody landed in this pass draws nothing, but stays allocated:
+  // the same glow band will almost certainly be wanted again next cut.
+  for (const [k,b] of batches) if (!groups.has(k)) b.im.count=0;
+}
+
+// Called once a frame, just before the render.
+function syncBatches(){
+  if (massVersion===batchMass && tintVersion===batchTint) return;
+  batchMass=massVersion; batchTint=tintVersion;
+  rebuildBatches();
 }
 
 
@@ -1793,9 +1946,11 @@ function cullInterior(){
       occ.has(key(c.px+s,c.py,c.pz))&&occ.has(key(c.px-s,c.py,c.pz))&&
       occ.has(key(c.px,c.py+s,c.pz))&&occ.has(key(c.px,c.py-s,c.pz))&&
       occ.has(key(c.px,c.py,c.pz+s))&&occ.has(key(c.px,c.py,c.pz-s));
-    v.mesh.visible=!buried;
+    /* v.buried is the whole answer now. The shard Meshes are permanently
+       invisible — the instanced layer draws, and it skips buried shards. */
     v.buried=buried;
   }
+  tintVersion++;
 }
 
 // ---------- template alignment ----------
@@ -1974,6 +2129,11 @@ function applyShake(){
 
 // flying shard debris: a dissolving voxel tumbles away instead of just fading
 function flingShard(mesh,dir){
+  /* A dying shard leaves the instanced layer behind and animates as its own
+     mesh again — scale, spin and fade are all per-shard, which is exactly what
+     an instance cannot do. There are only ever a handful in flight. */
+  mesh.visible=true;
+  mesh.material.transparent=true;
   dying.push({mesh,t:0,
     vx:(dir||0)*0.06+(Math.random()-0.5)*0.05,
     vy:0.03+Math.random()*0.05,
@@ -2354,6 +2514,7 @@ function setPreview(next,force){
     }
   }
   preview=next;
+  tintVersion++;   // colours moved: the instanced batches need rebuilding
 }
 // A bevel describes the shard's neighbourhood. Cut a neighbour away and that
 // description is stale: the facet now points into open air. So after any
@@ -3339,6 +3500,7 @@ function applyPolishLook(){
       }
     }
   }
+  tintVersion++;   // finish and colour moved: rebuild the instanced batches
 }
 /* ---------- the seating bench ---------- */
 function enterSeatBench(){
@@ -6112,6 +6274,7 @@ function newRun(){
   // bench: strip every mesh off the table
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
+  disposeBatches(); batchMass=-1; batchTint=-1;
   voxels=[]; dying=[]; fxSparks.length=0;
   mineral.rotation.set(0,0,0);
 
@@ -6758,6 +6921,7 @@ let t=0, lastNow=0;
   stepSparks(dt);
   updateWheel(dt);
   applyShake();
+  syncBatches();          // refresh the instanced shards if anything moved or changed colour
   renderer.render(scene,camera);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's

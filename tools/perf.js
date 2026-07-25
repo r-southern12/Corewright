@@ -44,7 +44,9 @@ async function run(tier, throttle) {
     const sample = () => ({
       t: +performance.now().toFixed(0),
       shards: voxels.length,
-      visible: voxels.filter(v => v.mesh && v.mesh.visible).length,
+      // Not mesh.visible: the shard meshes are permanently invisible now and
+      // the instanced layer draws from v.buried. See CLAUDE.md.
+      visible: voxels.filter(v => !v.buried).length,
       calls: renderer.info.render.calls,
       tris: renderer.info.render.triangles,
       geo: renderer.info.memory.geometries,

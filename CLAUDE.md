@@ -142,37 +142,70 @@ It ignores content inside a scrollable ancestor, since that is reachable. Zero
 is the expected result on every screen. Screenshots still need a human eye:
 the checker catches overflow, not two things sitting on top of each other.
 
-## Rendering cost (measured, v95)
+## How shards are drawn
 
-`tools/perf.js` drives a core onto the faceting saw and samples the scene.
-Numbers from the baseline, 1280×800:
+**A shard Mesh is a logical handle, not a picture.** This is the single most
+surprising thing in the file and it will bite anyone who assumes otherwise.
 
-| | shards | visible | draw calls | triangles |
-|---|---|---|---|---|
-| T1 rest | 69 | 56 | 60 | 2,498 |
-| T2 rest | 308 | 187 | 191 | 4,070 |
-| T3 rest | 819 | 369 | 373 | 6,254 |
-| T3 peak mid-cut | 1,050 | 602 | **629** | 9,326 |
+Originally every shard was its own Mesh with its own `MeshPhysicalMaterial`.
+On a Tier III core that is 819 materials against one geometry, and a unique
+material cannot merge — so each shard cost a draw call: 373 at rest, 629 mid
+cut. Triangles were never the issue (9.3k at that peak).
 
-`cullInterior` is earning its keep — it hides ~55% of T3 shards. Triangle
-counts are trivial; no phone will struggle with 9k triangles.
+Now the shard Meshes are **permanently `visible=false`** and the picture comes
+from a handful of `InstancedMesh` batches rebuilt from them:
 
-**The cost is draw calls, and the cause is one material per shard.** At T3
-there are 819 shards, 17 shared geometries, 8 shader programs — and 819
-separate `MeshPhysicalMaterial` instances, one built per shard in
-`addVoxelMesh`. Unique material means unmergeable, so every shard is its own
-draw call. Only ~493 of those 819 are even visually distinct, and the variation
-is almost all per-shard colour from `c.shade`/`c.conc`.
+| | before | after |
+|---|---|---|
+| T1 rest | 60 | 6 |
+| T2 rest | 191 | 6 |
+| T3 rest | 373 | 29 |
+| T3 peak mid-cut | 629 | 121 |
+| excavation bench, 282 shards | ~280 | 3 |
 
-That matters for mobile twice over: 600+ draw calls is past where mid-range
-Adreno/Mali parts hold 60fps, and `MeshPhysicalMaterial` is the most expensive
-shader in Three.js — clearcoat adds a second specular lobe per fragment.
+The Meshes are kept because ~60 call sites use them as the *identity* of a
+piece of crystal — held in `Set`s for the cut queue, compared against a raycast
+hit, asked for world positions. Their materials are kept too and remain the
+source of truth for colour: the tint, preview, scar and polish code all still
+write to `v.mesh.material` exactly as before, and the draw layer reads it back.
+That is why none of that logic needed touching.
 
-The fix, if mobile is the goal: bucket shards into a handful of shared
-materials and draw each geometry+material pair as one `InstancedMesh`, moving
-per-shard colour to `instanceColor`. That collapses hundreds of draw calls into
-tens without changing how anything looks. Dropping clearcoat on mobile is a
-further large fragment-shader saving. **Not yet done.**
+Rules that follow from this, all load-bearing:
+
+- **`v.buried`, not `mesh.visible`, decides whether a shard is drawn.**
+  `cullInterior` sets `v.buried`; the batcher skips those.
+- **Raycasting still works on the invisible meshes** — r128 does not skip
+  invisible objects when picking. Verified, and the design depends on it.
+- **Bump `tintVersion` if you change shard colours** outside the existing tint
+  functions, or the batches will not rebuild. Structure changes are covered by
+  `massVersion`.
+- **Never dispose the batch materials.** `batchMats` caches them for the life
+  of the page. A new material means a new shader program, and rebuilding with
+  fresh materials recompiled ~29 programs per colour change — that measured
+  583ms p50 frames, four times *worse* than the per-shard meshes it replaced.
+  The cache is bounded by `GLOW_STEPS` × a few finishes.
+- **`vertexColors` must stay `false`** on batch materials. In r128, `true`
+  makes the shader expect a per-vertex colour attribute the geometry lacks and
+  every shard renders black. The shader chunks read as though the opposite were
+  true; it was tested.
+- **Dying shards leave the batches** — `flingShard` sets `visible=true` and
+  draws them individually, because scale/spin/fade are per-shard and an
+  instance cannot carry them. Only a handful are ever in flight.
+- **Tearing down** (`clearBench`, new game) must call `disposeBatches()` and
+  reset `batchMass`/`batchTint`, or the old core hangs in the air over the new.
+
+The one compromise: emissive cannot vary per instance, and crystal glow varies
+continuously with concentration, so it is quantised into `GLOW_STEPS` bands.
+Calibrated by photographing the same core before and after and diffing pixels —
+at 14 bands 2.9% of pixels moved by >8/255 (visible banding on hot cells), at
+40 it is 0.2% with a mean frame difference of 0.15/255, costing 9 draw calls.
+
+Still available if a phone needs more: dropping `clearcoat` is a large
+fragment-shader saving, since `MeshPhysicalMaterial` is the priciest shader
+Three.js ships.
+
+`tools/perf.js` measures all of this. Read its header before trusting the
+frame times.
 
 ## Saves
 
