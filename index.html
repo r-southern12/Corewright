@@ -1857,6 +1857,25 @@ function drawPower(cost){
 // ---------- mineral meshes ----------
 const mineral=new THREE.Group(); scene.add(mineral);
 let voxels=[], dying=[], boxGeo=null;
+
+/* CARVING COMPARES IN THE CORE'S OWN SPACE, NOT THE WORLD'S.
+
+   Every carving tool asks the same question: which shards lie within r of
+   where the player touched? That was answered by calling getWorldPosition on
+   each shard — a parent-chain walk plus a matrix decompose, ~900 times per
+   tick, on the tool paths that run while you are actively rubbing the stone.
+
+   A shard's local position IS its cell coordinate, and `mineral` only ever
+   rotates (never scales — checked), so distance is preserved through the
+   transform. Converting the HIT into core space once is therefore exact, and
+   costs one matrix inversion instead of nine hundred decomposes. */
+const _hitLocal=new THREE.Vector3(), _minInv=new THREE.Matrix4();
+function hitToCore(hit){
+  mineral.updateWorldMatrix(true,false);   // the drag may have turned it this frame
+  _minInv.copy(mineral.matrixWorld).invert();
+  return _hitLocal.copy(hit).applyMatrix4(_minInv);
+}
+const cellDist=(c,p)=>Math.hypot(c.px-p.x,c.py-p.y,c.pz-p.z);
 function clearBench(){
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
@@ -2168,23 +2187,45 @@ let occGrid=null, occCell=0.14, occStamp=-1, massVersion=0;
 // The grid only changes when the mass does, so stamp it and skip rebuilds.
 // buildOcc() was being called several times per cut event —
 // once by the saw, once per stage — all on identical data.
+/* GRID KEYS ARE INTEGERS, NOT STRINGS.
+
+   This looked like a detail and was the single most expensive thing in the
+   game once you started carving. buildOcc walks a sub-cell lattice inside every
+   shard: on a Tier III core that is ~64 sub-cells x ~900 shards, so it was
+   building and hashing FIFTY-SEVEN THOUSAND strings per call — measured at
+   6.8ms here, and this machine is faster than a phone. It runs on every carve
+   tick, which is why the bench was fine at rest and fell apart the moment you
+   cut anything.
+
+   Packing the three grid coords into one integer removes every one of those
+   allocations. Coordinates live well inside +/-512 (a core's radius is under 2
+   world units and the finest grid step is 0.06), so 10 bits each fits in 30 —
+   safely inside the 32-bit range JS bitwise ops use. */
+const GK_BIAS=512;
+const gkey=(gx,gy,gz)=>(((gx+GK_BIAS)<<20)|((gy+GK_BIAS)<<10)|(gz+GK_BIAS));
+
 function buildOcc(force){
   if (!force&&occGrid&&occStamp===massVersion) return;
   occStamp=massVersion;
   occGrid=new Set();
   if (!activeCore) return;
   occCell=Math.max(0.06,TIERS[activeCore.tier].vox*0.24);
+  const st=occCell, inv=1/st;
   for (const c of activeCore.cells){
-    const r=c.size*0.5, st=occCell;
-    for (let x=c.px-r+st*0.5;x<c.px+r;x+=st)
-      for (let y=c.py-r+st*0.5;y<c.py+r;y+=st)
+    const r=c.size*0.5;
+    for (let x=c.px-r+st*0.5;x<c.px+r;x+=st){
+      const gx=Math.round(x*inv);
+      for (let y=c.py-r+st*0.5;y<c.py+r;y+=st){
+        const gy=Math.round(y*inv);
         for (let z=c.pz-r+st*0.5;z<c.pz+r;z+=st)
-          occGrid.add(Math.round(x/st)+','+Math.round(y/st)+','+Math.round(z/st));
+          occGrid.add(gkey(gx,gy,Math.round(z*inv)));
+      }
+    }
   }
 }
 function spaceFilled(x,y,z){
-  const st=occCell;
-  return occGrid.has(Math.round(x/st)+','+Math.round(y/st)+','+Math.round(z/st));
+  const inv=1/occCell;
+  return occGrid.has(gkey(Math.round(x*inv),Math.round(y*inv),Math.round(z*inv)));
 }
 // how many of the six faces open onto air
 function exposure(c){
@@ -2209,7 +2250,9 @@ function cullInterior(){
   cullStamp=massVersion;
   const g=TIERS[activeCore.tier].vox;
   const occ=new Set();
-  const key=(x,y,z)=>Math.round(x/0.02)+','+Math.round(y/0.02)+','+Math.round(z/0.02);
+  // Integer keys, same reason as buildOcc: this ran seven string builds per
+  // shard per cut, and it runs on every mass change.
+  const key=(x,y,z)=>gkey(Math.round(x*50),Math.round(y*50),Math.round(z*50));
   for (const v of voxels) occ.add(key(v.cell.px,v.cell.py,v.cell.pz));
   for (const v of voxels){
     const c=v.cell, s=c.size;
@@ -3245,9 +3288,9 @@ function scribeAt(x,y,now){
   if (!hit) return;
   const r=scribeRadius();
   const struck=[];
+  const lh=hitToCore(hit);
   for (const v of voxels){
-    v.mesh.getWorldPosition(wpos);
-    if (wpos.distanceTo(hit)<=r) struck.push(v);
+    if (cellDist(v.cell,lh)<=r) struck.push(v);
   }
   if (!struck.length) return;
   const matrix=struck.filter(v=>isMatrix(v.cell));
@@ -3452,16 +3495,16 @@ function shatterMatrixCube(v){
 
    Only one neighbour is ever taken, and only at MAT_DRAG_TIER. */
 function adjacentFragment(cell,mesh,taken){
-  mesh.getWorldPosition(wpos);
-  const from=wpos.clone();
+  // Both sides live in core space already, so compare cell coordinates
+  // directly rather than round-tripping every candidate through the world.
+  const from=cell;
   let best=null, bestD=Infinity;
   for (const v of voxels){
     const c=v.cell;
     if (!isMatrix(c)||!c.frag||taken.has(v.mesh)) continue;
     if (c.tier!==cell.tier) continue;              // stay within the same rock
     if (c.size>cell.size+1e-6) continue;           // never dislodge something larger
-    v.mesh.getWorldPosition(wpos);
-    const d=wpos.distanceTo(from);
+    const d=Math.hypot(c.px-from.px,c.py-from.py,c.pz-from.pz);
     // face-adjacent: centres about one cube apart, with a little slack for the
     // ragged shell. A diagonal touch does not count as bearing on it.
     const reach=(cell.size+c.size)*0.5*1.35;
@@ -3610,7 +3653,7 @@ function updateSandBar(){
 function sandLine(cx,cy){
   ndc.set((cx/VW)*2-1,-(cy/VH)*2+1);
   ray.setFromCamera(ndc,camera);
-  const hits=ray.intersectObjects(voxels.filter(v=>!v.buried).map(v=>v.mesh),false);
+  const hits=ray.intersectObjects(pickables(),false);
   return hits.map(h=>h.object);       // already sorted near→far by three.js
 }
 function sandAt(cx,cy,now){
@@ -3684,8 +3727,8 @@ function grindAt(x,y,now){
   const hit=castAt(x,y);
   if (!hit) return;
   const out=new Set();
-  for (const v of voxels){ v.mesh.getWorldPosition(wpos);
-    if (wpos.distanceTo(hit)<=r) out.add(v.mesh); }
+  const lh=hitToCore(hit);
+  for (const v of voxels){ if (cellDist(v.cell,lh)<=r) out.add(v.mesh); }
   if (out.size===0) return;
   if (tutBlocks(out)){ grinding=false; return; }
   if (!tut.on&&!drawPower(0.2+0.5*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
@@ -3738,11 +3781,11 @@ function polishAt(x,y,now){
   if (!hit) return;
   buildOcc();
   let polished=0;
+  const lh=hitToCore(hit);
   for (const v of voxels){
     const c=v.cell;
     if (isMatrix(c)) continue;
-    v.mesh.getWorldPosition(wpos);
-    if (wpos.distanceTo(hit)>POLISH_RADIUS) continue;
+    if (cellDist(c,lh)>POLISH_RADIUS) continue;
     const m=faceMask(c);
     if (!m) continue;
     const fresh=m & ~(c.pol||0);               // open faces not yet mirrored
@@ -4495,10 +4538,24 @@ document.getElementById('againBtn').onclick=()=>{
 // ---------- bench pointer ----------
 const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
 let dragging=false, moved=0, ppx=0, ppy=0;
+/* The pickable list was rebuilt on every cast — a filter and a map, so two
+   fresh ~450-element arrays per raycast, and a raycast happens on every touch
+   move while you are carving. It only actually changes when shards do:
+   v.buried is written inside cullInterior, which itself only runs when
+   massVersion moves, so that one stamp keeps this correct. */
+let pickList=[], pickStamp=-1;
+function pickables(){
+  if (pickStamp!==massVersion){
+    pickStamp=massVersion;
+    pickList.length=0;
+    for (const v of voxels) if (!v.buried) pickList.push(v.mesh);
+  }
+  return pickList;
+}
 function castAt(cx,cy){
   ndc.set((cx/VW)*2-1,-(cy/VH)*2+1);
   ray.setFromCamera(ndc,camera);
-  const hits=ray.intersectObjects(voxels.filter(v=>!v.buried).map(v=>v.mesh));
+  const hits=ray.intersectObjects(pickables(),false);
   return hits.length?hits[0].point:null;
 }
 const jetSelected=()=>potion&&POTIONS[potion]&&POTIONS[potion].kind==='jet';
@@ -4510,12 +4567,30 @@ function benchDown(x,y){
   if (view==='brute'&&castAt(x,y)){ grinding=true; grindAt(x,y,performance.now()); return; }
   dragging=true; moved=0; ppx=x; ppy=y;
 }
+/* CARVING IS SAMPLED ONCE A FRAME, NOT ONCE AN EVENT.
+
+   A phone delivers touchmove at the panel's rate — 90 or 120Hz on anything
+   recent, and several events can arrive between two rendered frames. Every one
+   of them used to run a full tool tick: a raycast plus a sweep over every
+   shard, most of it thrown away before anything was drawn. Now a move just
+   records where the finger is, and the tick loop acts on the latest position
+   once per frame. Turning the core still happens on the event, because that is
+   pure arithmetic and feels better ungated. */
+let carveX=0, carveY=0, carvePending=false;
+function carveTick(){
+  if (!carvePending) return;
+  carvePending=false;
+  const now=performance.now(), x=carveX, y=carveY;
+  if (polishing){ polishAt(x,y,now); return; }
+  if (sanding){ sandAt(x,y,now); return; }
+  if (jetting){ jetAt(x,y,now); return; }
+  if (scribing){ scribeAt(x,y,now); return; }
+  if (grinding){ grindAt(x,y,now); return; }
+}
 function benchMove(x,y,hover){
-  if (polishing){ polishAt(x,y,performance.now()); return; }
-  if (sanding){ sandAt(x,y,performance.now()); return; }
-  if (jetting){ jetAt(x,y,performance.now()); return; }
-  if (scribing){ scribeAt(x,y,performance.now()); return; }
-  if (grinding){ grindAt(x,y,performance.now()); return; }
+  if (polishing||sanding||jetting||scribing||grinding){
+    carveX=x; carveY=y; carvePending=true; return;
+  }
   if (dragging){
     moved+=Math.abs(x-ppx)+Math.abs(y-ppy);
     mineral.rotation.y+=(x-ppx)*0.008; mineral.rotation.x+=(y-ppy)*0.008;
@@ -7298,6 +7373,7 @@ let t=0, lastNow=0;
   stepSparks(dt);
   updateWheel(dt);
   applyShake();
+  carveTick();            // one carving sample per frame, from the latest touch position
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   renderer.render(scene,camera);
   frameStats(now);
