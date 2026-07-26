@@ -571,6 +571,15 @@
 
   /* One grain layer over the lot. Cheap, and it does more for the
      "not a web page" feeling than any amount of colour work. */
+  /* A full-screen blended layer over a canvas that repaints every frame makes
+     the compositor re-blend the whole screen every frame. That is affordable on
+     a desktop GPU and it is not on a phone, so the low tier drops the blend
+     mode and just lays the noise on at lower opacity. */
+  body.gfx-low #grain{mix-blend-mode:normal;opacity:.03}
+  #fpsHud{position:fixed;left:6px;top:50%;transform:translateY(-50%);z-index:210;
+    display:none;pointer-events:none;font-size:10px;line-height:1.45;color:var(--crystal);
+    background:rgba(6,9,18,.82);border:1px solid var(--line);padding:5px 7px;white-space:pre}
+  body.fpsOn #fpsHud{display:block}
   #grain{position:fixed;inset:0;z-index:200;pointer-events:none;opacity:.05;
     mix-blend-mode:overlay;
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.55'/></svg>")}
@@ -600,12 +609,15 @@
      ============================================================ */
   @media (orientation:landscape) and (max-height:520px){
     :root{
-      --railL:84px;                       /* station column */
-      --railR:98px;                       /* template & view column */
+      --railL:82px;                       /* stations, then template/view chips */
+      --railR:150px;                      /* bench controls — the ones you touch */
       --hudH:26px;
-      --safeL:env(safe-area-inset-left,0px);
-      --safeR:env(safe-area-inset-right,0px);
-      --safeB:env(safe-area-inset-bottom,0px);
+      /* Browsers in landscape put their own floating widgets down the right
+         edge, and some phones put the gesture bar there too. env() reports 0
+         in several Android browsers, so keep a floor under it. */
+      --safeL:max(env(safe-area-inset-left,0px),2px);
+      --safeR:max(env(safe-area-inset-right,0px),10px);
+      --safeB:max(env(safe-area-inset-bottom,0px),2px);
     }
 
     /* ---- HUD: one row, never wrapping, clear of the notch ---- */
@@ -628,56 +640,74 @@
 
     /* ---- Stations become the LEFT column, clearing the wing strip above ---- */
     #stationBar{top:calc(var(--hudH) + 40px);left:calc(2px + var(--safeL));right:auto;bottom:auto;
-      width:var(--railL);max-height:calc(100vh - var(--hudH) - 46px);
+      /* Stations and chips share this column, one anchored top and one bottom,
+         so each is capped at 40vh — together they cannot meet in the middle. */
+      width:var(--railL);max-height:40vh;
       flex-direction:column;flex-wrap:nowrap;gap:3px;padding:2px;
       overflow-y:auto;overscroll-behavior:contain;justify-content:flex-start}
     #stationBar::before{content:'STATION';position:static;transform:none;display:block;
       text-align:center;margin-bottom:1px;background:transparent}
     #stationBar .chip{min-height:0;font-size:10px;padding:6px 4px;width:100%;
-      border-radius:6px;text-align:center;line-height:1.15}
+      text-align:center;line-height:1.15;flex:0 0 auto}
 
-    /* ---- Template & view chips become the RIGHT column ---- */
-    #chips{top:calc(var(--hudH) + 20px);right:calc(2px + var(--safeR));left:auto;bottom:auto;
-      width:var(--railR);max-width:none;margin:0;
-      max-height:calc(100vh - var(--hudH) - 26px);
+    /* ---- Template & view chips sit UNDER the stations, same left column.
+            They were a right column, but the right side is now the bench
+            controls — which are what you actually touch every few seconds. ---- */
+    #chips{top:auto;bottom:calc(4px + var(--safeB));left:calc(2px + var(--safeL));right:auto;
+      width:var(--railL);max-width:none;margin:0;
+      max-height:40vh;
       flex-direction:column;flex-wrap:nowrap;gap:3px;padding:2px;
       overflow-y:auto;overscroll-behavior:contain;justify-content:flex-start}
-    #chips::before{content:'TEMPLATE & VIEW';position:static;transform:none;display:block;
-      text-align:center;margin-bottom:1px;background:transparent;font-size:7px}
+    #chips::before{display:none}      /* no room for a section label in a column this short */
+    /* flex:0 0 auto or the column squeezes a two-line label into one line's
+       worth of box and clips it — "template: Power Cell" is the usual victim. */
     #chips .chip{min-height:0;font-size:10px;padding:6px 5px;width:100%;
-      border-radius:6px;text-align:center;line-height:1.15}
+      text-align:center;line-height:1.15;flex:0 0 auto}
 
-    /* ---- Status: two clamped lines in the clear band above the core. It used
-            to sit at top:210px — the middle of this screen, straight across the
-            crystal — and the bottom is already spoken for by the toolbar. ---- */
+    /* ---- Status: two clamped lines in the clear band above the core ---- */
     #status{top:calc(var(--hudH) + 52px);bottom:auto;
-      left:calc(var(--railL) + var(--safeL) + 8px);right:calc(var(--railR) + var(--safeR) + 100px);
+      left:calc(var(--railL) + var(--safeL) + 8px);right:calc(var(--railR) + var(--safeR) + 8px);
       font-size:10px;line-height:1.25;max-height:2.5em;overflow:hidden;padding:0;z-index:11}
 
-    /* ---- Toolbar: bottom of the centre column, capped and scrollable ---- */
-    #toolbar{left:calc(var(--railL) + var(--safeL));right:calc(var(--railR) + var(--safeR));
-      bottom:0;padding:3px 6px calc(16px + var(--safeB));
-      max-height:46vh;overflow-y:auto;overscroll-behavior:contain}
-    #machineName{font-size:9px;letter-spacing:.14em}
-    .row{gap:4px;margin-top:3px}
-    #toolbar .potion,#toolbar .act,#toolbar button{min-height:0;font-size:10px;padding:6px 8px}
-    /* The bench hints run to three or four lines, which shoves the actual
-       controls off the bottom of the screen. Clamp to two lines — the text is
-       read once and the buttons are needed every cut. */
-    .toolhint{font-size:9px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;
-      -webkit-box-orient:vertical;overflow:hidden}
-    .sliderRow{gap:5px}
+    /* ---- Bench controls become the RIGHT column.
+
+           They used to run along the bottom, and on a real phone the browser
+           chrome and the gesture bar eat exactly that band — the jet buttons
+           were half off the screen and the panel kept going past the edge.
+           Nothing critical lives along the bottom edge any more. ---- */
+    #toolbar{left:auto;top:calc(var(--hudH) + 20px);   /* clear of the HUD plate and the gear */
+      right:calc(2px + var(--safeR));bottom:calc(4px + var(--safeB));
+      width:var(--railR);
+      padding:4px 5px;
+      overflow-y:auto;overscroll-behavior:contain;
+      background:
+        linear-gradient(180deg,rgba(9,12,22,.92),rgba(9,12,22,.97)),
+        radial-gradient(90% 60% at 100% 0,rgba(200,154,82,.10),transparent 60%);
+      border-top:none;border-left:1px solid rgba(200,154,82,.20);
+      box-shadow:-1px 0 0 rgba(0,0,0,.8),-12px 0 26px rgba(0,0,0,.45)}
+    #machineName{font-size:9px;letter-spacing:.1em;line-height:1.2}
+    /* A column this narrow cannot lay controls out in rows. */
+    #toolbar .row{flex-direction:column;align-items:stretch;gap:4px;margin-top:4px}
+    #toolbar .potion,#toolbar .act,#toolbar button{min-height:0;font-size:10px;padding:7px 6px;width:100%}
+    .toolhint{font-size:9px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;
+      -webkit-box-orient:vertical;overflow:hidden;padding:3px 1px}
+    /* The slider stacks over its label and readout rather than sitting beside
+       them — there is no width for a row here. */
+    #toolbar .sliderRow{flex-direction:column;align-items:stretch;gap:3px;width:auto;margin:4px 0 0}
+    #toolbar .sliderRow input[type=range]{width:100%}
+    #toolbar .sliderRow label{text-align:center}
+    #packTrack{margin:4px 0}
     /* The decorative brass end-caps cost width the controls need. */
     #toolbar::before,#toolbar::after{display:none}
 
-    /* ---- Zoom/reset: tucked under the HUD at the top of the centre column.
-            Anchoring them to the toolbar put them in the middle of the screen,
-            across the core. ---- */
-    #viewControls{top:calc(var(--hudH) + 20px);bottom:auto;right:calc(var(--railR) + var(--safeR) + 6px);
+    /* ---- Zoom/reset: bottom of the centre strip, clear of both columns ---- */
+    #viewControls{top:auto;bottom:calc(4px + var(--safeB));
+      right:calc(var(--railR) + var(--safeR) + 8px);left:auto;
       flex-direction:row;gap:4px}
-    .vbtn{width:28px;height:28px;font-size:13px;border-radius:6px}
+    .vbtn{width:30px;height:30px;font-size:14px}
 
-    #nudge{top:calc(var(--hudH) + 36px);bottom:auto;right:calc(var(--railR) + var(--safeR) + 6px);padding:4px}
+    #nudge{top:calc(var(--hudH) + 22px);bottom:auto;
+      right:calc(var(--railR) + var(--safeR) + 8px);padding:4px}
     #nudge .ntitle{font-size:8px;margin-bottom:3px}
 
     /* ---- Instrument rail: 600px of glassware will not fit in 390px, so it
@@ -742,6 +772,7 @@
 <canvas id="scene"></canvas>
 <div id="lamp"></div>
 <div id="grain"></div>
+<div id="fpsHud" class="mono"></div>
 <canvas id="world2d" style="display:none"></canvas>
 
 <header>
@@ -903,6 +934,10 @@
       <div class="mono" id="builtCount">0</div></div>
     <div class="card"><div class="info">Death rule<div class="sub">hardcore drops your haul at the corpse</div></div>
       <button id="modeBtn">hardcore</button></div>
+    <div class="card"><div class="info">Graphics<div class="sub" id="gfxSub">lower this first if the bench stutters</div></div>
+      <button id="gfxBtn">low</button></div>
+    <div class="card"><div class="info">Frame readout<div class="sub">fps, draw calls and shard count, top-left</div></div>
+      <button id="fpsBtn">off</button></div>
     <div class="card"><div class="info">Developer readout<div class="sub">live tuning values, top-left</div></div>
       <button id="devBtn">off</button></div>
     <div class="card"><div class="info">Admin mode<div class="sub">infinite power &amp; potions, spawn cores, skip the grind</div></div>
@@ -1068,8 +1103,36 @@ function hash2(x,y){ let h=(x*374761393+y*668265263)|0; h=(h^(h>>>13))*127412617
 
 // ---------- 3D bench ----------
 const canvas=document.getElementById('scene');
-const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.75));
+/* ============================================================
+   QUALITY TIER
+
+   Draw calls stopped being the bottleneck once shards were batched.
+   What costs now is FRAGMENTS: MeshPhysicalMaterial is the most
+   expensive shader three.js ships — clearcoat alone adds a second
+   specular lobe on every pixel — and it was being asked to fill
+   1.75x the screen with MSAA on top.
+
+   On a 2340x1080 phone that is ~1.5 million shaded pixels a frame
+   before anything else happens. Desktop GPUs shrug; a mid-range
+   Adreno does not, and the result is exactly the "very laggy" a
+   player reports while the draw-call count looks healthy.
+
+   So the phone gets its own tier: no MSAA, a pixel ratio near 1,
+   and no clearcoat. It is overridable from the options screen
+   (`gfxTier`) because the right setting depends on the handset and
+   guessing from the user agent is worse than letting them pick. */
+const COARSE=window.matchMedia&&window.matchMedia('(pointer:coarse)').matches;
+let gfxTier=localStorage.getItem('corewright.gfx')||(COARSE?'low':'high');
+const GFX={
+  low:   {ratio:1.0,  msaa:false, clearcoat:false, shadowFog:true},
+  medium:{ratio:1.35, msaa:false, clearcoat:true,  shadowFog:true},
+  high:  {ratio:1.75, msaa:true,  clearcoat:true,  shadowFog:true}
+};
+function gfx(){ return GFX[gfxTier]||GFX.high; }
+
+const renderer=new THREE.WebGLRenderer({canvas,antialias:gfx().msaa,alpha:true,
+  powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,gfx().ratio));
 renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure=0.92;
@@ -1922,21 +1985,25 @@ function batchKey(mat){
 
 function batchMaterialFrom(mat,key){
   const p=key.split(',');
-  return new THREE.MeshPhysicalMaterial({
+  /* Clearcoat is the single most expensive thing on this shader and it is the
+     first thing to go on a phone. MeshStandardMaterial is the same lighting
+     model without the second specular lobe, so the crystal keeps its colour
+     and glow and loses only the wet sheen. */
+  const wet=gfx().clearcoat;
+  const Mat=wet?THREE.MeshPhysicalMaterial:THREE.MeshStandardMaterial;
+  const def={
     color:0xffffff,                       // white: the instance supplies the colour
     emissive:new THREE.Color(+p[0],+p[1],+p[2]),
     emissiveIntensity:+p[3]*2,
     metalness:0,
     roughness:+p[4],
     roughnessMap:mat.roughnessMap,
-    clearcoat:+p[5],
-    clearcoatRoughness:+p[6],
-    transmission:0,
-    ior:1.7,
     flatShading:true,
     envMapIntensity:+p[7],
     vertexColors:false,                   // see the note above — true renders black
-    transparent:false});
+    transparent:false};
+  if (wet){ def.clearcoat=+p[5]; def.clearcoatRoughness=+p[6]; def.transmission=0; def.ior=1.7; }
+  return new Mat(def);
 }
 
 /* Materials are CACHED FOR THE LIFETIME OF THE PAGE and never disposed.
@@ -6380,6 +6447,67 @@ document.getElementById('devBtn').onclick=()=>{
   document.getElementById('devBtn').textContent=devOn?'on':'off';
   document.getElementById('dev').classList.toggle('on',devOn);
 };
+
+/* A live frame readout, so "it's laggy" can become a number. Reports the
+   worst frame in each window as well as the average — a 60fps average with
+   200ms spikes feels far worse than a steady 40, and only the worst number
+   tells them apart. */
+let _fpsN=0, _fpsT=0, _fpsWorst=0, _fpsLast=0;
+function frameStats(now){
+  if (!document.body.classList.contains('fpsOn')) return;
+  const dt=_fpsLast?now-_fpsLast:16; _fpsLast=now;
+  _fpsN++; _fpsT+=dt; if (dt>_fpsWorst) _fpsWorst=dt;
+  if (_fpsT>=500){
+    const r=renderer.info.render;
+    document.getElementById('fpsHud').textContent=
+      Math.round(1000/(_fpsT/_fpsN))+' fps  ('+Math.round(_fpsT/_fpsN)+'ms)\n'+
+      'worst '+Math.round(_fpsWorst)+'ms\n'+
+      'calls '+r.calls+'  tri '+(r.triangles/1000).toFixed(1)+'k\n'+
+      'shards '+voxels.length+'  batch '+batches.size+'\n'+
+      gfxTier+'  dpr '+renderer.getPixelRatio().toFixed(2)+'  '+Math.round(VW)+'x'+Math.round(VH);
+    _fpsN=0; _fpsT=0; _fpsWorst=0;
+  }
+}
+
+/* ---------- graphics tier ----------
+   Pixel ratio and clearcoat can both change live. MSAA cannot — it is fixed
+   when the WebGL context is created — so a tier change that crosses that line
+   says so rather than pretending it took full effect. */
+/* `initial` skips the resize. This runs during script execution, and VW/vpSize
+   are declared with `let` further down the file — calling resize() here puts
+   them in temporal dead zone and kills the rest of the script. Startup does its
+   own resize anyway; only a live tier change needs one. */
+function applyGfx(initial){
+  const g=gfx();
+  document.body.classList.remove('gfx-low','gfx-medium','gfx-high');
+  document.body.classList.add('gfx-'+gfxTier);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,g.ratio));
+  if (!initial) resize();
+  // The shard materials bake the clearcoat decision, so they have to go.
+  disposeBatches();
+  for (const m of batchMats.values()) m.dispose();
+  batchMats.clear();
+  batchMass=-1; batchTint=-1;
+  const b=document.getElementById('gfxBtn');
+  if (b) b.textContent=gfxTier;
+  const sub=document.getElementById('gfxSub');
+  if (sub) sub.textContent=
+    gfxTier==='high'   ? 'full detail — desktop' :
+    gfxTier==='medium' ? 'clearcoat on, 1.35x pixels' :
+                         'no clearcoat, 1x pixels — best on a phone';
+}
+document.getElementById('gfxBtn').onclick=()=>{
+  gfxTier=gfxTier==='low'?'medium':gfxTier==='medium'?'high':'low';
+  try{ localStorage.setItem('corewright.gfx',gfxTier); }catch(e){}
+  applyGfx();
+  say('Graphics: '+gfxTier+(gfxTier==='high'?' — reload for antialiasing':''));
+};
+document.getElementById('fpsBtn').onclick=()=>{
+  const on=!document.body.classList.contains('fpsOn');
+  document.body.classList.toggle('fpsOn',on);
+  document.getElementById('fpsBtn').textContent=on?'on':'off';
+};
+applyGfx(true);
 // NEW RUN — a complete in-place restart. No reload, no reliance on the
 // browser or the sandbox: every piece of state is rebuilt by hand, so this
 // works identically in a preview iframe, a file:// tab, or a real host.
@@ -7051,6 +7179,7 @@ let t=0, lastNow=0;
   applyShake();
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   renderer.render(scene,camera);
+  frameStats(now);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's
     // what freezes movement. Log it and keep the next frame coming.
