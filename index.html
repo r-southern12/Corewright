@@ -570,6 +570,20 @@
     mix-blend-mode:overlay;
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.55'/></svg>")}
 
+  /* The hand-forge control strip — a bottom band like the bench toolbar. */
+  #forgeBench{position:fixed;left:0;right:0;bottom:0;z-index:8;display:none;text-align:center;
+    padding:8px 12px 14px;
+    background:linear-gradient(transparent,rgba(9,12,22,.90) 20%,rgba(9,12,22,.97) 45%),
+      radial-gradient(120% 90% at 50% 120%,rgba(200,154,82,.10),transparent 60%);
+    border-top:1px solid rgba(200,154,82,.22)}
+  #forgeBench.on{display:block}
+  #fbTitle{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);text-shadow:var(--engrave)}
+  #fbHint{max-width:640px;margin:2px auto 4px}
+  #fbStat{color:var(--crystal);font-size:13px;font-style:normal}
+  #fbBar{display:inline-block;width:180px;height:8px;border:1px solid var(--line);
+    background:#0d1122;vertical-align:middle;margin:0 10px;overflow:hidden}
+  #fbFill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--amber),var(--crystal));transition:width .12s}
+
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;animation:none !important} }
 
 </style>
@@ -770,6 +784,17 @@
   </div>
 </div>
 
+<div id="forgeBench">
+  <div id="fbTitle">Hand Forge</div>
+  <div id="fbHint" class="toolhint"></div>
+  <div class="row">
+    <span id="fbStat" class="mono"></span>
+    <span id="fbBar"><span id="fbFill"></span></span>
+    <button class="act" id="fbFinish">Finish</button>
+    <button id="fbLeave">✕ leave</button>
+  </div>
+</div>
+
 <div id="forge" class="overlay">
   <button class="closeX" id="x_forge" aria-label="Close forge">✕</button>
   <div class="wrap">
@@ -778,6 +803,7 @@
     <div class="card t2"><div class="info">Iron ore<div class="sub">banded through the grey stone</div></div><div class="mono" id="m_iron">0</div></div>
     <div class="card t2"><div class="info">Tin ore<div class="sub">soft, runs with iron; makes bronze</div></div><div class="mono" id="m_tin">0</div></div>
     <div class="card t3"><div class="info">Voidsteel ore<div class="sub">deep strata only</div></div><div class="mono" id="m_vst">0</div></div>
+    <button class="act" id="handForgeBtn" style="width:100%;margin:4px 0 10px">⚒ Hand-forge a copper frame — 10 copper</button>
     <h2>Forge machines <span class="mono" id="forgeBonusNote"></span></h2>
     <div class="sub" style="margin:2px 0 4px">Insert core (consumed on forge):</div>
     <div id="forgeInsertList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
@@ -4360,6 +4386,7 @@ function castAt(cx,cy){
 }
 const jetSelected=()=>potion&&POTIONS[potion]&&POTIONS[potion].kind==='jet';
 function benchDown(x,y){
+  if (view==='forgeb'){ forgeDown(x,y); return; }
   if (view==='polish'&&castAt(x,y)){ polishing=true; polishAt(x,y,performance.now()); return; }
   if (sandSelected()&&castAt(x,y)){ sanding=true; sandAt(x,y,performance.now()); return; }
   if (jetSelected()&&castAt(x,y)){ jetting=true; jetAt(x,y,performance.now()); return; }
@@ -4388,6 +4415,7 @@ function carveTick(){
   if (grinding){ grindAt(x,y,now); return; }
 }
 function benchMove(x,y,hover){
+  if (view==='forgeb'){ forgeMove(x,y); return; }
   if (polishing||sanding||jetting||scribing||grinding){
     carveX=x; carveY=y; carvePending=true; return;
   }
@@ -4402,6 +4430,7 @@ function benchMove(x,y,hover){
   }
 }
 function benchUp(x,y){
+  if (view==='forgeb'){ forgeUp(x,y); return; }
   if (polishing){ polishing=false; return; }
   if (sanding){ sanding=false; return; }
   if (jetting){ jetting=false; return; }
@@ -5914,6 +5943,239 @@ const SEED_UP={
   [T_COPPER]:T_IRON, [T_IRON]:T_VST, [T_TIN]:T_IRON,
   [T_NODE1]:T_NODE2, [T_NODE2]:T_NODE3
 };
+/* ============================================================
+   THE FORGE BENCH — additive, the inverse of the lapidary.
+
+   Carving hands you a full core and you REMOVE to reveal a shape.
+   Forging hands you nothing: you PLACE ten copper chunks where you
+   judge the mould needs mass, the press heats the lot until it flows,
+   then you WHACK the glowing blocks down into the template until it is
+   filled. Placement is most of the score — lay the ten so the mould is
+   nearly full before the first blow and only tap the corners home; pile
+   them and you hammer material across the mould one flowed cell at a
+   time, spilling flash off the edges.
+
+   Isolated from the carving bench on purpose: its own group, its own
+   instanced mesh, its own cell set. Shares only the scene, camera and
+   lighting. Nothing here touches `voxels`, `activeCore` or the shard
+   batches. Three crafts, three physics — this one is deformation.
+
+   The mould is a plate: an F_FN x F_FN footprint, F_MH cells tall. Ten
+   2x2x2 copper chunks are 80 cells of material against 72 mould cells,
+   so a flawless forge still leaves ~8 cells of flash — you can't hit
+   100%, which is what keeps the top of the skill curve worth chasing.
+   ============================================================ */
+const FVOX=0.42;                       // chunk/cell edge, world units
+const F_FN=6, F_MH=2, F_CHUNKS=10;     // footprint, mould height, chunks per part
+const fWX=i=>(i-(F_FN-1)/2)*FVOX;
+const fWY=i=>(i-(F_MH-1)/2)*FVOX;      // linear in i, so piles above the mould keep going up
+const fWZ=i=>(i-(F_FN-1)/2)*FVOX;
+const fKey=(ix,iy,iz)=>(((ix+16)<<12)|((iy+16)<<6)|(iz+16));   // small ints, unique keys
+const inMould=(ix,iy,iz)=>ix>=0&&ix<F_FN&&iz>=0&&iz<F_FN&&iy>=0&&iy<F_MH;
+const F_MOULD_TOTAL=F_FN*F_FN*F_MH;
+
+const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=false;
+let forgeMap=new Map();                // fKey -> {ix,iy,iz}
+let forgeCellList=[];                  // instanceId -> cell, rebuilt each sync
+let forgePhase='place';                // 'place' | 'forge'
+let forgeChunksLeft=F_CHUNKS;
+let forgeActive=false, forgePart=null;
+
+const forgeGeo=new THREE.BoxGeometry(FVOX*0.94,FVOX*0.94,FVOX*0.94);
+const F_COPPER=new THREE.Color(0xc9772f), F_FLASH=new THREE.Color(0x2e2a24);
+// Metalness kept moderate so cold copper still catches the lamp; a faint
+// emissive floor (set in enterForge) keeps placed chunks legible before the
+// press flares. Alchemical copper is allowed to glow a little cold.
+const forgeMat=new THREE.MeshStandardMaterial({color:0xffffff,metalness:0.35,roughness:0.55,
+  emissive:new THREE.Color(0xff6a24),emissiveIntensity:0.35,vertexColors:false});
+let forgeMesh=null;
+// anvil face under the mould, for grounding (NB: `forgeAnvil` is already the
+// seated anvil-core global — this mesh is `forgeAnvilPlate`)
+const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(F_FN*FVOX+0.6,0.34,F_FN*FVOX+0.6),
+  new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.65,roughness:0.5}));
+forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.17;
+forgeGroup.add(forgeAnvilPlate);
+// the mould ghost — same visual language as the carving template
+const _mouldGeo=new THREE.BoxGeometry(F_FN*FVOX,F_MH*FVOX,F_FN*FVOX);
+const forgeGhost=new THREE.Mesh(_mouldGeo,ghostMat);
+const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mouldGeo),ghostEdge);
+forgeGhost.renderOrder=10; forgeGhostWire.renderOrder=11;
+forgeGroup.add(forgeGhost); forgeGroup.add(forgeGhostWire);
+// invisible placement plane, a child so it turns with the mass
+const forgePlane=new THREE.Mesh(new THREE.PlaneGeometry(60,60),
+  new THREE.MeshBasicMaterial({visible:false}));
+forgePlane.rotation.x=-Math.PI/2;
+forgeGroup.add(forgePlane);
+
+const _fm=new THREE.Matrix4(), _fp=new THREE.Vector3();
+function syncForgeMesh(){
+  const n=forgeMap.size;
+  if (!forgeMesh || forgeMesh.instanceMatrix.count<n){
+    if (forgeMesh){ forgeGroup.remove(forgeMesh); forgeMesh.dispose(); }
+    forgeMesh=new THREE.InstancedMesh(forgeGeo,forgeMat,Math.max(96,Math.ceil(n*1.4)));
+    forgeMesh.frustumCulled=false;
+    forgeGroup.add(forgeMesh);
+  }
+  forgeCellList.length=0;
+  let i=0;
+  for (const c of forgeMap.values()){
+    _fp.set(fWX(c.ix),fWY(c.iy),fWZ(c.iz));
+    _fm.makeTranslation(_fp.x,_fp.y,_fp.z);
+    forgeMesh.setMatrixAt(i,_fm);
+    forgeMesh.setColorAt(i,inMould(c.ix,c.iy,c.iz)?F_COPPER:F_FLASH);
+    forgeCellList[i]=c; i++;
+  }
+  forgeMesh.count=n;
+  forgeMesh.instanceMatrix.needsUpdate=true;
+  if (forgeMesh.instanceColor) forgeMesh.instanceColor.needsUpdate=true;
+}
+function addForgeCell(ix,iy,iz){ forgeMap.set(fKey(ix,iy,iz),{ix,iy,iz}); }
+function colTop(ix,iz){ let t=-1; for (let iy=0;iy<48;iy++) if (forgeMap.has(fKey(ix,iy,iz))) t=iy; return t; }
+
+// aim a ray and return the local x,z hit on the placement plane
+function forgeAim(sx,sy){
+  ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
+  const h=ray.intersectObject(forgePlane,false);
+  if (!h.length) return null;
+  const lp=forgeGroup.worldToLocal(h[0].point.clone());
+  return {ix:Math.round(lp.x/FVOX+(F_FN-1)/2), iz:Math.round(lp.z/FVOX+(F_FN-1)/2)};
+}
+
+// place a 2x2x2 chunk with its origin at (ix,iz), resting on whatever's below.
+// A little overhang past the footprint is allowed and becomes flash — the cost
+// of sloppy placement. Split from the aim so it can be driven deterministically.
+function placeAtGrid(ix,iz){
+  ix=Math.max(-1,Math.min(F_FN-1,ix)); iz=Math.max(-1,Math.min(F_FN-1,iz));
+  let base=0;
+  for (let dx=0;dx<2;dx++) for (let dz=0;dz<2;dz++) base=Math.max(base,colTop(ix+dx,iz+dz)+1);
+  for (let dx=0;dx<2;dx++) for (let dy=0;dy<2;dy++) for (let dz=0;dz<2;dz++)
+    addForgeCell(ix+dx,base+dy,iz+dz);
+}
+function placeChunk(sx,sy){
+  if (forgePhase!=='place'||forgeChunksLeft<=0) return;
+  const a=forgeAim(sx,sy); if (!a) return;
+  placeAtGrid(a.ix,a.iz);
+  forgeChunksLeft--;
+  if (forgeChunksLeft<=0) heatForge();
+  syncForgeMesh(); updateForgeHud();
+  pulse(document.getElementById('forgeBench'),'fxFlash');
+}
+
+function heatForge(){
+  forgePhase='forge';
+  forgeMat.emissiveIntensity=1.15;      // the press flares; the whole mass goes plastic
+  say('The press flares — the copper flows. Whack it down into the mould.','good');
+  updateForgeHud();
+}
+
+// nearest empty MOULD cell to a struck cell — where flowed material wants to go
+function nearestEmptyMould(fromX,fromY,fromZ){
+  let best=null, bd=1e9;
+  for (let ix=0;ix<F_FN;ix++) for (let iy=0;iy<F_MH;iy++) for (let iz=0;iz<F_FN;iz++){
+    if (forgeMap.has(fKey(ix,iy,iz))) continue;
+    const d=(ix-fromX)**2+(iy-fromY)**2+(iz-fromZ)**2;
+    if (d<bd){ bd=d; best={ix,iy,iz}; }
+  }
+  return best;
+}
+// One blow on a column: lift the top PROUD block (anything standing above the
+// mould) and let it flow to the nearest empty mould cell. If the top is already
+// down inside the mould there's nothing proud to move, so the blow does nothing
+// — you can't accidentally un-fill the plate, which is what makes it forgiving.
+// Split from the raycast so the flow can be verified deterministically.
+function whackColumn(ix,iz){
+  const topY=colTop(ix,iz);
+  if (topY<F_MH) return false;                        // nothing proud here
+  forgeMap.delete(fKey(ix,topY,iz));
+  const dest=nearestEmptyMould(ix,topY,iz);
+  if (dest) addForgeCell(dest.ix,dest.iy,dest.iz);    // flows into an empty mould cell
+  else addForgeCell(ix<F_FN/2?-1:F_FN,0,iz);          // mould full: squeezes out as flash
+  return true;
+}
+function whackForge(sx,sy){
+  if (forgePhase!=='forge') return;
+  // prefer the actual struck block; fall back to the column under the aim
+  ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
+  let ix,iz;
+  const hit=forgeMesh?ray.intersectObject(forgeMesh,false):[];
+  if (hit.length){ const c=forgeCellList[hit[0].instanceId]; ix=c.ix; iz=c.iz; }
+  else { const a=forgeAim(sx,sy); if (!a) return; ix=a.ix; iz=a.iz; }
+  if (whackColumn(ix,iz)){ if (typeof addShake==='function') addShake(0.03); syncForgeMesh(); updateForgeHud(); }
+}
+
+function forgeFillFlash(){
+  let inm=0, fl=0;
+  for (const c of forgeMap.values()){ if (inMould(c.ix,c.iy,c.iz)) inm++; else fl++; }
+  return {inm,fl,total:inm+fl};
+}
+function forgeQualityNow(){
+  const {inm,fl,total}=forgeFillFlash();
+  const fill=inm/F_MOULD_TOTAL, flashFrac=total?fl/total:0;
+  return Math.max(0,Math.min(0.99, fill*(1-0.6*flashFrac)));
+}
+
+function enterForge(){
+  if (!forgePart) forgePart=FORGE_TEMPLATES[0];
+  forgeMap.clear(); forgeCellList.length=0;
+  forgeChunksLeft=F_CHUNKS; forgePhase='place';
+  forgeMat.emissiveIntensity=0.35;      // cold copper, faintly lit so placement stays legible
+  forgeGroup.rotation.set(0,0,0);
+  forgeActive=true;
+  syncForgeMesh(); updateForgeHud();
+}
+function leaveForge(){ forgeActive=false; }
+
+function finishForge(){
+  const q=forgeQualityNow(), m=forgePart;
+  const cost=m.cost||10;
+  if ((metals[m.metal]||0)<cost){ say('Not enough '+m.metal+' to finish.','warn'); return; }
+  metals[m.metal]-=cost;
+  const made={name:m.label,tier:m.tier,q};
+  const cur=drill[m.part];
+  if (partScore(made)>partScore(cur)){
+    drill[m.part]=made;
+    floatText('★ '+Math.round(q*100)+'%','var(--amber)');
+    say(`${m.label} forged at ${Math.round(q*100)}% — fitted to the drill.`,'good');
+  } else {
+    dust+=Math.floor(20*m.tier*q);
+    floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
+    say(`Forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
+  }
+  updateMeters();
+  showView('forge');
+}
+
+function updateForgeHud(){
+  const hint=document.getElementById('fbHint'), stat=document.getElementById('fbStat'),
+        fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
+  if (!hint) return;
+  if (forgePhase==='place'){
+    hint.textContent='Drop copper where the plate needs metal — spread it across the footprint, keep the chunks touching.';
+    stat.textContent=forgeChunksLeft+' / '+F_CHUNKS+' chunks left';
+    fill.style.width='0%'; fin.disabled=true;
+  } else {
+    const q=forgeQualityNow();
+    hint.textContent='Whack the glowing metal down into the mould. Fill the corners; stop before it flashes off the edge.';
+    stat.textContent=Math.round(q*100)+'% forged';
+    fill.style.width=Math.round(q*100)+'%'; fin.disabled=false;
+  }
+}
+
+// ---- forge pointer: tap to place/whack, drag to turn the mass ----
+let fDrag=false, fMoved=0, fpx=0, fpy=0;
+function forgeDown(x,y){ fDrag=true; fMoved=0; fpx=x; fpy=y; }
+function forgeMove(x,y){
+  if (!fDrag) return;
+  const dx=x-fpx, dy=y-fpy; fMoved+=Math.abs(dx)+Math.abs(dy);
+  forgeGroup.rotation.y+=dx*0.008; forgeGroup.rotation.x+=dy*0.008;
+  fpx=x; fpy=y;
+}
+function forgeUp(x,y){
+  if (!fDrag) return; fDrag=false;
+  if (fMoved>6) return;                 // that was a turn, not a tap
+  if (forgePhase==='place') placeChunk(x,y); else whackForge(x,y);
+}
+
 function renderBrew(){
   const shelf=document.getElementById('reagentShelf');
   shelf.innerHTML='';
@@ -6598,7 +6860,13 @@ function showView(name){
   gizmo.visible=false;
   world2d.style.display=isExped?'':'none';
   canvas.style.display=isExped?'none':'';
-  document.getElementById('benchBack').classList.toggle('on',isMachine);
+  // The hand-forge is a 3D bench like the shaping stations, but its own subsystem.
+  const inForge=name==='forgeb';
+  document.getElementById('forgeBench').classList.toggle('on',inForge);
+  mineral.visible=!inForge;                 // hide the carving core while forging
+  forgeGroup.visible=inForge;
+  if (inForge){ if (!forgeActive) enterForge(); } else if (forgeActive) leaveForge();
+  document.getElementById('benchBack').classList.toggle('on',isMachine||inForge);
   renderWingNav();          // wing tiles replace the old expedition/lab toggle
   // The excavation bench is dirt-and-core only: no template, no align, no ghost,
   // no seat. The shaping stations get the full alignment/template chip set.
@@ -6666,6 +6934,16 @@ document.getElementById('optsBtn').onclick=()=>showView(view==='opts'?'exped':'o
 document.getElementById('x_lab').onclick=()=>showView('exped');
 document.getElementById('x_brew').onclick=()=>showView('lab');
 document.getElementById('x_forge').onclick=()=>showView('lab');
+// The hand-forge: enter the 3D press to shape a copper frame by placing and
+// whacking, instead of the instant stamp. Commits 10 copper only on Finish.
+document.getElementById('handForgeBtn').onclick=()=>{
+  if ((metals.copper||0)<10&&!adminOn){ say('You need 10 copper to hand-forge a frame.','warn'); return; }
+  forgePart=FORGE_TEMPLATES.find(m=>m.id==='copperFrame')||FORGE_TEMPLATES[0];
+  forgeActive=false;                 // force a fresh enter
+  showView('forgeb');
+};
+document.getElementById('fbFinish').onclick=finishForge;
+document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
 // ---------- shared ui glue ----------

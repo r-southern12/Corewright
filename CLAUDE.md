@@ -103,6 +103,26 @@ through (once or twice) *before* selecting victims, so a higher grade wastes
 far less crystal to overshoot. `GRAIN_LEVELS`/`FINEST_GRAIN` moved above the
 plane code because it depends on them.
 
+**The forge bench (hand-forge, MVP).** The inverse of the lapidary: carving
+removes to reveal, forging *adds then deforms* to fill. You place ten copper
+chunks (2×2×2 cells each) into a mould ghost, the press auto-heats the mass so
+it glows, then you whack proud blocks down and they flow into the nearest empty
+mould cell. Quality = mould fill × (1 − flash penalty), continuous. Good
+placement scores ~94% before the first blow; a sloppy pile scores ~5% but is
+recoverable to ~99% by whacking *far* more — slow, forgiving, mastery in the
+margins, exactly as specced.
+
+It is a **self-contained subsystem** (`forgeGroup`, `forgeMap`, its own
+`InstancedMesh`), sharing only the scene, camera and lighting. It does **not**
+touch `voxels`, `activeCore` or the shard batches — three crafts, three physics.
+Entered from the Forge wing's hand-forge button as view `'forgeb'`; `showView`
+hides `mineral` and shows `forgeGroup`. The flow logic lives in `placeAtGrid`
+and `whackColumn`, split out from the raycast so it's deterministically testable
+(`tools/` has no harness yet; `scratchpad/forgelogic.js` covers it). The mould
+is a plate today; other parts want their own `inMould` shapes. Fold/quench were
+deliberately cut from the MVP. NB: `forgeAnvil` was already a global (the seated
+anvil-core) — the forge's anvil mesh is `forgeAnvilPlate`.
+
 **Scoring.** The part of the code most worth reading before you touch it. A
 template is a hard gate (strict membership — the *whole* shard must sit inside),
 then packing, face contact and stud contact are scored. The comments record why
