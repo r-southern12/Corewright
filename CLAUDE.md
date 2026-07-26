@@ -79,6 +79,24 @@ stations each mutate that grid:
 - **Seating bench** — the housing is real geometry. Turn the core, drop it down
   the approach axis, contact resolves against actual cubes.
 
+**Core hues and affinity (v96).** Every core is assigned one of six `CORE_HUES`
+deterministically from its seed, and tier II+ may carry a secondary hue that
+bleeds toward the hot regions. The hue drives the shard colour — there is no
+fixed teal any more. `MACHINE_AFFINITY` maps each machine to one favoured hue:
+matching gives `+AFFINITY_BONUS`, clashing costs `AFFINITY_PENALTY`, and a
+matching *secondary* hue softens a clash to neutral. The mapping is fixed and
+shown in the benches on purpose, so the player learns it once.
+
+This rides through the instanced draw layer untouched, because the batcher
+reads colour back off `v.mesh.material` — see "How shards are drawn". Verified
+across all six hues: 6–21 draw calls, no batch explosion.
+
+**Graded solvents (v96).** Level/Standing come in I/II/III. The grade sets a
+`grind` level: `planeSplitBoundary` splits any cube the cut plane passes
+through (once or twice) *before* selecting victims, so a higher grade wastes
+far less crystal to overshoot. `GRAIN_LEVELS`/`FINEST_GRAIN` moved above the
+plane code because it depends on them.
+
 **Scoring.** The part of the code most worth reading before you touch it. A
 template is a hard gate (strict membership — the *whole* shard must sit inside),
 then packing, face contact and stud contact are scored. The comments record why
@@ -108,8 +126,14 @@ stylesheet. Desktop is untouched by all of it.
 The desktop layout stacks fixed bands down the screen — header 0, nav 42,
 stationBar 94, chips 138, status 210, toolbar off the bottom. That is seven
 bands into ~390px of height, so on a phone they collide and bury the core. In
-landscape those bands become **columns**: stations left, template/view chips
-right, centre clear for the crystal.
+landscape those bands become **columns**: stations and template/view chips down
+the left, the bench controls down the right, centre clear for the crystal.
+
+**Nothing critical goes near the bottom edge.** A real device showed why — the
+browser's own chrome and the gesture bar sit exactly there, and the bench
+toolbar was half off the screen. Landscape browsers also float widgets down the
+right edge, and several Android browsers report `env(safe-area-inset-*)` as 0,
+so `--safeL/R/B` keep a floor under the reported value rather than trusting it.
 
 Gate on `max-height`, not `max-width`. The short axis is what breaks, and the
 pre-existing `max-width:700px` rules never fired on a phone in landscape
@@ -233,7 +257,8 @@ frame times.
 
 ## Saves
 
-`localStorage`, key `corewright.save.v2`, `SAVE_VERSION = 10`. **A version
+`localStorage`, key `corewright.save.v2`, `SAVE_VERSION = 11` (v11 added core
+hues and machine affinity). **A version
 mismatch deletes the save** rather than migrating it.
 
 That's fine while you're the only player and it isn't fine after that. Any

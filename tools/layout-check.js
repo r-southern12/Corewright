@@ -81,6 +81,10 @@ const TAG = process.argv[4] || 'before';
   await p.waitForTimeout(2500);
   await shot('07-facet'); report.push(await overflow('facet'));
 
+  await p.evaluate(() => showView('cleave'));
+  await p.waitForTimeout(1800);
+  await shot('09-cleave'); report.push(await overflow('cleave'));
+
   await p.evaluate(() => showView('seatbench'));
   await p.waitForTimeout(2000);
   await shot('08-seat'); report.push(await overflow('seatbench'));

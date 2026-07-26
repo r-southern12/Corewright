@@ -356,6 +356,7 @@
   .pickCard.on{border-color:var(--crystal);background:rgba(79,227,193,.10)}
   .pickCard span{font-size:10px;color:var(--dim)}
   .pickCard.clear b{color:var(--dim)}
+  .affGood{font-size:9px;color:#4FE3C1}.affBad{font-size:9px;color:var(--danger)}
   .txRow{display:flex;align-items:center;gap:9px;padding:8px 10px;margin-bottom:6px;
     border:1px solid #2c3550;border-radius:8px;background:rgba(205,210,220,.03)}
   .txInfo{flex:1;min-width:0}
@@ -847,8 +848,14 @@
   <div id="tools_cleave" style="display:none">
     <div class="row">
       <button class="potion" id="p_h">Level<span class="count mono" id="c_h"></span></button>
-      <button class="potion" id="p_v">Standing<span class="count mono" id="c_v"></span></button>
+      <button class="potion" id="p_hMed">Level II<span class="count mono" id="c_hMed"></span></button>
+      <button class="potion" id="p_hHi">Level III<span class="count mono" id="c_hHi"></span></button>
       <button class="potion" id="p_sand">Sandblast<span class="count mono" id="c_sand"></span></button>
+    </div>
+    <div class="row">
+      <button class="potion" id="p_v">Standing<span class="count mono" id="c_v"></span></button>
+      <button class="potion" id="p_vMed">Standing II<span class="count mono" id="c_vMed"></span></button>
+      <button class="potion" id="p_vHi">Standing III<span class="count mono" id="c_vHi"></span></button>
     </div>
     <div id="sandBar_cleave" class="jetBar" style="display:none">
       <span class="jetLbl">grit</span>
@@ -1322,27 +1329,54 @@ function coreIsClean(core){
 function markCleanIfDone(core){
   if (core && !core.clean && core.cells && matrixResidueOk(core)) core.clean=true;
 }
+/* CORE_HUES — the fixed palette a core's material can belong to. A core is
+   assigned ONE hue at generation (deterministic from its seed), and that hue is
+   what machines read for affinity. The mapping never shifts, so once a player
+   learns "amber cores drill well" it stays true for every amber core. Larger
+   cores may carry a SECONDARY hue that appears as a spectrum band toward their
+   hot regions — bigger stones are less uniform. */
+const CORE_HUES=[
+  {key:'teal',   base:0x1f9c86, glow:0x2fd0ac},
+  {key:'amber',  base:0xd9922c, glow:0xffb43c},
+  {key:'violet', base:0x7a5cd0, glow:0xa885ff},
+  {key:'rose',   base:0xc0466a, glow:0xff6a90},
+  {key:'azure',  base:0x2f7fd0, glow:0x5ab0ff},
+  {key:'lime',   base:0x6fae2f, glow:0x9fe04c}
+];
+function coreHue(core){ return CORE_HUES[core.hueIdx||0]; }
 function generateCells(core){
   const T=TIERS[core.tier], rnd=mulberry32(core.seed);
   const vox=T.vox, half=T.halfN, R=half*vox;
   const seedA=rnd()*6, seedB=rnd()*6;
+  // fixed primary hue from the seed; larger cores get a secondary for spectrum
+  if (core.hueIdx===undefined) core.hueIdx=Math.floor(rnd()*CORE_HUES.length);
+  const bigEnough=T.halfN>=5;                 // tier II+ can carry a second hue
+  if (core.hueIdx2===undefined)
+    core.hueIdx2=(bigEnough&&rnd()<0.5)?((core.hueIdx+1+Math.floor(rnd()*(CORE_HUES.length-1)))%CORE_HUES.length):-1;
   const hots=[];
+  /* Hotspots are far more varied now: 0-4 of them, each with its own RADIUS and
+     STRENGTH, placed anywhere in the body. Small tight nodes and broad soft
+     clouds both occur, so no two cores read alike. */
   function rollHot(r){
-    const hd=0.3+r()*1.3, ha=r()*Math.PI*2, hb=(r()-0.5)*Math.PI;
-    return {x:hd*Math.cos(hb)*Math.cos(ha),y:hd*Math.sin(hb),z:hd*Math.cos(hb)*Math.sin(ha)};
+    const hd=0.15+r()*1.55, ha=r()*Math.PI*2, hb=(r()-0.5)*Math.PI;
+    return {x:hd*Math.cos(hb)*Math.cos(ha), y:hd*Math.sin(hb), z:hd*Math.cos(hb)*Math.sin(ha),
+      rad:0.45+r()*0.85, str:0.6+r()*0.7};
   }
-  if (rnd()<T.hotOdds[0]){ hots.push(rollHot(rnd)); if (rnd()<T.hotOdds[1]) hots.push(rollHot(rnd)); }
+  let nHot=0;
+  if (rnd()<T.hotOdds[0]){ nHot=1;
+    if (rnd()<T.hotOdds[1]) nHot=2;
+    if (rnd()<T.hotOdds[1]*0.5) nHot=3+Math.floor(rnd()*2); }
+  for (let i=0;i<nHot;i++) hots.push(rollHot(rnd));
   const cells=[]; let hotTotal=0;
   for (let x=-half;x<=half;x++) for (let y=-half;y<=half;y++) for (let z=-half;z<=half;z++){
     const wx=x*vox, wy=y*vox, wz=z*vox;
     const noise=0.5*Math.sin(wx*2.4+seedA)*Math.cos(wz*2.0+seedB)+0.28*Math.sin(wy*3.1+seedB);
     if (Math.hypot(wx,wy,wz)>R*0.82+noise) continue;
     let conc=0;
-    for (const h of hots) conc+=Math.exp(-Math.pow(Math.hypot(wx-h.x,wy-h.y,wz-h.z)/0.85,2));
+    for (const h of hots)
+      conc+=h.str*Math.exp(-Math.pow(Math.hypot(wx-h.x,wy-h.y,wz-h.z)/h.rad,2));
     conc=Math.min(1,conc);
     hotTotal+=conc;
-    // world-space cell: px/py/pz centre, size = edge length.
-    // Splitting subdivides these in place, so they are NOT grid-locked.
     cells.push({px:wx,py:wy,pz:wz,size:vox,conc,shade:0.75+rnd()*0.4});
   }
   core.cells=cells; core.hotTotal=hotTotal; core.hots=hots.length;
@@ -1552,7 +1586,7 @@ function renderRail(){
     }).join('');
   }
 }
-const potions={h:3,v:3,jet:2,brine:0,sand:2,blast:2};
+const potions={h:3,v:3,jet:2,brine:0,sand:2,blast:2,hMed:0,hHi:0,vMed:0,vHi:0};
 
 // drill assembly: partScore = tier*(0.4+0.6*quality); shims are 0.3
 const drill={
@@ -1594,8 +1628,37 @@ function suitTier(key){
    that a mediocre part is still worth more than an empty slot. */
 const PART_FLOOR=0.15;
 const partScore=p=>p?((p.tier)*(PART_FLOOR+(1-PART_FLOOR)*(p.q!==undefined?p.q:p.output))):0.3;
+/* MACHINE AFFINITY. Every machine that consumes a core FAVOURS one fixed hue.
+   The favour never changes — a tier-I bit and a tier-III bit both prefer the
+   same colour — so the player learns each machine's taste once and it holds. A
+   core whose hue matches its machine runs hotter; a clashing hue runs a little
+   cold. The map is deliberately public (shown in each bench) rather than hidden.
+   Values are multipliers on that core's contribution. */
+const MACHINE_AFFINITY={
+  drill:  'amber',    // the drill bit bites best on amber cores
+  cleave: 'azure',    // the cleaving block reads azure cleanest
+  brute:  'rose',     // the bruting wheel grips rose
+  facet:  'teal',     // the saw tracks teal
+  polish: 'violet',   // the lamp brings out violet
+  forge:  'lime'      // the anvil stamps lime hardest
+};
+const AFFINITY_BONUS=0.18, AFFINITY_PENALTY=0.10;
+// How well a core's hue suits a given machine: 1 = match, <1 = clash, ~1 neutral.
+function affinityFactor(core,machine){
+  if (!core||core.hueIdx===undefined) return 1;
+  const fav=MACHINE_AFFINITY[machine];
+  if (!fav) return 1;
+  const hue=CORE_HUES[core.hueIdx].key;
+  if (hue===fav) return 1+AFFINITY_BONUS;
+  // a secondary hue that matches softens a clash to neutral
+  if (core.hueIdx2>=0&&CORE_HUES[core.hueIdx2].key===fav) return 1;
+  return 1-AFFINITY_PENALTY;
+}
 function drillPower(){
-  return (partScore(drill.frame)+partScore(drill.bit)+partScore(drill.core)+partScore(drill.power))/4;
+  // the drill core's hue lifts or drags the whole assembly via its own slot
+  const coreAff=affinityFactor(drill.core,'drill');
+  const coreScore=partScore(drill.core)*coreAff;
+  return (partScore(drill.frame)+partScore(drill.bit)+coreScore+partScore(drill.power))/4;
 }
 /* THE REFINEMENT LADDER. A drill core and power core of the SAME tier form a
    set; their outputs ADD into the set's charge. Crossing each rung unlocks a
@@ -1645,9 +1708,13 @@ function wardResist(){ const o=suitOutput('forgePrism'); return o?Math.min(0.6,0
 function aegisArmor(){ const o=suitOutput('alembic'); return o?Math.min(0.6,0.15+0.45*o):0; }
 
 const RECIPES={
-  h:{label:'Level Solvent',needs:{moss:2,dust:3},hint:'strips a level plane — of matrix, or of crystal'},
-  v:{label:'Standing Tincture',needs:{moss:2,dust:3},hint:'strips a standing plane'},
+  h:{label:'Level Solvent',needs:{moss:2,dust:3},hint:'strips a level plane — takes whole cubes at the cut'},
+  hM:{label:'Level Solvent II',makes:'hMed',needs:{moss:3,mica:1,dust:4},hint:'splits boundary cubes once — a cleaner level cut'},
+  hH:{label:'Level Solvent III',makes:'hHi',needs:{moss:4,mica:2,brine:1,dust:6},hint:'splits boundary cubes twice — the finest level cut'},
+  v:{label:'Standing Tincture',needs:{moss:2,dust:3},hint:'strips a standing plane — whole cubes'},
   vs:{label:'Standing Tincture (salt)',makes:'v',needs:{salt:2,dust:3},hint:'the cheaper route, once you find salt'},
+  vM:{label:'Standing Tincture II',makes:'vMed',needs:{salt:3,mica:1,dust:4},hint:'splits boundary cubes once'},
+  vH:{label:'Standing Tincture III',makes:'vHi',needs:{salt:4,mica:2,brine:1,dust:6},hint:'splits boundary cubes twice'},
   jet:{label:'Jet Rinse',needs:{clay:2,dust:2},hint:'a pressurised hose — strips matrix off a raw core'},
   brinejet:{label:'Brine Jet',makes:'brine',needs:{brine:2,clay:1,dust:4},
     hint:'the deep-strata hose: 150 charge, enough to strip a tier-III rind'},
@@ -1790,7 +1857,6 @@ function drawPower(cost){
 // ---------- mineral meshes ----------
 const mineral=new THREE.Group(); scene.add(mineral);
 let voxels=[], dying=[], boxGeo=null;
-const TEAL=new THREE.Color(0x1f9c86), GOLD=new THREE.Color(0xd9922c);
 function clearBench(){
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
@@ -1889,8 +1955,18 @@ function addVoxelMesh(c,polish){
     base=SCAR.clone().multiplyScalar(0.75+c.shade*0.3);
     emis=new THREE.Color(0x140a2e);
   } else {
-    base=TEAL.clone().lerp(GOLD,Math.min(1,c.conc*1.15)).multiplyScalar(0.62+c.shade*0.3);
-    emis=new THREE.Color(0x07231d).lerp(new THREE.Color(0x6b4406),c.conc);
+    /* The crystal's colour is the CORE'S hue, not a fixed teal. Concentration
+       brightens toward that hue's glow; a core carrying a secondary hue bleeds
+       toward it in the hot regions, giving larger stones a visible spectrum. */
+    const H=activeCore?coreHue(activeCore):CORE_HUES[0];
+    const baseCol=new THREE.Color(H.base), glowCol=new THREE.Color(H.glow);
+    let hued=baseCol.clone().lerp(glowCol,Math.min(1,c.conc*1.15));
+    if (activeCore&&activeCore.hueIdx2>=0){
+      const H2=CORE_HUES[activeCore.hueIdx2];
+      hued.lerp(new THREE.Color(H2.glow),Math.min(1,c.conc*0.9)*0.55);
+    }
+    base=hued.multiplyScalar(0.62+c.shade*0.3);
+    emis=baseCol.clone().multiplyScalar(0.12).lerp(glowCol.clone().multiplyScalar(0.4),c.conc);
   }
   const p=polish||0;
   const m=new THREE.Mesh(shardGeoFor(c),new THREE.MeshPhysicalMaterial({
@@ -2586,8 +2662,12 @@ let view='exped';
 // without damaging what's left. Jet Rinse is a limited-use hose: hold and it
 // blasts matrix away at the cursor (excavation) or shears a pocket (cleaving).
 const POTIONS={
-  h:{kind:'plane',axis:'y',hint:'Level Solvent: dissolves everything above the amber plane.'},
-  v:{kind:'plane',axis:'x',hint:'Standing Tincture: dissolves everything right of the amber plane.'},
+  h:{kind:'plane',axis:'y',grind:0,hint:'Level Solvent: takes whole cubes at the amber plane.'},
+  hMed:{kind:'plane',axis:'y',grind:1,hint:'Level II: splits boundary cubes once, then cuts.'},
+  hHi:{kind:'plane',axis:'y',grind:2,hint:'Level III: splits boundary cubes twice for the cleanest cut.'},
+  v:{kind:'plane',axis:'x',grind:0,hint:'Standing Tincture: takes whole cubes at the amber plane.'},
+  vMed:{kind:'plane',axis:'x',grind:1,hint:'Standing II: splits boundary cubes once, then cuts.'},
+  vHi:{kind:'plane',axis:'x',grind:2,hint:'Standing III: splits boundary cubes twice.'},
   digjet:{kind:'jet',grade:'jet',dig:true,hint:'Jet Rinse: a precise hose — strips one cube at a time. Crystal is safe.'},
   brinejet:{kind:'jet',grade:'brine',dig:true,hint:'Brine Jet: a wide deep-strata blast — clears a whole pocket at once. Crystal is safe.'},
   sand:{kind:'sand',hint:'Sandblast: refines the grain it touches, splitting coarse crystal finer. Costs no power.'}
@@ -2742,17 +2822,37 @@ function planePos(){
   const top=planeSpan();
   return top+(0-top)*t;
 }
+const GRAIN_LEVELS=2;                                // splits available at every tier
+const FINEST_GRAIN=(TIERS[5]?TIERS[5].vox:0.11)/Math.pow(2,GRAIN_LEVELS);
+/* A plane cut. STANDARD (grind 0) takes every cube whose CENTRE sits past the
+   plane — whole cubes, so the cut oversteps by up to half a cube wherever a cube
+   straddles the line. The higher grades fix that overshoot: before selecting,
+   they SPLIT any cube the plane passes through (grind 1 = once, grind 2 = twice),
+   so the boundary is resolved at finer grain and far less crystal is lost past
+   the intended plane. The split fragments that still sit past the plane are then
+   taken along with everything fully beyond it. */
+function planeSplitBoundary(axis,b,levels){
+  for (let pass=0;pass<levels;pass++){
+    // snapshot: only cubes the plane actually crosses are worth splitting
+    const straddlers=voxels.filter(v=>{
+      if (!isCrystal(v.cell)) return false;
+      const c=v.cell, h=c.size/2, ctr=axis==='y'?c.py:c.px;
+      return (ctr-h)<b && (ctr+h)>b && c.size>FINEST_GRAIN;
+    });
+    if (!straddlers.length) break;
+    for (const v of straddlers) if (v.mesh.parent) splitOneCube(v);
+  }
+}
 function planeVictims(){
   const p=POTIONS[potion], b=planePos();
   const out=new Set();
-  // A clean plane cut at the cleaving block: everything past the amber plane
-  // goes, crystal and any stray matrix alike.
   for (const v of voxels){
     v.mesh.getWorldPosition(wpos);
     if ((p.axis==='y'?wpos.y:wpos.x)>b) out.add(v.mesh);
   }
   return out;
 }
+
 function refreshPlanePreview(){
   if (!(potion&&POTIONS[potion].kind==='plane')) return;
   const p=POTIONS[potion], b=planePos();
@@ -4061,9 +4161,6 @@ function resolveSocket(){
    cubes with an open face. This is what a housing bears against, so
    it is the honest measure of a seat.
    ============================================================ */
-const GRAIN_LEVELS=2;                                // splits available at every tier
-const FINEST_GRAIN=(TIERS[5]?TIERS[5].vox:0.11)/Math.pow(2,GRAIN_LEVELS);
-
 /* THE TEMPLATE'S SURFACE CEILING — the most surface cubes this template could
    ever carry, if it were packed with the finest grain in the game (a tier-V
    core split all the way down). Every surface reading is a share of this, so
@@ -6085,11 +6182,16 @@ function renderSeatPicker(){
       ${fitted?`<button class="pickCard clear" data-pick="none">
         <div class="dseatArt">${seatGlyph('none',0,0)}</div><b>Run empty</b>
         <span>factory shim</span></button>`:''}
-      ${opts.length?opts.map(({c,out})=>`
-        <button class="pickCard${(fitted&&fitted.id===c.id)?' on':''}" data-pick="${c.id}">
-          <div class="dseatArt">${seatGlyph(pickerFor,c.tier,out)}</div>
+      ${opts.length?opts.map(({c,out})=>{
+        const H=coreHue(c);
+        // for the drill core seat, show how its hue suits the drill
+        const aff=pickerFor==='core'?affinityFactor(c,'drill'):1;
+        const affTag=aff>1?`<span class="affGood">◆ suits drill</span>`
+          :aff<1?`<span class="affBad">◆ clashes</span>`:'';
+        return `<button class="pickCard${(fitted&&fitted.id===c.id)?' on':''}" data-pick="${c.id}">
+          <div class="dseatArt" style="border-color:#${H.base.toString(16).padStart(6,'0')}">${seatGlyph(pickerFor,c.tier,out)}</div>
           <b>${TIERS[c.tier].name}</b>
-          <span>${Math.round(out*100)}% output</span></button>`).join('')
+          <span>${Math.round(out*100)}% · ${H.key}</span>${affTag}</button>`;}).join('')
         :`<div class="sub" style="padding:6px">No shaped cores in storage. Carve one at the lapidary.</div>`}
     </div></div>`;
   el.querySelectorAll('[data-pick]').forEach(b=>{
@@ -6185,6 +6287,16 @@ function renderLab(){
           <span style="color:var(--crystal)">softest</span>
           <span>${spec.filter(m=>mineState(m.resist)>0).length} of ${spec.length} surveyed materials workable</span>
           <span style="color:var(--danger)">hardest seen</span></div>`;
+      })()}
+      ${(()=>{
+        // affinity: the drill favours one fixed hue, and how the fitted core suits it
+        const fav=MACHINE_AFFINITY.drill;
+        const cur=drill.core?coreHue(drill.core).key:null;
+        const aff=drill.core?affinityFactor(drill.core,'drill'):1;
+        const state=!drill.core?'':aff>1?`<b style="color:#4FE3C1">${cur} suits it (+${Math.round(AFFINITY_BONUS*100)}% bite)</b>`
+          :aff<1?`<b style="color:var(--danger)">${cur} clashes (−${Math.round(AFFINITY_PENALTY*100)}%)</b>`
+          :`<b>${cur} — neutral</b>`;
+        return `<div class="sub" style="margin-top:5px">the drill bites best on <b style="color:var(--amber)">${fav}</b> cores ${state}</div>`;
       })()}
       ${(()=>{
         // the refinement ladder: a matched pair of cores and its charge
@@ -6749,7 +6861,13 @@ document.getElementById('turnX').onclick=()=>turnCore('x');
 document.getElementById('turnY').onclick=()=>turnCore('y');
 document.getElementById('turnZ').onclick=()=>turnCore('z');
 document.getElementById('dropBtn').onclick=dropIntoSocket;
-document.getElementById('cleaveBtn').onclick=()=>{ setPreview(planeVictims()); spendPotion('Cleaved'); };
+document.getElementById('cleaveBtn').onclick=()=>{
+  const p=POTIONS[potion];
+  // graded solvents refine the boundary cubes before the cut is taken
+  if (p&&p.kind==='plane'&&p.grind>0) planeSplitBoundary(p.axis,planePos(),p.grind);
+  setPreview(planeVictims());
+  spendPotion('Cleaved');
+};
 document.getElementById('compChip').onclick=()=>{
   comp=COMP_ORDER[(COMP_ORDER.indexOf(comp)+1)%COMP_ORDER.length];
   orientIdx=0;                       // a new socket starts upright
@@ -6963,19 +7081,22 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=10;  // v10: suit frames, alloy parts   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=11;  // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
 function packCore(c){
   return {i:c.id,s:c.seed,t:c.tier,p:q3(c.polish),h:c.hots,cl:c.clean?1:0,
     hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,
+    hu:c.hueIdx===undefined?-2:c.hueIdx, h2:c.hueIdx2===undefined?-2:c.hueIdx2,
     c:c.cells?c.cells.map(x=>[q3(x.px),q3(x.py),q3(x.pz),q3(x.size),q3(x.conc),q3(x.shade),
       x.mat||0,x.bev||0,x.pol||0,x.scar?1:0,x.tier||0,x.frag?1:0]):null};
 }
 function unpackCore(o){
   return {id:o.i,seed:o.s,tier:o.t,polish:o.p||0,hots:o.h||0,clean:!!o.cl,
     hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,
+    hueIdx:(o.hu===undefined||o.hu===-2)?undefined:o.hu,
+    hueIdx2:(o.h2===undefined||o.h2===-2)?undefined:o.h2,
     cells:o.c?o.c.map(a=>{
       const cell={px:a[0],py:a[1],pz:a[2],size:a[3],conc:a[4],shade:a[5]};
       if (a[6]) cell.mat=a[6];
