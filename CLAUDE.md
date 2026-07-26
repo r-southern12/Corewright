@@ -13,25 +13,31 @@ The loop is: **dig → carve → seat → better drill → dig deeper.**
 | File | What it is |
 |---|---|
 | `index.html` | The entire game. CSS in `<style>`, everything else in one inline `<script>`. Named index.html so GitHub Pages serves it. |
-| `assets.js` | Three base64 JPEGs — `ASSET_ENV`, `ASSET_BACKDROP`, `ASSET_ROUGH`. Must load before the game script; they're read as globals. |
+| `assets/*.jpg` | `env.jpg`, `backdrop.jpg`, `rough.jpg` — the crystal environment map, bench backdrop and roughness texture. Loaded by URL via `THREE.TextureLoader`. |
 | `three.min.js` | Three.js r128 (three@0.128.0), vendored. MIT, licence in `three.LICENSE`. |
 
-Single-file by design: the game runs from `file://` with no server, no build
-step and **no network**. Assets are base64-inlined and Three.js is vendored for
-the same reason. **Preserve this.** Don't introduce a bundler, a package
-manager, an `import` statement, or a CDN reference without asking — each one
-breaks the way the game is played, and a runtime fetch is fatal inside a
-packaged mobile app.
+**Web-only, served over HTTP.** This was a phone-targeted, single-file,
+`file://`-with-no-network app until the mobile target was dropped. Now it is an
+ordinary web page served from a URL (GitHub Pages). The assets are real image
+files, so **the game must be served, not opened from `file://`** — WebGL treats
+a `file://` origin as opaque and the textures fail to load cross-origin (which
+is exactly why they used to be base64-inlined). Three.js stays vendored to
+avoid a runtime CDN dependency, but that is now a preference, not a hard
+constraint. No build step, no bundler, no `import` — keep it that way unless
+there's a reason.
 
 ## Running it
 
-Open `index.html` in a browser. That's it. No server, no connection.
+Serve the directory and open it — e.g. `python3 -m http.server 8099` then
+`http://localhost:8099/`. Opening `index.html` from disk renders the HUD but the
+3D benches come up untextured, because `file://` can't load the JPEGs.
 
 Three.js used to come from `cdnjs.cloudflare.com`, which meant no network = no
-3D bench: the 2D world and HUD rendered, then every bench died on `THREE is not
-defined`. It's vendored now. Don't put it back.
+3D bench: every bench died on `THREE is not defined`. It's vendored now. Don't
+put it back.
 
-Verifying a change in a headless browser:
+Verifying a change in a headless browser (the `tools/*.js` harnesses do this —
+they hit `http://localhost:8099/index.html`, so **start the server first**):
 
 ```js
 chromium.launch({
@@ -116,55 +122,22 @@ overkill scaling as `r^OVERKILL_EXP` past parity.
 Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
 `LAB_RECALL_DIST`.
 
-## Phone landscape
+## Target: desktop web
 
-The game targets a phone held sideways. `#rotateGate` asks for a rotation in
-portrait; everything else lives behind
-`@media (orientation:landscape) and (max-height:520px)` at the end of the
-stylesheet. Desktop is untouched by all of it.
+This was a phone game. That target was dropped, and with it went the landscape
+layout, the rotate gate, the reagent-rail drawer, the safe-area insets and the
+`pointer:coarse` sizing — the whole `@media (orientation:landscape)` block and
+its supporting markup. The desktop layout it used to override is now simply the
+layout. Basic touch input (drag to rotate, pinch to zoom, tap to carve) was
+kept, because it's cheap and lets the game work on a touch laptop, but nothing
+targets a phone-shaped screen any more.
 
-The desktop layout stacks fixed bands down the screen — header 0, nav 42,
-stationBar 94, chips 138, status 210, toolbar off the bottom. That is seven
-bands into ~390px of height, so on a phone they collide and bury the core. In
-landscape those bands become **columns**: stations and template/view chips down
-the left, the bench controls down the right, centre clear for the crystal.
-
-**Nothing critical goes near the bottom edge.** A real device showed why — the
-browser's own chrome and the gesture bar sit exactly there, and the bench
-toolbar was half off the screen. Landscape browsers also float widgets down the
-right edge, and several Android browsers report `env(safe-area-inset-*)` as 0,
-so `--safeL/R/B` keep a floor under the reported value rather than trusting it.
-
-Gate on `max-height`, not `max-width`. The short axis is what breaks, and the
-pre-existing `max-width:700px` rules never fired on a phone in landscape
-(844px wide) — they were written for a case they could not reach.
-
-Things worth knowing before editing this:
-
-- **The reagent rail is a drawer** on phones (600px of glassware into 390px).
-  `#railBtn` toggles `body.railOpen`. `showView` clears it. The bench stations
-  suppress the rail entirely via `.hid` on the rail and `body.noRail`.
-- **Don't set `display` inline on `#instrumentRail`.** It used to, and an
-  inline style outranks the stylesheet rule that hides the drawer. Use classes.
-- **`touch-action:none` on the body** so a drag on the bench turns the core
-  instead of scrolling the page. Scrollable panels opt back in with
-  `touch-action:pan-y` — add new ones to that list or they will not scroll.
-- **The column offsets are hand-tuned constants** (`--railL`, `--railR`,
-  `--hudH`, and `calc()` offsets against them). They are the weak point: change
-  a font size or the wing tile height and things drift into each other. Re-run
-  the layout check below after any change in this block.
-
-Layout check — reports anything the player cannot reach, at three phone sizes:
-
-```
-node shots.js 844 390 tag    # iPhone 14 landscape, the tightest common case
-node shots.js 915 412 tag    # typical Android landscape
-node shots.js 740 360 tag    # small/older
-```
-
-It ignores content inside a scrollable ancestor, since that is reachable. Zero
-is the expected result on every screen. Screenshots still need a human eye:
-the checker catches overflow, not two things sitting on top of each other.
+The graphics quality tier survives as a plain Options setting — `low` drops
+clearcoat and runs at 1x pixel ratio, `high` is full detail — but it now
+defaults to `high` and nothing auto-selects `low`; the `pointer:coarse`
+auto-detection is gone. `tools/layout-check.js` still exists and still reports
+unreachable/overflowing elements, but it is no longer part of the routine
+check now that a single fixed desktop layout is the only target.
 
 ## Visual language
 
@@ -290,11 +263,8 @@ framework, no reactive layer.
 ## Working here
 
 - The baseline commit is v95 exactly as it came out of the Claude project.
-  Every change diffs against it.
-- Prefer surgical edits. This file is ~328 KB; regenerating regions of it is how
+  Every change diffs against it, and the game logic still tracks v96.
+- Prefer surgical edits. This file is ~330 KB; regenerating regions of it is how
   helpers get silently dropped and tuned constants quietly revert.
-- The filename still says `v95` and the `<title>` says `v10`. Git tracks
-  versions now, so both are vestigial — renaming to `index.html` is a reasonable
-  cleanup whenever you want it.
 - The scoring chain is pure math over plain data and could be unit-tested in
   Node without a browser. Worth doing before the next balance pass.

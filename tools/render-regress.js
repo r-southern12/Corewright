@@ -13,7 +13,7 @@ const { chromium } = require('playwright');
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
   p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('file:///home/user/Corewright/index.html');
+  await p.goto('http://localhost:8099/index.html');
   await p.waitForTimeout(4000);
 
   const steps = await p.evaluate(async () => {

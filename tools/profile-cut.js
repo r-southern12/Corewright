@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
   const p = await b.newPage({ viewport: { width: 900, height: 420 } });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message));
-  await p.goto('file:///home/user/Corewright/index.html');
+  await p.goto('http://localhost:8099/index.html');
   await p.waitForTimeout(4000);
 
   const out = await p.evaluate(async () => {
