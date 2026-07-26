@@ -103,25 +103,40 @@ through (once or twice) *before* selecting victims, so a higher grade wastes
 far less crystal to overshoot. `GRAIN_LEVELS`/`FINEST_GRAIN` moved above the
 plane code because it depends on them.
 
-**The forge bench (hand-forge, MVP).** The inverse of the lapidary: carving
-removes to reveal, forging *adds then deforms* to fill. You place ten copper
-chunks (2×2×2 cells each) into a mould ghost, the press auto-heats the mass so
-it glows, then you whack proud blocks down and they flow into the nearest empty
-mould cell. Quality = mould fill × (1 − flash penalty), continuous. Good
-placement scores ~94% before the first blow; a sloppy pile scores ~5% but is
-recoverable to ~99% by whacking *far* more — slow, forgiving, mastery in the
-margins, exactly as specced.
+**The flux press — heat-and-slump forging (MVP).** NOT carving in reverse.
+Carving aims a tool at a static object and removes; this aims HEAT at a live one
+and lets physics move it. A copper billet drops into a mould dish; you sweep a
+flux torch (hold-and-sweep, like the polish lap) and metal goes molten where the
+beam touches and **slumps** into the mould. Gravity acts on all metal (nothing
+floats); only molten metal *spreads*, so the flux is what walks copper out to
+the corners. Overheat and the melt runs off the footprint edge — flash, gone.
+Then the recess (the seat a core drops into) is sunk with a few taps — not
+skill-based, as specced. Quality = mould-fill × (1 − flash penalty).
 
-It is a **self-contained subsystem** (`forgeGroup`, `forgeMap`, its own
-`InstancedMesh`), sharing only the scene, camera and lighting. It does **not**
-touch `voxels`, `activeCore` or the shard batches — three crafts, three physics.
-Entered from the Forge wing's hand-forge button as view `'forgeb'`; `showView`
-hides `mineral` and shows `forgeGroup`. The flow logic lives in `placeAtGrid`
-and `whackColumn`, split out from the raycast so it's deterministically testable
-(`tools/` has no harness yet; `scratchpad/forgelogic.js` covers it). The mould
-is a plate today; other parts want their own `inMould` shapes. Fold/quench were
-deliberately cut from the MVP. NB: `forgeAnvil` was already a global (the seated
-anvil-core) — the forge's anvil mesh is `forgeAnvilPlate`.
+Why it doesn't lag, and how it's built (read before touching it):
+- The grid is **typed arrays** — `fgFill` (Uint8), `fgTemp` (Float32), `fgMould`
+  (Uint8), flat-indexed by `fIdx`. No per-cell objects, no per-frame allocation.
+- `forgeFlowStep` runs every frame in the forge view (a few thousand int ops,
+  microseconds). The **mesh only rebuilds when `forgeDirty`** — set when a cell
+  moves or crosses a heat band — so a settled, cold bench costs nothing.
+- Glow varies per cell, which one material can't do, so heat is drawn in
+  **bands** (`FORGE_BANDS`), one `InstancedMesh` each — the same trick the
+  carving glow uses. ~6–8 draw calls.
+- `COOL` is deliberately slow (0.008/tick): molten metal must stay liquid long
+  enough to run, and slow = patient/forgiving, not twitchy. Tuning `COOL`,
+  `FLOW_T`, the flux heat rate and the billet/mould volumes is how you change
+  the difficulty — do it there, not in the flow rule.
+
+Self-contained subsystem (`forgeGroup`, the `fg*` arrays, `forgeBandMesh`),
+sharing only scene/camera/lighting; it does **not** touch `voxels`,
+`activeCore` or the shard batches. Entered from the Forge wing as view
+`'forgeb'`; `showView` hides `mineral`, shows `forgeGroup`, and the tick loop
+calls `forgeSimTick` only in that view. The mould is a rectangular dish today
+(`forgeBuildMould`); other parts want their own cavity shapes. **Next step:** the
+forged part is still fitted as a stat; wiring the stamped recess as the actual
+seating housing (forge output → seating input) is the follow-up the recess was
+designed for. NB `forgeAnvil` was already a global (the seated anvil-core) — this
+bench's plate mesh is `forgeAnvilPlate`.
 
 **Scoring.** The part of the code most worth reading before you touch it. A
 template is a hard gate (strict membership — the *whole* shard must sit inside),

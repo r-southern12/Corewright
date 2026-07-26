@@ -788,8 +788,11 @@
   <div id="fbTitle">Hand Forge</div>
   <div id="fbHint" class="toolhint"></div>
   <div class="row">
+    <button id="fbTurnL" title="Turn left">◀</button>
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
+    <button id="fbTurnR" title="Turn right">▶</button>
+    <button class="act" id="fbStamp">Sink seat ▾</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -5944,237 +5947,321 @@ const SEED_UP={
   [T_NODE1]:T_NODE2, [T_NODE2]:T_NODE3
 };
 /* ============================================================
-   THE FORGE BENCH — additive, the inverse of the lapidary.
+   THE FLUX PRESS — heat-and-slump forging.
 
-   Carving hands you a full core and you REMOVE to reveal a shape.
-   Forging hands you nothing: you PLACE ten copper chunks where you
-   judge the mould needs mass, the press heats the lot until it flows,
-   then you WHACK the glowing blocks down into the template until it is
-   filled. Placement is most of the score — lay the ten so the mould is
-   nearly full before the first blow and only tap the corners home; pile
-   them and you hammer material across the mould one flowed cell at a
-   time, spilling flash off the edges.
+   Not carving in reverse. Carving aims a tool at a static object and
+   removes material; this aims HEAT at a live one and lets physics move
+   it. A copper billet sits in a cradle over a mould cavity under a
+   constant downward press. You sweep a flux torch across it; metal
+   goes molten where the beam touches and SLUMPS down into the mould,
+   the way liquid finds a cavity. Cold metal is rigid. Paint heat where
+   the mould still needs filling; overheat and the melt avalanches out
+   past the footprint and drips off the anvil — flash, gone for good.
+   The billet is a fixed lump, so every cell you spill is a cell you
+   can't fill. Reach the far corners without flooding: that's the skill,
+   and there's no clock — it's patient, not twitchy.
 
-   Isolated from the carving bench on purpose: its own group, its own
-   instanced mesh, its own cell set. Shares only the scene, camera and
-   lighting. Nothing here touches `voxels`, `activeCore` or the shard
-   batches. Three crafts, three physics — this one is deformation.
-
-   The mould is a plate: an F_FN x F_FN footprint, F_MH cells tall. Ten
-   2x2x2 copper chunks are 80 cells of material against 72 mould cells,
-   so a flawless forge still leaves ~8 cells of flash — you can't hit
-   100%, which is what keeps the top of the skill curve worth chasing.
+   IMPLEMENTATION NOTES (this has to stay smooth):
+   - The grid is TYPED ARRAYS, not a Map. fill/temp/mould are flat
+     Uint8/Float32 indexed by ix + iy*W + iz*W*H. No per-cell objects,
+     no per-frame allocation, O(1) neighbours.
+   - The sim only runs in the forge view, and only while something is
+     actually hot or the torch is on; a cold, settled billet costs
+     nothing. A dirty flag gates the mesh rebuild the same way.
+   - Glow varies per cell, which one InstancedMesh material can't do, so
+     heat is drawn in BANDS — one instanced mesh per band, each with its
+     own emissive level. Same trick the carving glow uses, ~5 draw calls.
+   - Isolated: own group, own arrays. Nothing here touches voxels,
+     activeCore or the shard batches. (NB `forgeAnvil` is already the
+     seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FVOX=0.42;                       // chunk/cell edge, world units
-const F_FN=6, F_MH=2, F_CHUNKS=10;     // footprint, mould height, chunks per part
-const fWX=i=>(i-(F_FN-1)/2)*FVOX;
-const fWY=i=>(i-(F_MH-1)/2)*FVOX;      // linear in i, so piles above the mould keep going up
-const fWZ=i=>(i-(F_FN-1)/2)*FVOX;
-const fKey=(ix,iy,iz)=>(((ix+16)<<12)|((iy+16)<<6)|(iz+16));   // small ints, unique keys
-const inMould=(ix,iy,iz)=>ix>=0&&ix<F_FN&&iz>=0&&iz<F_FN&&iy>=0&&iy<F_MH;
-const F_MOULD_TOTAL=F_FN*F_FN*F_MH;
+const FGW=11, FGH=10, FGD=11;          // grid dims (footprint x height x depth)
+const FG_N=FGW*FGH*FGD;
+const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
+const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
+const FVOX=0.34;                       // cell edge, world units
+const fWX=ix=>(ix-(FGW-1)/2)*FVOX;
+const fWY=iy=>(iy-4)*FVOX;             // mid-grid at the origin, so the bench frames well
+const fWZ=iz=>(iz-(FGD-1)/2)*FVOX;
 
+const fgFill=new Uint8Array(FG_N);     // 1 = metal present
+const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
+const fgMould=new Uint8Array(FG_N);    // 1 = inside the mould cavity
+let fgMouldTotal=0, fgFlash=0;
+const MOULD_DEPTH=3;                    // mould cavity is iy 0..DEPTH-1; DEPTH+ is chamber
+const MOULD_INSET=1;                    // cavity inset from the footprint edge
+const FLOW_T=0.45;                      // temperature at which metal turns molten and flows
+// Cooling is SLOW on purpose — molten metal has to stay liquid long enough to
+// actually run across the mould, and slow means patient/forgiving, not twitchy.
+const COOL=0.008;                       // per-tick temperature decay
+
+// The mould: a rectangular dish inset one cell from the footprint edge. Metal
+// slumps in and fills it bottom-up like a liquid; the far corners fill last, so
+// reaching them without flooding the near edge (which spills) is the skill. A
+// filled dish is the drill frame — the recess for the core is sunk into it after.
+function forgeBuildMould(){
+  fgMould.fill(0); fgMouldTotal=0;
+  for (let ix=MOULD_INSET;ix<FGW-MOULD_INSET;ix++)
+    for (let iz=MOULD_INSET;iz<FGD-MOULD_INSET;iz++)
+      for (let iy=0;iy<MOULD_DEPTH;iy++){ fgMould[fIdx(ix,iy,iz)]=1; fgMouldTotal++; }
+}
+// The starting billet: a broad slab of copper suspended in the cradle ABOVE the
+// empty dish. It starts warm but solid; the flux melts it and it slumps down.
+// Volume is a little over the mould so a clean forge fills it with a touch to
+// spare — the surplus is your allowable flash.
+function forgeSeedBillet(){
+  fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
+  const cx=(FGW-1)/2|0, cz=(FGD-1)/2|0, half=3, want=Math.round(fgMouldTotal*1.06);
+  let placed=0;
+  // stack a 7x7 slab upward from just above the rim until the volume is met
+  for (let iy=MOULD_DEPTH; iy<FGH && placed<want; iy++)
+    for (let ix=cx-half; ix<=cx+half && placed<want; ix++)
+      for (let iz=cz-half; iz<=cz+half && placed<want; iz++){
+        if (!fIn(ix,iy,iz)) continue;
+        const id=fIdx(ix,iy,iz);
+        fgFill[id]=1; fgTemp[id]=0.28; placed++;   // warm but below FLOW_T
+      }
+}
+
+// ---- rendering: heat bands, one instanced mesh each ----
 const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=false;
-let forgeMap=new Map();                // fKey -> {ix,iy,iz}
-let forgeCellList=[];                  // instanceId -> cell, rebuilt each sync
-let forgePhase='place';                // 'place' | 'forge'
-let forgeChunksLeft=F_CHUNKS;
-let forgeActive=false, forgePart=null;
-
-const forgeGeo=new THREE.BoxGeometry(FVOX*0.94,FVOX*0.94,FVOX*0.94);
-const F_COPPER=new THREE.Color(0xc9772f), F_FLASH=new THREE.Color(0x2e2a24);
-// Metalness kept moderate so cold copper still catches the lamp; a faint
-// emissive floor (set in enterForge) keeps placed chunks legible before the
-// press flares. Alchemical copper is allowed to glow a little cold.
-const forgeMat=new THREE.MeshStandardMaterial({color:0xffffff,metalness:0.35,roughness:0.55,
-  emissive:new THREE.Color(0xff6a24),emissiveIntensity:0.35,vertexColors:false});
-let forgeMesh=null;
-// anvil face under the mould, for grounding (NB: `forgeAnvil` is already the
-// seated anvil-core global — this mesh is `forgeAnvilPlate`)
-const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(F_FN*FVOX+0.6,0.34,F_FN*FVOX+0.6),
-  new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.65,roughness:0.5}));
-forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.17;
-forgeGroup.add(forgeAnvilPlate);
-// the mould ghost — same visual language as the carving template
-const _mouldGeo=new THREE.BoxGeometry(F_FN*FVOX,F_MH*FVOX,F_FN*FVOX);
-const forgeGhost=new THREE.Mesh(_mouldGeo,ghostMat);
-const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mouldGeo),ghostEdge);
-forgeGhost.renderOrder=10; forgeGhostWire.renderOrder=11;
-forgeGroup.add(forgeGhost); forgeGroup.add(forgeGhostWire);
-// invisible placement plane, a child so it turns with the mass
-const forgePlane=new THREE.Mesh(new THREE.PlaneGeometry(60,60),
+const forgeGeo=new THREE.BoxGeometry(FVOX*0.96,FVOX*0.96,FVOX*0.96);
+const FORGE_BANDS=[   // temp ceiling -> look; cold copper up to white-hot melt
+  {t:0.18, col:0x7c4a24, emi:0x2a1206, ei:0.15},
+  {t:0.45, col:0xb5601f, emi:0xff5a1e, ei:0.45},
+  {t:0.72, col:0xff8a2e, emi:0xff7a2a, ei:0.95},
+  {t:1.01, col:0xffd98a, emi:0xffb04a, ei:1.5}
+];
+const forgeBandMesh=FORGE_BANDS.map(b=>{
+  const m=new THREE.MeshStandardMaterial({color:b.col,metalness:0.4,roughness:0.55,
+    emissive:new THREE.Color(b.emi),emissiveIntensity:b.ei});
+  const im=new THREE.InstancedMesh(forgeGeo,m,FG_N);
+  im.frustumCulled=false; im.count=0; forgeGroup.add(im); return im;
+});
+// anvil plate under the mould (local, not the forgeAnvil global)
+const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
+  new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
+forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.15; forgeGroup.add(forgeAnvilPlate);
+// mould ghost — the target cavity, drawn as a wire frame of the dish
+const _mgeo=new THREE.BoxGeometry((FGW-2*MOULD_INSET)*FVOX,MOULD_DEPTH*FVOX,(FGD-2*MOULD_INSET)*FVOX);
+const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghostEdge);
+forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
+forgeGroup.add(forgeGhostWire);
+// the flux beam marker — a soft ring where the torch is aimed
+const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.4,16,12),
+  new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
+forgeBeam.visible=false; forgeGroup.add(forgeBeam);
+// invisible pick plane (a child, so it turns with the group)
+const forgePlane=new THREE.Mesh(new THREE.PlaneGeometry(50,50),
   new THREE.MeshBasicMaterial({visible:false}));
-forgePlane.rotation.x=-Math.PI/2;
-forgeGroup.add(forgePlane);
+forgePlane.rotation.x=-Math.PI/2; forgePlane.position.y=fWY(0); forgeGroup.add(forgePlane);
 
-const _fm=new THREE.Matrix4(), _fp=new THREE.Vector3();
+const _fm=new THREE.Matrix4(), _fp=new THREE.Vector3(), _fwhite=new THREE.Color(0xffffff);
+let forgeDirty=true;
+function bandOf(t){ for (let i=0;i<FORGE_BANDS.length;i++) if (t<FORGE_BANDS[i].t) return i; return FORGE_BANDS.length-1; }
 function syncForgeMesh(){
-  const n=forgeMap.size;
-  if (!forgeMesh || forgeMesh.instanceMatrix.count<n){
-    if (forgeMesh){ forgeGroup.remove(forgeMesh); forgeMesh.dispose(); }
-    forgeMesh=new THREE.InstancedMesh(forgeGeo,forgeMat,Math.max(96,Math.ceil(n*1.4)));
-    forgeMesh.frustumCulled=false;
-    forgeGroup.add(forgeMesh);
+  const cnt=FORGE_BANDS.map(()=>0);
+  for (let id=0;id<FG_N;id++){
+    if (!fgFill[id]) continue;
+    const iy=(id/FGW|0)%FGH, ix=id%FGW, iz=id/(FGW*FGH)|0;
+    const bi=bandOf(fgTemp[id]), im=forgeBandMesh[bi], k=cnt[bi]++;
+    _fp.set(fWX(ix),fWY(iy),fWZ(iz)); _fm.makeTranslation(_fp.x,_fp.y,_fp.z);
+    im.setMatrixAt(k,_fm);
   }
-  forgeCellList.length=0;
-  let i=0;
-  for (const c of forgeMap.values()){
-    _fp.set(fWX(c.ix),fWY(c.iy),fWZ(c.iz));
-    _fm.makeTranslation(_fp.x,_fp.y,_fp.z);
-    forgeMesh.setMatrixAt(i,_fm);
-    forgeMesh.setColorAt(i,inMould(c.ix,c.iy,c.iz)?F_COPPER:F_FLASH);
-    forgeCellList[i]=c; i++;
+  for (let b=0;b<forgeBandMesh.length;b++){
+    forgeBandMesh[b].count=cnt[b];
+    forgeBandMesh[b].instanceMatrix.needsUpdate=true;
   }
-  forgeMesh.count=n;
-  forgeMesh.instanceMatrix.needsUpdate=true;
-  if (forgeMesh.instanceColor) forgeMesh.instanceColor.needsUpdate=true;
+  forgeDirty=false;
 }
-function addForgeCell(ix,iy,iz){ forgeMap.set(fKey(ix,iy,iz),{ix,iy,iz}); }
-function colTop(ix,iz){ let t=-1; for (let iy=0;iy<48;iy++) if (forgeMap.has(fKey(ix,iy,iz))) t=iy; return t; }
 
-// aim a ray and return the local x,z hit on the placement plane
-function forgeAim(sx,sy){
+// ---- the simulation: heat, flow, cool, spill ----
+let forgePhase='flux';                 // 'flux' | 'stamp'
+let forgeActive=false, forgePart=null;
+let fluxOn=false, fluxAim=null, fluxRadius=1.4;
+function forgeAimCell(sx,sy){
   ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
-  const h=ray.intersectObject(forgePlane,false);
-  if (!h.length) return null;
+  const h=ray.intersectObject(forgePlane,false); if (!h.length) return null;
   const lp=forgeGroup.worldToLocal(h[0].point.clone());
-  return {ix:Math.round(lp.x/FVOX+(F_FN-1)/2), iz:Math.round(lp.z/FVOX+(F_FN-1)/2)};
+  return {x:lp.x/FVOX+(FGW-1)/2, z:lp.z/FVOX+(FGD-1)/2};
 }
-
-// place a 2x2x2 chunk with its origin at (ix,iz), resting on whatever's below.
-// A little overhang past the footprint is allowed and becomes flash — the cost
-// of sloppy placement. Split from the aim so it can be driven deterministically.
-function placeAtGrid(ix,iz){
-  ix=Math.max(-1,Math.min(F_FN-1,ix)); iz=Math.max(-1,Math.min(F_FN-1,iz));
-  let base=0;
-  for (let dx=0;dx<2;dx++) for (let dz=0;dz<2;dz++) base=Math.max(base,colTop(ix+dx,iz+dz)+1);
-  for (let dx=0;dx<2;dx++) for (let dy=0;dy<2;dy++) for (let dz=0;dz<2;dz++)
-    addForgeCell(ix+dx,base+dy,iz+dz);
-}
-function placeChunk(sx,sy){
-  if (forgePhase!=='place'||forgeChunksLeft<=0) return;
-  const a=forgeAim(sx,sy); if (!a) return;
-  placeAtGrid(a.ix,a.iz);
-  forgeChunksLeft--;
-  if (forgeChunksLeft<=0) heatForge();
-  syncForgeMesh(); updateForgeHud();
-  pulse(document.getElementById('forgeBench'),'fxFlash');
-}
-
-function heatForge(){
-  forgePhase='forge';
-  forgeMat.emissiveIntensity=1.15;      // the press flares; the whole mass goes plastic
-  say('The press flares — the copper flows. Whack it down into the mould.','good');
-  updateForgeHud();
-}
-
-// nearest empty MOULD cell to a struck cell — where flowed material wants to go
-function nearestEmptyMould(fromX,fromY,fromZ){
-  let best=null, bd=1e9;
-  for (let ix=0;ix<F_FN;ix++) for (let iy=0;iy<F_MH;iy++) for (let iz=0;iz<F_FN;iz++){
-    if (forgeMap.has(fKey(ix,iy,iz))) continue;
-    const d=(ix-fromX)**2+(iy-fromY)**2+(iz-fromZ)**2;
-    if (d<bd){ bd=d; best={ix,iy,iz}; }
+// apply the torch: warm the topmost filled cell in each column under the brush
+function fluxHeat(){
+  if (!fluxAim) return;
+  const R=fluxRadius, r2=R*R;
+  const x0=Math.floor(fluxAim.x-R), x1=Math.ceil(fluxAim.x+R);
+  const z0=Math.floor(fluxAim.z-R), z1=Math.ceil(fluxAim.z+R);
+  for (let ix=x0;ix<=x1;ix++) for (let iz=z0;iz<=z1;iz++){
+    if (!fIn(ix,0,iz)) continue;
+    const d2=(ix-fluxAim.x)**2+(iz-fluxAim.z)**2; if (d2>r2) continue;
+    let top=-1; for (let iy=FGH-1;iy>=0;iy--) if (fgFill[fIdx(ix,iy,iz)]){ top=iy; break; }
+    if (top<0) continue;
+    const add=0.16*(1-d2/r2*0.6);
+    // heat the top cell and the one under it, so a column softens through
+    fgTemp[fIdx(ix,top,iz)]=Math.min(1,fgTemp[fIdx(ix,top,iz)]+add);
+    if (top>0) fgTemp[fIdx(ix,top-1,iz)]=Math.min(1,fgTemp[fIdx(ix,top-1,iz)]+add*0.6);
+    forgeDirty=true;
   }
-  return best;
 }
-// One blow on a column: lift the top PROUD block (anything standing above the
-// mould) and let it flow to the nearest empty mould cell. If the top is already
-// down inside the mould there's nothing proud to move, so the blow does nothing
-// — you can't accidentally un-fill the plate, which is what makes it forgiving.
-// Split from the raycast so the flow can be verified deterministically.
-function whackColumn(ix,iz){
-  const topY=colTop(ix,iz);
-  if (topY<F_MH) return false;                        // nothing proud here
-  forgeMap.delete(fKey(ix,topY,iz));
-  const dest=nearestEmptyMould(ix,topY,iz);
-  if (dest) addForgeCell(dest.ix,dest.iy,dest.iz);    // flows into an empty mould cell
-  else addForgeCell(ix<F_FN/2?-1:F_FN,0,iz);          // mould full: squeezes out as flash
-  return true;
+const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
+// one physics step. GRAVITY acts on all metal — a cell with empty allowed space
+// below falls straight down, hot or cold, so nothing floats. Only MOLTEN metal
+// also SPREADS (down-and-to-a-side), so the raw billet drops into the dish under
+// its own weight and the flux is what walks it out to the corners.
+function forgeFlowStep(){
+  let moved=false;
+  // bottom-up so a cell that moves down doesn't get processed twice this pass
+  for (let iy=1;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    const id=fIdx(ix,iy,iz);
+    if (!fgFill[id]) continue;
+    // gravity — straight down, regardless of temperature
+    const below=fIdx(ix,iy-1,iz);
+    if (!fgFill[below] && forgeAllowed(ix,iy-1,iz)){
+      fgFill[below]=1; fgTemp[below]=fgTemp[id]; fgFill[id]=0; fgTemp[id]=0; moved=true; continue;
+    }
+    if (fgTemp[id]<FLOW_T) continue;      // cold metal is rigid: it falls but never spreads
+    // molten: slump down-and-to-a-side, biased by a rotating order so it spreads evenly
+    const order=(ix+iz+ (forgeSpin|0))&3;
+    for (let s=0;s<4;s++){
+      const [dx,dz]=_lateral[(order+s)&3];
+      const nx=ix+dx, nz=iz+dz;
+      if (!forgeAllowed(nx,iy-1,nz)) continue;
+      const nd=fIdx(nx,iy-1,nz);
+      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=fgTemp[id]; fgFill[id]=0; fgTemp[id]=0; moved=true; break; }
+    }
+  }
+  // spill: molten metal that has spread to the footprint edge columns and is
+  // still trying to move drips off — remove top edge cells that are molten and
+  // unsupported outward. Reads as metal running off the anvil.
+  for (let iy=0;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    if (ix!==0&&ix!==FGW-1&&iz!==0&&iz!==FGD-1) continue;   // edge columns only
+    const id=fIdx(ix,iy,iz);
+    if (fgFill[id] && fgTemp[id]>=FLOW_T){ fgFill[id]=0; fgTemp[id]=0; fgFlash++; moved=true; }
+  }
+  // cool everything a little; a cell crossing a heat band needs a redraw
+  for (let id=0;id<FG_N;id++){
+    const t=fgTemp[id];
+    if (!fgFill[id]||t<=0) continue;
+    const t2=Math.max(0,t-COOL);
+    if (bandOf(t2)!==bandOf(t)) forgeDirty=true;
+    fgTemp[id]=t2;
+  }
+  if (moved) forgeDirty=true;
+  return moved;
 }
-function whackForge(sx,sy){
-  if (forgePhase!=='forge') return;
-  // prefer the actual struck block; fall back to the column under the aim
-  ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
-  let ix,iz;
-  const hit=forgeMesh?ray.intersectObject(forgeMesh,false):[];
-  if (hit.length){ const c=forgeCellList[hit[0].instanceId]; ix=c.ix; iz=c.iz; }
-  else { const a=forgeAim(sx,sy); if (!a) return; ix=a.ix; iz=a.iz; }
-  if (whackColumn(ix,iz)){ if (typeof addShake==='function') addShake(0.03); syncForgeMesh(); updateForgeHud(); }
+// a cell is a legal destination if it's inside the mould (below rim) or in the
+// chamber directly above the footprint (not off the edge below the rim)
+const RIM=MOULD_DEPTH;
+function forgeAllowed(ix,iy,iz){
+  if (!fIn(ix,iy,iz)) return false;
+  if (iy>=RIM) return true;                 // open chamber above the mould
+  return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: only the cavity
+}
+let forgeSpin=0;
+function forgeSimTick(){
+  if (!forgeActive) return;
+  forgeSpin++;
+  if (fluxOn){ fluxHeat(); forgeBeam.visible=true; }
+  else forgeBeam.visible=(forgePhase==='flux');
+  // The step is a few thousand integer ops — cheap enough to run every frame,
+  // which keeps gravity settling the billet even when nothing is molten. The
+  // mesh only rebuilds when forgeDirty, so a fully cold, settled bench is free.
+  forgeFlowStep();
+  if (forgeDirty) { syncForgeMesh(); updateForgeHud(); }
 }
 
-function forgeFillFlash(){
-  let inm=0, fl=0;
-  for (const c of forgeMap.values()){ if (inMould(c.ix,c.iy,c.iz)) inm++; else fl++; }
-  return {inm,fl,total:inm+fl};
+function forgeFillFrac(){
+  let inm=0; for (let id=0;id<FG_N;id++) if (fgFill[id]&&fgMould[id]) inm++;
+  return fgMouldTotal? inm/fgMouldTotal : 0;
 }
 function forgeQualityNow(){
-  const {inm,fl,total}=forgeFillFlash();
-  const fill=inm/F_MOULD_TOTAL, flashFrac=total?fl/total:0;
-  return Math.max(0,Math.min(0.99, fill*(1-0.6*flashFrac)));
+  const fill=forgeFillFrac();
+  let total=0; for (let id=0;id<FG_N;id++) if (fgFill[id]) total++;
+  const flashFrac=(total+fgFlash)? fgFlash/(total+fgFlash) : 0;
+  return Math.max(0,Math.min(0.99, fill*(1-0.5*flashFrac)));
+}
+
+// ---- recess stamp: sink the core's socket into the cooled top (easy) ----
+let recessHits=0; const RECESS_NEED=3;
+function stampRecess(){
+  if (forgePhase!=='stamp') return;
+  // sink a small dimple in the top-centre — a few taps clears it fully
+  const cx=(FGW-1)/2|0, cz=(FGD-1)/2|0, r=2;
+  for (let ix=cx-r;ix<=cx+r;ix++) for (let iz=cz-r;iz<=cz+r;iz++){
+    if (!fIn(ix,0,iz)) continue;
+    let top=-1; for (let iy=FGH-1;iy>=0;iy--) if (fgFill[fIdx(ix,iy,iz)]){ top=iy; break; }
+    if (top>=RIM){ fgFill[fIdx(ix,top,iz)]=0; }   // shave proud metal into a seat
+  }
+  recessHits++; forgeDirty=true; syncForgeMesh(); updateForgeHud();
+  if (typeof addShake==='function') addShake(0.05);
 }
 
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
-  forgeMap.clear(); forgeCellList.length=0;
-  forgeChunksLeft=F_CHUNKS; forgePhase='place';
-  forgeMat.emissiveIntensity=0.35;      // cold copper, faintly lit so placement stays legible
-  forgeGroup.rotation.set(0,0,0);
-  forgeActive=true;
+  forgeBuildMould(); forgeSeedBillet();
+  forgePhase='flux'; fluxOn=false; fluxAim=null; recessHits=0; fgFlash=0;
+  forgeGroup.rotation.set(0.15,0,0);
+  forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
 }
-function leaveForge(){ forgeActive=false; }
+function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
 function finishForge(){
-  const q=forgeQualityNow(), m=forgePart;
-  const cost=m.cost||10;
-  if ((metals[m.metal]||0)<cost){ say('Not enough '+m.metal+' to finish.','warn'); return; }
-  metals[m.metal]-=cost;
+  const q=forgeQualityNow(), m=forgePart, cost=m.cost||10;
+  if ((metals[m.metal]||0)<cost&&!adminOn){ say('Not enough '+m.metal+' to finish.','warn'); return; }
+  if (!adminOn) metals[m.metal]-=cost;
   const made={name:m.label,tier:m.tier,q};
   const cur=drill[m.part];
   if (partScore(made)>partScore(cur)){
-    drill[m.part]=made;
-    floatText('★ '+Math.round(q*100)+'%','var(--amber)');
+    drill[m.part]=made; floatText('★ '+Math.round(q*100)+'%','var(--amber)');
     say(`${m.label} forged at ${Math.round(q*100)}% — fitted to the drill.`,'good');
   } else {
-    dust+=Math.floor(20*m.tier*q);
-    floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
-    say(`Forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
+    dust+=Math.floor(20*m.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
+    say(`Forged at ${Math.round(q*100)}% — weaker than fitted; melted for dust.`,'warn');
   }
-  updateMeters();
-  showView('forge');
+  updateMeters(); showView('forge');
+}
+function forgeToStamp(){
+  if (forgeFillFrac()<0.55){ say('Fill more of the frame before you sink the seat.','warn'); return; }
+  forgePhase='stamp'; fluxOn=false; forgeBeam.visible=false; updateForgeHud();
+  say('Now sink the core seat — a few taps on the crown.','good');
 }
 
 function updateForgeHud(){
   const hint=document.getElementById('fbHint'), stat=document.getElementById('fbStat'),
-        fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
+        fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish'),
+        toStamp=document.getElementById('fbStamp');
   if (!hint) return;
-  if (forgePhase==='place'){
-    hint.textContent='Drop copper where the plate needs metal — spread it across the footprint, keep the chunks touching.';
-    stat.textContent=forgeChunksLeft+' / '+F_CHUNKS+' chunks left';
-    fill.style.width='0%'; fin.disabled=true;
+  const fpc=Math.round(forgeFillFrac()*100), q=Math.round(forgeQualityNow()*100);
+  if (forgePhase==='flux'){
+    hint.textContent='Sweep the flux torch to melt the copper — it slumps into the frame. Walk heat to the corners; ease off before it runs off the edge.';
+    stat.textContent=fpc+'% filled  ·  '+q+'% quality'+(fgFlash?'  ·  '+fgFlash+' spilled':'');
+    fill.style.width=fpc+'%';
+    toStamp.style.display=''; toStamp.disabled=forgeFillFrac()<0.55; fin.style.display='none';
   } else {
-    const q=forgeQualityNow();
-    hint.textContent='Whack the glowing metal down into the mould. Fill the corners; stop before it flashes off the edge.';
-    stat.textContent=Math.round(q*100)+'% forged';
-    fill.style.width=Math.round(q*100)+'%'; fin.disabled=false;
+    hint.textContent='Tap the crown to sink the seat the core drops into. A few taps is enough — this part needs no finesse.';
+    stat.textContent='seat '+Math.min(RECESS_NEED,recessHits)+' / '+RECESS_NEED+'  ·  '+q+'% quality';
+    fill.style.width=Math.min(100,recessHits/RECESS_NEED*100)+'%';
+    toStamp.style.display='none'; fin.style.display=''; fin.disabled=recessHits<RECESS_NEED;
   }
 }
 
-// ---- forge pointer: tap to place/whack, drag to turn the mass ----
-let fDrag=false, fMoved=0, fpx=0, fpy=0;
-function forgeDown(x,y){ fDrag=true; fMoved=0; fpx=x; fpy=y; }
+// ---- pointer: hold-and-sweep the torch (flux) or tap the crown (stamp) ----
+function forgeSetBeam(){
+  if (fluxAim) forgeBeam.position.set(fWX(fluxAim.x),fWY(RIM),fWZ(fluxAim.z));
+}
+function forgeDown(x,y){
+  if (forgePhase==='stamp'){ stampRecess(); return; }
+  fluxOn=true; fluxAim=forgeAimCell(x,y); forgeSetBeam();
+}
 function forgeMove(x,y){
-  if (!fDrag) return;
-  const dx=x-fpx, dy=y-fpy; fMoved+=Math.abs(dx)+Math.abs(dy);
-  forgeGroup.rotation.y+=dx*0.008; forgeGroup.rotation.x+=dy*0.008;
-  fpx=x; fpy=y;
+  if (forgePhase!=='flux'||!fluxOn) return;
+  fluxAim=forgeAimCell(x,y); forgeSetBeam();
 }
-function forgeUp(x,y){
-  if (!fDrag) return; fDrag=false;
-  if (fMoved>6) return;                 // that was a turn, not a tap
-  if (forgePhase==='place') placeChunk(x,y); else whackForge(x,y);
-}
+function forgeUp(){ fluxOn=false; }
+// The single pointer paints heat, so turning is on dedicated buttons rather
+// than a drag, which keeps the flux gesture unambiguous.
+function forgeTurn(d){ forgeGroup.rotation.y+=d; }
 
 function renderBrew(){
   const shelf=document.getElementById('reagentShelf');
@@ -6943,7 +7030,10 @@ document.getElementById('handForgeBtn').onclick=()=>{
   showView('forgeb');
 };
 document.getElementById('fbFinish').onclick=finishForge;
+document.getElementById('fbStamp').onclick=forgeToStamp;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
+document.getElementById('fbTurnL').onclick=()=>forgeTurn(-0.35);
+document.getElementById('fbTurnR').onclick=()=>forgeTurn(0.35);
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
 // ---------- shared ui glue ----------
@@ -7441,6 +7531,7 @@ let t=0, lastNow=0;
   applyShake();
   carveTick();            // one carving sample per frame, from the latest touch position
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
+  if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
   renderer.render(scene,camera);
   frameStats(now);
   }catch(err){
