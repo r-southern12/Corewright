@@ -5995,7 +5995,7 @@ const fgFill=new Uint8Array(FG_N);     // 1 = metal present
 const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
 const fgMould=new Uint8Array(FG_N);    // 1 = box interior that SHOULD fill with framework metal
 const fgSeat=new Uint8Array(FG_N);     // 1 = core socket void — metal never enters (see forgeAllowed)
-let fgMouldTotal=0, fgFlash=0;
+let fgMouldTotal=0;
 const MOULD_DEPTH=7;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
                                        // Deepened from 3 so a real core socket sinks into it and metal
                                        // wraps the seat's SIDES (that side contact is what a core needs).
@@ -6048,43 +6048,57 @@ function forgeBuildMould(){
         else { fgMould[fIdx(ix,iy,iz)]=1; fgMouldTotal++; }
       }
 }
-// The starting billet: a lump of raw copper ore suspended in the cradle ABOVE
-// the empty dish, with clear air between it and the mould. It is cold and solid,
-// so it hangs there (only molten metal moves — see forgeFlowStep); the flux melts
-// a region and that metal sloughs off and drips down into the mould below.
-// Volume is a little over the mould so a clean forge fills it with a touch to
-// spare — the surplus is your allowable flash.
-function forgeSeedBillet(){
-  fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
-  const cx=(FGW-1)/2, cz=(FGD-1)/2, want=Math.round(fgMouldTotal*1.08);
-  const BASE=MOULD_DEPTH+4;      // hangs FOUR cells clear of the rim — a real air gap so a sloughed
-                                 // drip has room to visibly fall (throttled in forgeFlowStep) before it
-                                 // hits the pool. FGH gives the chamber the headroom this needs.
-  // R is near the footprint edge on purpose: the billet must out-volume the mould
-  // (want > mould) so a careful melt can fill it with a little to spare. A thinner
-  // stone would cap max fill below 100% and no amount of skill could finish it.
-  // Widened with the deeper cavity (bigger `want`) so the lump still holds it.
-  const R=4.7;
-  let placed=0;
-  for (let iy=BASE; iy<FGH && placed<want; iy++){
-    const up=iy-BASE;
-    // round the crown off over the top layers so it reads as a stone, not a can
-    const taper=up>4 ? (up-4)*0.55 : 0;
-    for (let ix=0; ix<FGW && placed<want; ix++)
-      for (let iz=0; iz<FGD && placed<want; iz++){
-        // Craggy silhouette: a cheap two-frequency lump on the radius makes raw
-        // ore read as rough rather than a machined billet. A second hash punches
-        // shallow pits into the near-surface skin for a pocked face.
-        const ang=Math.atan2(iz-cz,ix-cx);
-        const lump=0.9*Math.sin(ang*3+iy*1.3)+0.55*Math.sin(ang*5-iy*0.7);
-        const rr=R+lump*0.5-taper;
-        const d=Math.hypot(ix-cx,iz-cz);
-        if (d>rr+0.25) continue;
-        if (d>rr-0.8 && ((ix*73856093^iy*19349663^iz*83492791)>>>0)%5===0) continue;
-        const id=fIdx(ix,iy,iz);
-        fgFill[id]=1; fgTemp[id]=0.05; placed++;   // cold and solid
-      }
+// The feed: raw ore comes as a run of small NUGGETS fed one at a time, not one huge
+// stone. A player melting a whole mass at once can't smooth the pour — too much runs
+// at once. A single nugget is a manageable dollop: melt it, let it slump and level,
+// then the next drops in. The nuggets together out-volume the cavity (a touch over,
+// so a careful pour fills it with a little to spare). Each hangs high in the chamber
+// so a sloughed drip has a real distance to fall (throttled in forgeFlowStep).
+const FORGE_NUGGETS=10;                 // how many nuggets make up one part's worth of ore
+let forgeNugUsed=0, forgeNugSize=48;    // nuggets spawned so far this part; cells per nugget
+function forgeNugWant(){ return Math.round(fgMouldTotal*1.10); }   // total ore across all nuggets
+// Drop one nugget of cold ore high in the chamber, grown outward from a centre point
+// so it's a compact rounded lump. Returns false when the run is spent.
+function forgeSeedNugget(){
+  if (forgeNugUsed>=FORGE_NUGGETS) return false;
+  forgeNugSize=Math.ceil(forgeNugWant()/FORGE_NUGGETS);
+  const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-5;    // hangs high, centred over the seat
+  // rank every empty cell by distance to the nugget centre (y squ/stretched a touch
+  // so it reads as a lump, not a disc), then fill the nearest N — a compact blob.
+  const cells=[];
+  for (let iy=0;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    if (fgFill[fIdx(ix,iy,iz)]) continue;
+    cells.push([Math.hypot(ix-cx,(iy-cy)*0.9,iz-cz),ix,iy,iz]);
   }
+  cells.sort((a,b)=>a[0]-b[0]);
+  let placed=0;
+  for (const c of cells){
+    if (placed>=forgeNugSize) break;
+    const d=c[0],ix=c[1],iy=c[2],iz=c[3];
+    // craggy skin: skip an occasional near-surface cell so it reads as rough ore
+    if (d>1.7 && ((ix*73856093^iy*19349663^iz*83492791)>>>0)%4===0) continue;
+    const id=fIdx(ix,iy,iz); fgFill[id]=1; fgTemp[id]=0.05; placed++;   // cold and solid
+  }
+  forgeNugUsed++;
+  return true;
+}
+// Feed the next nugget once the current one is essentially gone — i.e. almost no
+// cold ore is left hanging ANYWHERE in the chamber (above the box rim). Molten drips
+// in transit don't count (they're falling, not hanging), and pooled metal is below
+// the rim, so this is just "the nugget you were melting is used up". Counting the
+// whole hang, not a top band, stops a sagged half-nugget from triggering the next.
+const NUG_ZONE_LO=FGH-9;                 // the upper chamber where a nugget hangs + its first drips
+function forgeMaybeNextNugget(){
+  if (forgeNugUsed>=FORGE_NUGGETS) return;
+  // count metal in the UPPER chamber only — the hanging nugget and its fresh drips.
+  // Temperature-agnostic (torching turns it molten for a moment; a cold-only count
+  // would mis-fire). Looking only high up means overfill piling low at the rim never
+  // blocks the next nugget — only an actual unmelted nugget up top does.
+  let hanging=0;
+  for (let iy=NUG_ZONE_LO; iy<FGH; iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    if (fgFill[fIdx(ix,iy,iz)]){ if (++hanging>=8) return; }
+  }
+  if (forgeSeedNugget()) forgeDirty=true;
 }
 
 // ---- rendering: a molten SURFACE, meshed from the field every frame ----
@@ -6396,6 +6410,19 @@ function forgeFlowStep(){
           fgFill[bl]=1; fgTemp[bl]=t; fgFill[id]=0; fgTemp[id]=0; moved=true;
         }
       }
+      // Perched over the OPEN SEAT MOUTH: the cell below is the socket void, so this
+      // cold bit has no support under it and must not just hang there capping the seat
+      // (a frozen skin over the mouth also blocks the next nugget from feeding). Shed
+      // it off to the side — down-and-off if it can, else level — to a real cell.
+      else if (iy>0 && fgSeat[fIdx(ix,iy-1,iz)]){
+        const order=(ix+iz+forgeSpin)&3;
+        for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+          if (forgeAllowed(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)]){ const nd=fIdx(nx,iy-1,nz);
+            fgFill[nd]=1; fgTemp[nd]=t; fgFill[id]=0; fgTemp[id]=0; moved=true; break; }
+          if (forgeAllowed(nx,iy,nz) && !fgFill[fIdx(nx,iy,nz)]){ const nd=fIdx(nx,iy,nz);
+            fgFill[nd]=1; fgTemp[nd]=t; fgFill[id]=0; fgTemp[id]=0; moved=true; break; }
+        }
+      }
       continue;
     }
     // gravity — molten metal drips down. THROTTLED while falling through open air so
@@ -6430,25 +6457,25 @@ function forgeFlowStep(){
       const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
       if (!forgeAllowed(nx,iy-1,nz)) continue;
       const nd=fIdx(nx,iy-1,nz);
-      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.9; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; did=true; }
+      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.98; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; did=true; }
     }
-    // otherwise LEVEL sideways — liquid finding its level, so a central pile
-    // spreads out to fill the mould edges and reach the rim instead of doming
+    // otherwise LEVEL sideways — liquid finding its level, so a central pile spreads
+    // out to fill the box edges and reach the rim instead of doming. Retains most of
+    // its heat per sideways step (0.98): the pour lands in ONE spot (the nugget hangs
+    // centred over the seat), so molten metal must travel several cells AROUND the seat
+    // to reach the far corners of the deep box — at the old ~0.9 it cooled and locked
+    // after 2-3 cells, leaving the corners permanently unfillable. Higher retention lets
+    // a hot pool find its level across the whole cavity.
     if (!did) for (let s=0;s<4 && !did;s++){
       const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
       if (!forgeAllowed(nx,iy,nz)) continue;
       const nd=fIdx(nx,iy,nz);
-      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.92; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; did=true; }
+      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.98; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; did=true; }
     }
   }
-  // spill: molten metal that has spread to the footprint edge columns and is
-  // still trying to move drips off — remove top edge cells that are molten and
-  // unsupported outward. Reads as metal running off the anvil.
-  for (let iy=0;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-    if (ix!==0&&ix!==FGW-1&&iz!==0&&iz!==FGD-1) continue;   // edge columns only
-    const id=fIdx(ix,iy,iz);
-    if (fgFill[id] && fgTemp[id]>=FLOW_T){ fgFill[id]=0; fgTemp[id]=0; fgFlash++; moved=true; }
-  }
+  // (No spill/flash mechanic: metal that reaches an edge just stops there. Wastage as
+  // a semi-random loss wasn't wanted — with a measured nugget feed you control how
+  // much you pour, so overshoot piles at the rim as a visible cue, not a hidden tax.)
   // cool everything a little; the surface colour is per-vertex and continuous,
   // so any still-warm cell means the glow is changing and the mesh needs a redraw.
   // Airborne drips (in the open chamber above the box rim) barely cool: a slough is
@@ -6472,7 +6499,7 @@ const RIM=MOULD_DEPTH;
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
 // how fast the pool levels (the temperature-throttled lateral spread).
-const FALL_EVERY=4;
+const FALL_EVERY=7;
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
@@ -6540,7 +6567,7 @@ function forgeSimTick(){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn) fluxHeat();
     forgeFlowStep();
-    if ((forgeSpin&3)===0) forgeDropSmallClusters();   // reclaim stray broken-off bits
+    if ((forgeSpin&3)===0){ forgeDropSmallClusters(); forgeMaybeNextNugget(); }
   }
   if (forgeDirty){ syncForgeMesh(); updateForgeHud(); }
 }
@@ -6550,10 +6577,9 @@ function forgeFillFrac(){
   return fgMouldTotal? inm/fgMouldTotal : 0;
 }
 function forgeQualityNow(){
-  const fill=forgeFillFrac();
-  let total=0; for (let id=0;id<FG_N;id++) if (fgFill[id]) total++;
-  const flashFrac=(total+fgFlash)? fgFlash/(total+fgFlash) : 0;
-  return Math.max(0,Math.min(0.99, fill*(1-0.5*flashFrac)));
+  // Quality is how completely the framework is filled around the seat. (Stage D will
+  // fold in alloy colour-match and seat-wall contact once the crucible lands.)
+  return Math.max(0,Math.min(0.99, forgeFillFrac()));
 }
 
 // The core seat is no longer a separate "stamp" step — it is cast into the metal as
@@ -6565,8 +6591,10 @@ const FILL_DONE=0.6;
 
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
-  forgeBuildMould(); forgeSeedBillet();
-  forgePhase='flux'; fluxOn=false; fluxAim=null; fgFlash=0;
+  forgeBuildMould();
+  fgFill.fill(0); fgTemp.fill(0); forgeNugUsed=0;
+  forgeSeedNugget();                        // first nugget hangs ready
+  forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
@@ -6594,8 +6622,9 @@ function updateForgeHud(){
         fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
   if (!hint) return;
   const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
-  hint.textContent='Hold the flux torch on the copper to melt it — molten metal sloughs off and slumps into the frame around the core seat. Drag empty space to turn the bench. Ease off before it runs off the edge.';
-  stat.textContent=fpc+'% filled  ·  '+q+'% quality'+(fgFlash?'  ·  '+fgFlash+' spilled':'');
+  const nugLeft=FORGE_NUGGETS-forgeNugUsed;   // nuggets not yet fed (the one hanging counts as fed)
+  hint.textContent='Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each one level before the next drops. Drag empty space to turn the bench.';
+  stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left';
   fill.style.width=fpc+'%';
   fin.disabled=frac<FILL_DONE;
 }
