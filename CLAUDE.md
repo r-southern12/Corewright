@@ -105,20 +105,42 @@ plane code because it depends on them.
 
 **The flux press — heat-and-slump forging (MVP).** NOT carving in reverse.
 Carving aims a tool at a static object and removes; this aims HEAT at a live one
-and lets physics move it. A **copper stone** stands tall above a mould dish; you
-sweep a flux torch (hold-and-sweep, like the polish lap) and metal goes molten
-where the beam touches. Gravity acts on all metal (nothing floats); molten metal
-also **spreads and levels** — down-and-to-a-side first, then sideways to find its
-level — so it slumps down and fills the mould like a liquid, walking out to the
-edges as you heat. Spreading is **throttled by temperature** (`p` in
-`forgeFlowStep`): fresh heat creeps briskly, cooling metal slows, cold stops till
-reheated — malleable for a short time, not instant. Overheat and it runs off the
-footprint edge as flash, gone. Settled metal that has filled a mould column reads
-in a cool **finished shade** (`F_SET`) so "correct and done" is visible. Then the
-recess (the seat a core drops into) is sunk with a few taps. Quality = mould-fill
-× (1 − flash penalty). Future: **obstacle moulds** — `forgeAllowed` already routes
-flow around blocked cells, so complex cavities the metal must thread down through
-are a data change, not an engine one.
+and lets physics move it. A **rugged copper stone hangs above an empty mould
+dish**, clear air between them (`forgeSeedBillet`; the lumpy silhouette + mottled
+cold colour make it read as raw ore, not a billet). You press-and-hold the flux
+torch on the stone and metal goes molten where the beam touches; the molten patch
+**sloughs off and drips down** into the dish, then slumps and levels to fill it.
+
+**Only molten metal moves — cold metal is HELD.** This is the load-bearing rule:
+it is why the stone hangs above the empty dish instead of dropping in, and why
+"cools = stops moving" is literally true (the feedback the player reads). Molten
+metal drips **straight down as far as it can in one tick** (so a drop reaches the
+pool before it cools and freezes in mid-air), then spreads down-and-to-a-side and
+levels sideways — throttled by temperature (`p` in `forgeFlowStep`): fresh heat
+runs briskly, cooling metal slows, cold stops till reheated. `fMeltCreep` nudges
+the cell **above** a vacated one toward molten *only if already warm*, so the melt
+front climbs and the stone slumps like a candle instead of leaving cold caps
+floating — it never ignites untouched ore, so the stone stays put except where
+you paint. Overheat an edge and it runs off as flash, gone. The billet
+out-volumes the mould (`want ≈ mould × 1.08`) so a careful pour fills it with a
+little to spare; that surplus is your flash allowance.
+
+**Aim is by raycasting the actual metal surface** (`forgeAimCell` → `forgeSurf`),
+not a flat ground plane. The old plane cast resolved a click on the tall stone to
+a point far below where it appeared, so the brush never sat under the cursor; the
+surface cast puts the heat sphere exactly where you click, and the sim re-aims at
+the receding surface each tick so a hold eats downward. **Pointer gesture:** press
+on metal fluxes, drag on empty space rotates the bench — one gesture, disambiguated
+by the raycast hit, so there are no turn buttons.
+
+Settled metal that has filled a mould column reads in a saturated **verdigris
+finished shade** (`F_SET`) so "correct and done" is unmistakable — it must be
+saturated, not pale, because the metallic surface tints its env reflection by the
+base colour and a desaturated tone just reflects gold. Then the recess (the seat a
+core drops into) is sunk with a few taps. Quality = mould-fill × (1 − flash
+penalty). Future: **obstacle moulds** — `forgeAllowed` already routes flow around
+blocked cells, so complex cavities the metal must thread down through are a data
+change, not an engine one.
 
 **It is rendered as a liquid SURFACE, not cubes** — this is the thing that
 makes the forge feel unlike carving. Drawing one cube per cell looked like
@@ -140,14 +162,19 @@ Why it doesn't lag, and how it's built (read before touching it):
   makes the surface fill to the mould edges and lets lone cells show as droplets
   (a fraction-of-neighbours field shrank boundaries inward). Winding is aligned
   to the outward density **gradient** (`fEmit`), so it renders single-sided
-  cleanly. Measured ~2.4ms/rebuild, ~2k triangles, **5 draw calls** — cheaper
-  than the cube version it replaced.
+  cleanly. Measured ~2.8ms/rebuild (SwiftShader), ~2k triangles, **5 draw
+  calls** — cheaper than the cube version it replaced. It only rebuilds on
+  `forgeDirty`, so a settled bench is free.
 - Normals come from the density gradient, not triangle winding, so the marching
   table only has to be topologically right; winding errors can't dark-face it.
-- `COOL` is deliberately slow (0.008/tick): molten metal must stay liquid long
-  enough to run, and slow = patient/forgiving, not twitchy. Tuning `COOL`,
-  `FLOW_T`, the flux heat rate and the billet/mould volumes is how you change
-  the difficulty — do it there, not in the flow rule.
+- `COOL` is deliberately slow (0.004/tick): molten metal must stay liquid long
+  enough to drip AND level before it sets, and slow = patient/forgiving. Too fast
+  and drips freeze in the air gap between stone and dish. Tuning `COOL`, `FLOW_T`,
+  `FLUX_ADD` (torch heat/tick), `MELT_CREEP` and the billet/mould volumes is how
+  you change difficulty — do it there, not in the flow rule.
+- The sim is **frame-coupled** (one `forgeFlowStep` per rendered frame), so the
+  melt runs faster at 60fps than on a slow panel. Acceptable for now, but if a
+  balance pass needs frame-rate independence, scale the per-tick rates by dt.
 
 Self-contained subsystem (`forgeGroup`, the `fg*` arrays, `forgeSurf`),
 sharing only scene/camera/lighting; it does **not** touch `voxels`,
