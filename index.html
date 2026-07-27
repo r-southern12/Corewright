@@ -6023,21 +6023,12 @@ function forgeSeedBillet(){
       }
 }
 
-// ---- rendering: heat bands, one instanced mesh each ----
+// ---- rendering: a molten SURFACE, meshed from the field every frame ----
+// Not cubes. The fill/heat field is turned into a smooth isosurface by marching
+// tetrahedra so the metal reads as liquid and runs live as it flows. Winding is
+// aligned to the outward density gradient, so it renders single-sided cleanly.
+// Every buffer is preallocated and reused — no per-frame allocation.
 const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=false;
-const forgeGeo=new THREE.BoxGeometry(FVOX*0.96,FVOX*0.96,FVOX*0.96);
-const FORGE_BANDS=[   // temp ceiling -> look; cold copper up to white-hot melt
-  {t:0.18, col:0x7c4a24, emi:0x2a1206, ei:0.15},
-  {t:0.45, col:0xb5601f, emi:0xff5a1e, ei:0.45},
-  {t:0.72, col:0xff8a2e, emi:0xff7a2a, ei:0.95},
-  {t:1.01, col:0xffd98a, emi:0xffb04a, ei:1.5}
-];
-const forgeBandMesh=FORGE_BANDS.map(b=>{
-  const m=new THREE.MeshStandardMaterial({color:b.col,metalness:0.4,roughness:0.55,
-    emissive:new THREE.Color(b.emi),emissiveIntensity:b.ei});
-  const im=new THREE.InstancedMesh(forgeGeo,m,FG_N);
-  im.frustumCulled=false; im.count=0; forgeGroup.add(im); return im;
-});
 // anvil plate under the mould (local, not the forgeAnvil global)
 const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
   new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
@@ -6047,7 +6038,7 @@ const _mgeo=new THREE.BoxGeometry((FGW-2*MOULD_INSET)*FVOX,MOULD_DEPTH*FVOX,(FGD
 const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghostEdge);
 forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
 forgeGroup.add(forgeGhostWire);
-// the flux beam marker — a soft ring where the torch is aimed
+// the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.4,16,12),
   new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
 forgeBeam.visible=false; forgeGroup.add(forgeBeam);
@@ -6056,22 +6047,116 @@ const forgePlane=new THREE.Mesh(new THREE.PlaneGeometry(50,50),
   new THREE.MeshBasicMaterial({visible:false}));
 forgePlane.rotation.x=-Math.PI/2; forgePlane.position.y=fWY(0); forgeGroup.add(forgePlane);
 
-const _fm=new THREE.Matrix4(), _fp=new THREE.Vector3(), _fwhite=new THREE.Color(0xffffff);
-let forgeDirty=true;
-function bandOf(t){ for (let i=0;i<FORGE_BANDS.length;i++) if (t<FORGE_BANDS[i].t) return i; return FORGE_BANDS.length-1; }
+// corner density grid (one larger than the cell grid), smoothed each rebuild
+const FC_W=FGW+1, FC_H=FGH+1, FC_D=FGD+1;
+const fcIdx=(x,y,z)=>x+y*FC_W+z*FC_W*FC_H;
+const forgeDens=new Float32Array(FC_W*FC_H*FC_D);
+const forgeDens2=new Float32Array(FC_W*FC_H*FC_D);
+// worst case: 6 tets/cell x 2 tris x 3 verts. Preallocated, never grows.
+const FORGE_MAXV=FGW*FGH*FGD*6*2*3;
+const forgePos=new Float32Array(FORGE_MAXV*3);
+const forgeNor=new Float32Array(FORGE_MAXV*3);
+const forgeCol=new Float32Array(FORGE_MAXV*3);
+const forgeSurfGeo=new THREE.BufferGeometry();
+forgeSurfGeo.setAttribute('position',new THREE.BufferAttribute(forgePos,3));
+forgeSurfGeo.setAttribute('normal',new THREE.BufferAttribute(forgeNor,3));
+forgeSurfGeo.setAttribute('color',new THREE.BufferAttribute(forgeCol,3));
+const forgeSurfMat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.6,
+  roughness:0.3,emissive:new THREE.Color(0xff5a1e),emissiveIntensity:0.4});
+const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
+forgeSurf.frustumCulled=false; forgeGroup.add(forgeSurf);
+
+const FISO=0.5, F_COLD=new THREE.Color(0x6f3f1e), F_HOT=new THREE.Color(0xffe6b0);
+const _fcp=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];   // 8 corner grid positions
+const _fcv=new Float32Array(8);                                                 // 8 corner densities
+const _fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];                     // 6 edge scratch points
+const _fcO=[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];    // cube corner offsets
+const _ftet=[[0,5,1,6],[0,1,2,6],[0,2,3,6],[0,3,7,6],[0,7,4,6],[0,4,5,6]];       // 6-tet split of a cube
+const _fn0=new THREE.Vector3(),_fn1=new THREE.Vector3(),_fn2=new THREE.Vector3(),_ftmp=new THREE.Vector3();
+const _fcolor=new THREE.Color();
+let forgeDirty=true, forgeVCount=0;
+
+function fDens(x,y,z){                          // trilinear sample of the smoothed corner field
+  if (x<0)x=0; else if (x>FC_W-1.001)x=FC_W-1.001;
+  if (y<0)y=0; else if (y>FC_H-1.001)y=FC_H-1.001;
+  if (z<0)z=0; else if (z>FC_D-1.001)z=FC_D-1.001;
+  const x0=x|0,y0=y|0,z0=z|0, fx=x-x0,fy=y-y0,fz=z-z0, D=forgeDens, i=fcIdx(x0,y0,z0), row=FC_W, sl=FC_W*FC_H;
+  const c00=D[i]*(1-fx)+D[i+1]*fx, c10=D[i+row]*(1-fx)+D[i+row+1]*fx;
+  const c01=D[i+sl]*(1-fx)+D[i+sl+1]*fx, c11=D[i+sl+row]*(1-fx)+D[i+sl+row+1]*fx;
+  return (c00*(1-fy)+c10*fy)*(1-fz)+(c01*(1-fy)+c11*fy)*fz;
+}
+function fGrad(x,y,z){ const e=0.6;             // outward normal = toward lower density
+  _ftmp.set(fDens(x-e,y,z)-fDens(x+e,y,z), fDens(x,y-e,z)-fDens(x,y+e,z), fDens(x,y,z-e)-fDens(x,y,z+e));
+  if (_ftmp.lengthSq()<1e-9) _ftmp.set(0,1,0); else _ftmp.normalize();
+  return _ftmp;
+}
+function fPushVert(g){                          // g = [gx,gy,gz] in grid coords
+  if (forgeVCount>=FORGE_MAXV) return;
+  const o=forgeVCount*3, gx=g[0],gy=g[1],gz=g[2];
+  forgePos[o]=(gx-FGW/2)*FVOX; forgePos[o+1]=(gy-4.5)*FVOX; forgePos[o+2]=(gz-FGD/2)*FVOX;
+  const n=fGrad(gx,gy,gz); forgeNor[o]=n.x; forgeNor[o+1]=n.y; forgeNor[o+2]=n.z;
+  const ix=Math.min(FGW-1,Math.max(0,gx|0)), iy=Math.min(FGH-1,Math.max(0,gy|0)), iz=Math.min(FGD-1,Math.max(0,gz|0));
+  const t=fgTemp[fIdx(ix,iy,iz)]||0;
+  _fcolor.copy(F_COLD).lerp(F_HOT,Math.min(1,t*1.35));
+  forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
+  forgeVCount++;
+}
+function fEmit(a,b,c){                           // winding aligned to the outward gradient
+  const gn=fGrad((a[0]+b[0]+c[0])/3,(a[1]+b[1]+c[1])/3,(a[2]+b[2]+c[2])/3);
+  _fn1.set(b[0]-a[0],b[1]-a[1],b[2]-a[2]); _fn2.set(c[0]-a[0],c[1]-a[1],c[2]-a[2]);
+  _fn0.crossVectors(_fn1,_fn2);
+  if (_fn0.dot(gn)<0){ fPushVert(a); fPushVert(c); fPushVert(b); }
+  else { fPushVert(a); fPushVert(b); fPushVert(c); }
+}
+function fEdge(k,ci,cj){                          // isocrossing on the edge between cube corners ci,cj
+  const vi=_fcv[ci], vj=_fcv[cj], t=(FISO-vi)/(vj-vi), pi=_fcp[ci], pj=_fcp[cj], e=_fe[k];
+  e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
+}
 function syncForgeMesh(){
-  const cnt=FORGE_BANDS.map(()=>0);
-  for (let id=0;id<FG_N;id++){
-    if (!fgFill[id]) continue;
-    const iy=(id/FGW|0)%FGH, ix=id%FGW, iz=id/(FGW*FGH)|0;
-    const bi=bandOf(fgTemp[id]), im=forgeBandMesh[bi], k=cnt[bi]++;
-    _fp.set(fWX(ix),fWY(iy),fWZ(iz)); _fm.makeTranslation(_fp.x,_fp.y,_fp.z);
-    im.setMatrixAt(k,_fm);
+  // 1) corner density = fraction of the 8 surrounding cells that are filled
+  const D=forgeDens;
+  for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
+    let s=0;
+    for (let dz=-1;dz<=0;dz++) for (let dy=-1;dy<=0;dy++) for (let dx=-1;dx<=0;dx++){
+      const ix=cx+dx,iy=cy+dy,iz=cz+dz;
+      if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]) s++;
+    }
+    D[fcIdx(cx,cy,cz)]=s*0.125;
   }
-  for (let b=0;b<forgeBandMesh.length;b++){
-    forgeBandMesh[b].count=cnt[b];
-    forgeBandMesh[b].instanceMatrix.needsUpdate=true;
+  // 2) one smoothing pass — rounds the surface toward liquid
+  const D2=forgeDens2, row=FC_W, sl=FC_W*FC_H;
+  D2.set(D);
+  for (let cz=1;cz<FC_D-1;cz++) for (let cy=1;cy<FC_H-1;cy++) for (let cx=1;cx<FC_W-1;cx++){
+    const i=fcIdx(cx,cy,cz);
+    D2[i]=(D[i]*2 + D[i-1]+D[i+1]+D[i-row]+D[i+row]+D[i-sl]+D[i+sl])*0.125;
   }
+  D.set(D2);
+  // 3) march tetrahedra
+  forgeVCount=0;
+  for (let cz=0;cz<FGD;cz++) for (let cy=0;cy<FGH;cy++) for (let cx=0;cx<FGW;cx++){
+    for (let k=0;k<8;k++){ const o=_fcO[k], p=_fcp[k];
+      p[0]=cx+o[0]; p[1]=cy+o[1]; p[2]=cz+o[2]; _fcv[k]=D[fcIdx(p[0],p[1],p[2])]; }
+    for (let ti=0;ti<6;ti++){
+      const T=_ftet[ti], A=T[0],B=T[1],C=T[2],E=T[3];
+      let idx=0; if(_fcv[A]<FISO)idx|=1; if(_fcv[B]<FISO)idx|=2; if(_fcv[C]<FISO)idx|=4; if(_fcv[E]<FISO)idx|=8;
+      switch(idx){
+        case 0: case 15: break;
+        case 1: case 14: fEmit(fEdge(0,A,B),fEdge(1,A,C),fEdge(2,A,E)); break;
+        case 2: case 13: fEmit(fEdge(0,B,A),fEdge(1,B,E),fEdge(2,B,C)); break;
+        case 4: case 11: fEmit(fEdge(0,C,A),fEdge(1,C,B),fEdge(2,C,E)); break;
+        case 8: case 7:  fEmit(fEdge(0,E,A),fEdge(1,E,C),fEdge(2,E,B)); break;
+        case 3: case 12: fEmit(fEdge(0,A,E),fEdge(1,A,C),fEdge(2,B,E)); fEmit(fEdge(3,B,E),fEdge(4,A,C),fEdge(5,B,C)); break;
+        case 5: case 10: fEmit(fEdge(0,A,B),fEdge(1,C,E),fEdge(2,A,E)); fEmit(fEdge(3,A,B),fEdge(4,B,C),fEdge(5,C,E)); break;
+        case 6: case 9:  fEmit(fEdge(0,A,B),fEdge(1,A,C),fEdge(2,B,E)); fEmit(fEdge(3,A,C),fEdge(4,C,E),fEdge(5,B,E)); break;
+      }
+    }
+  }
+  // 4) commit only the used range
+  const n=forgeVCount*3;
+  for (const a of [forgeSurfGeo.attributes.position,forgeSurfGeo.attributes.normal,forgeSurfGeo.attributes.color]){
+    a.updateRange.offset=0; a.updateRange.count=n; a.needsUpdate=true;
+  }
+  forgeSurfGeo.setDrawRange(0,forgeVCount);
   forgeDirty=false;
 }
 
@@ -6138,13 +6223,13 @@ function forgeFlowStep(){
     const id=fIdx(ix,iy,iz);
     if (fgFill[id] && fgTemp[id]>=FLOW_T){ fgFill[id]=0; fgTemp[id]=0; fgFlash++; moved=true; }
   }
-  // cool everything a little; a cell crossing a heat band needs a redraw
+  // cool everything a little; the surface colour is per-vertex and continuous,
+  // so any still-warm cell means the glow is changing and the mesh needs a redraw
   for (let id=0;id<FG_N;id++){
     const t=fgTemp[id];
     if (!fgFill[id]||t<=0) continue;
-    const t2=Math.max(0,t-COOL);
-    if (bandOf(t2)!==bandOf(t)) forgeDirty=true;
-    fgTemp[id]=t2;
+    fgTemp[id]=Math.max(0,t-COOL);
+    forgeDirty=true;
   }
   if (moved) forgeDirty=true;
   return moved;

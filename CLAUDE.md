@@ -113,21 +113,34 @@ the corners. Overheat and the melt runs off the footprint edge — flash, gone.
 Then the recess (the seat a core drops into) is sunk with a few taps — not
 skill-based, as specced. Quality = mould-fill × (1 − flash penalty).
 
+**It is rendered as a liquid SURFACE, not cubes** — this is the thing that
+makes the forge feel unlike carving. Drawing one cube per cell looked like
+stacked blocks no matter how good the sim was (two rejected attempts proved it).
+So the fill/heat field is turned into a smooth isosurface by **marching
+tetrahedra**, re-meshed every frame, and the metal reads as molten liquid that
+runs live as it flows.
+
 Why it doesn't lag, and how it's built (read before touching it):
 - The grid is **typed arrays** — `fgFill` (Uint8), `fgTemp` (Float32), `fgMould`
   (Uint8), flat-indexed by `fIdx`. No per-cell objects, no per-frame allocation.
 - `forgeFlowStep` runs every frame in the forge view (a few thousand int ops,
-  microseconds). The **mesh only rebuilds when `forgeDirty`** — set when a cell
-  moves or crosses a heat band — so a settled, cold bench costs nothing.
-- Glow varies per cell, which one material can't do, so heat is drawn in
-  **bands** (`FORGE_BANDS`), one `InstancedMesh` each — the same trick the
-  carving glow uses. ~6–8 draw calls.
+  microseconds). The **surface only re-meshes when `forgeDirty`** — set when a
+  cell moves or is still cooling — so a settled, cold bench costs nothing.
+- The surface mesher (`syncForgeMesh`) builds a corner **density field** (one
+  smoothing pass), marches 6 tetrahedra per cell, and writes into **preallocated**
+  position/normal/colour buffers (`forgePos/Nor/Col`) — no per-frame allocation.
+  Winding is aligned to the outward density **gradient** (`fEmit`), so it renders
+  single-sided cleanly. Per-cell glow is baked into vertex colour (cold copper →
+  white-hot). Measured ~1.5ms/rebuild, ~1.3k triangles, **5 draw calls** — it's
+  actually cheaper than the cube version it replaced.
+- Normals come from the density gradient, not triangle winding, so the marching
+  table only has to be topologically right; winding errors can't dark-face it.
 - `COOL` is deliberately slow (0.008/tick): molten metal must stay liquid long
   enough to run, and slow = patient/forgiving, not twitchy. Tuning `COOL`,
   `FLOW_T`, the flux heat rate and the billet/mould volumes is how you change
   the difficulty — do it there, not in the flow rule.
 
-Self-contained subsystem (`forgeGroup`, the `fg*` arrays, `forgeBandMesh`),
+Self-contained subsystem (`forgeGroup`, the `fg*` arrays, `forgeSurf`),
 sharing only scene/camera/lighting; it does **not** touch `voxels`,
 `activeCore` or the shard batches. Entered from the Forge wing as view
 `'forgeb'`; `showView` hides `mineral`, shows `forgeGroup`, and the tick loop
