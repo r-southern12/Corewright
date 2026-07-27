@@ -5972,10 +5972,11 @@ const SEED_UP={
      activeCore or the shard batches. (NB `forgeAnvil` is already the
      seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FGW=11, FGH=19, FGD=11;          // grid dims (footprint x height x depth). Taller than the
+const FGW=11, FGH=21, FGD=11;          // grid dims (footprint x height x depth). Taller than the
                                        // original 15 on purpose: a DEEP core socket eats down into the
-                                       // box, so the billet chamber ABOVE needs extra headroom to hold a
-                                       // billet that still out-volumes the (now larger) cavity.
+                                       // box, AND the billet hangs with a real air gap above it so a
+                                       // sloughed drip visibly falls; both need chamber headroom while
+                                       // the billet still out-volumes the (now larger) cavity.
 const FG_N=FGW*FGH*FGD;
 const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
 const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
@@ -5984,7 +5985,7 @@ const FVOX=0.34;                       // cell edge, world units
 // bottom (iy 0..) and the copper stone hangs high above it, so the origin is set
 // low-ish to frame both. fPushVert's vertex Y and forgeAimCell's inverse both
 // derive from FY0 — change it here and they follow, so they never drift apart.
-const FY0=7;                           // origin row; raised with FGH so the deeper box + taller
+const FY0=8;                           // origin row; raised with FGH so the deeper box + taller
                                        // billet chamber still frame in the forge camera
 const fWX=ix=>(ix-(FGW-1)/2)*FVOX;
 const fWY=iy=>(iy-FY0)*FVOX;
@@ -5999,7 +6000,13 @@ const MOULD_DEPTH=7;                    // box cavity is iy 0..DEPTH-1; DEPTH+ i
                                        // Deepened from 3 so a real core socket sinks into it and metal
                                        // wraps the seat's SIDES (that side contact is what a core needs).
 const MOULD_INSET=1;                    // cavity inset from the footprint edge
-const FLOW_T=0.45;                      // temperature at which metal turns molten and flows
+const FLOW_T=0.45;                      // temperature at which metal turns molten and flows. The
+                                       // incandescence ramp (FHEAT_*) is compressed so WHITE-HOT lands right
+                                       // here: a torched patch charges up dull red -> red -> orange -> yellow
+                                       // -> white and sloughs as it goes white, which is the tell the player
+                                       // reads. Metal that cools back below this locks in place and then sets,
+                                       // so it visibly fades white -> orange -> red -> patina. Kept at the
+                                       // original value on purpose — the flow rates are tuned around it.
 // Cooling is SLOW on purpose — molten metal has to stay liquid long enough to
 // drip down AND level across the mould before it sets, and slow means
 // patient/forgiving, not twitchy. Too fast and drips freeze in mid-air in the
@@ -6050,8 +6057,9 @@ function forgeBuildMould(){
 function forgeSeedBillet(){
   fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2, want=Math.round(fgMouldTotal*1.08);
-  const BASE=MOULD_DEPTH+1;      // hangs one cell clear of the rim — the deep socket eats the chamber,
-                                 // so the air gap is tighter than the old dish; a drip still falls it.
+  const BASE=MOULD_DEPTH+4;      // hangs FOUR cells clear of the rim — a real air gap so a sloughed
+                                 // drip has room to visibly fall (throttled in forgeFlowStep) before it
+                                 // hits the pool. FGH gives the chamber the headroom this needs.
   // R is near the footprint edge on purpose: the billet must out-volume the mould
   // (want > mould) so a careful melt can fill it with a little to spare. A thinner
   // stone would cap max fill below 100% and no amount of skill could finish it.
@@ -6094,14 +6102,24 @@ const _mgeo=new THREE.BoxGeometry((FGW-2*MOULD_INSET)*FVOX,MOULD_DEPTH*FVOX,(FGD
 const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghostEdge);
 forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
 forgeGroup.add(forgeGhostWire);
-// socket ghost — the core SEAT the casting forms around, drawn in warm amber so it
-// reads as the goal, not the box. Uses the component's own ghost geometry scaled to
-// the grid (SEAT_PER cells per core-unit x FVOX world/cell), so a future non-cube
+// socket ghost — the core SEAT the casting forms around. A faint wireframe got lost
+// against the glowing billet ("I can't see where the template is"), so it's now a
+// solid TRANSLUCENT amber block filling the seat volume plus a bright edge: it reads
+// as the goal at a glance, and once metal casts around it the block sits in the void
+// and glows amber as "this is where the core drops in." depthWrite off + high
+// renderOrder so it always shows through the metal. Uses the component's own ghost
+// geometry (SEAT_PER cells per core-unit x FVOX world/cell), so a future non-cube
 // core shows its true silhouette here for free.
-const seatEdge=new THREE.LineBasicMaterial({color:0xffb347,transparent:true,opacity:0.55});
-const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(COMPONENTS[SEAT_COMP].ghost()),seatEdge);
-forgeSeatWire.scale.setScalar(SEAT_PER*FVOX);           // core-units -> world
-forgeSeatWire.position.y=fWY(SEAT_CY); forgeSeatWire.renderOrder=12;
+const _seatGeo=COMPONENTS[SEAT_COMP].ghost();
+const forgeSeatFill=new THREE.Mesh(_seatGeo,
+  new THREE.MeshBasicMaterial({color:0xffb347,transparent:true,opacity:0.24,depthWrite:false,side:THREE.DoubleSide}));
+forgeSeatFill.scale.setScalar(SEAT_PER*FVOX);           // core-units -> world
+forgeSeatFill.position.y=fWY(SEAT_CY); forgeSeatFill.renderOrder=11;
+forgeGroup.add(forgeSeatFill);
+const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(_seatGeo),
+  new THREE.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:0.9,depthWrite:false}));
+forgeSeatWire.scale.setScalar(SEAT_PER*FVOX);
+forgeSeatWire.position.y=fWY(SEAT_CY); forgeSeatWire.renderOrder=13;
 forgeGroup.add(forgeSeatWire);
 // the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
@@ -6133,13 +6151,34 @@ const forgeSurfMat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeGroup.add(forgeSurf);
 
-const FISO=0.38, F_COLD=new THREE.Color(0x8a4e22), F_HOT=new THREE.Color(0xfff2d6),
+const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
       // its reflection of the warm scene env is tinted by the base colour, and a
       // desaturated base just reflects gold and looks unfinished. A deep teal holds
       // its hue through the reflection, so "done" is unmistakable against the copper.
       F_SET=new THREE.Color(0x137a63);
+// Incandescence ramp: what a heating patch looks like as temperature climbs, and —
+// run backwards as it cools — how it fades. Cold raw ore is dark copper; heat drives
+// it dull red -> red -> orange -> yellow -> white-hot just before it sloughs, so the
+// player can SEE a patch charge up and knows when it's about to run. Cooling metal
+// walks the same stops down through orange and red before it sets. Keyed on fgTemp
+// (0..1); FLOW_T≈0.45 sits at the red->orange handover, i.e. it flows once it's past
+// red-hot. Stops are plain RGB lerped per vertex — cheap enough for the inner loop.
+// Stops compressed so near-white lands by ~0.45 (= FLOW_T): a patch reads white-hot
+// exactly as it's about to slough, and anything hotter (a torch overshoot) is pure
+// white. Cooling metal walks these back down through orange and red before it sets.
+const FHEAT_T=[0, 0.08, 0.16, 0.24, 0.32, 0.38, 0.44, 0.55];
+const FHEAT_C=[0x5a3016,0x6e2a12,0xb02a0e,0xe83c10,0xff6a1c,0xffb038,0xffe680,0xfff4e2].map(h=>new THREE.Color(h));
+const _fheatLo=new THREE.Color();
+function fHeatRamp(t,out){
+  const n=FHEAT_T.length;
+  if (t<=0) return out.copy(FHEAT_C[0]);
+  if (t>=FHEAT_T[n-1]) return out.copy(FHEAT_C[n-1]);   // clamp: hotter than the top stop = pure white
+  let i=1; while (FHEAT_T[i]<t) i++;
+  const a=FHEAT_T[i-1], b=FHEAT_T[i], f=(t-a)/(b-a);
+  return out.copy(FHEAT_C[i-1]).lerp(FHEAT_C[i], f);
+}
 const _fcp=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];   // 8 corner grid positions
 const _fcv=new Float32Array(8);                                                 // 8 corner densities
 const _fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];                     // 6 edge scratch points
@@ -6178,15 +6217,16 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   const cid=fIdx(ix,iy,iz), t=fgTemp[cid]||0;
   // "finished" = cold metal filling a mould column, up to and including the rim
   // cap, so the settled top surface reads as done rather than the mould below it
-  const inCol=fgMould[fIdx(ix,0,iz)];
-  if (t<0.12 && iy<=MOULD_DEPTH && inCol) _fcolor.copy(F_SET);  // settled, filling the mould: finished
-  else {
-    _fcolor.copy(F_COLD).lerp(F_HOT,Math.min(1,t*1.35));        // molten glow gradient
-    // raw, cold ore is mottled per cell so it reads as rough copper, not a
-    // smooth cast — a cheap hash nudges each cell's brightness a little
-    if (t<0.2){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
-      _fcolor.multiplyScalar(0.8+hsh*0.36); }
-  }
+  const inCol=fgMould[fIdx(ix,0,iz)], setDone=(iy<=MOULD_DEPTH && inCol);
+  fHeatRamp(t,_fcolor);                                         // incandescence by temperature
+  // settled metal filling the mould sets to the finished verdigris. Blend in over the
+  // last of the cooling (t 0.22->0.06) so a cell fades red -> dark -> patina instead of
+  // snapping teal the instant it drops below a hard threshold.
+  if (setDone && t<0.22){ const f=Math.min(1,(0.22-t)/0.16); _fcolor.lerp(F_SET,f); }
+  // raw, cold ore is mottled per cell so it reads as rough copper, not a smooth cast —
+  // a cheap hash nudges each cell's brightness a little (skip once it's setting patina)
+  if (t<0.2 && !(setDone && t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
+    _fcolor.multiplyScalar(0.8+hsh*0.36); }
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   forgeVCount++;
 }
@@ -6358,10 +6398,15 @@ function forgeFlowStep(){
       }
       continue;
     }
-    // gravity — molten metal drips ONE cell per step, so a drop visibly falls
-    // through the gap instead of teleporting to the pool. The crumb rule above is
-    // the safety net for the rare drip that cools mid-fall.
+    // gravity — molten metal drips down. THROTTLED while falling through open air so
+    // the slough is trackable by eye: one cell per step (~33ms) blurred down too fast
+    // to follow, which was the complaint. In the chamber (above the box rim) a drop
+    // only advances every FALL_EVERY steps, so it visibly arcs down the air gap; once
+    // it reaches the pool it settles promptly so filling doesn't feel sluggish. The
+    // crumb rule above is the safety net for the rare drip that cools mid-fall.
     if (iy>0 && !fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){
+      // hold a mid-air drop most steps, so it falls slowly enough to see
+      if (iy>=RIM && (forgeSpin % FALL_EVERY)!==0) continue;
       const nd=fIdx(ix,iy-1,iz);
       fgFill[nd]=1; fgTemp[nd]=t; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; continue;
     }
@@ -6405,11 +6450,16 @@ function forgeFlowStep(){
     if (fgFill[id] && fgTemp[id]>=FLOW_T){ fgFill[id]=0; fgTemp[id]=0; fgFlash++; moved=true; }
   }
   // cool everything a little; the surface colour is per-vertex and continuous,
-  // so any still-warm cell means the glow is changing and the mesh needs a redraw
+  // so any still-warm cell means the glow is changing and the mesh needs a redraw.
+  // Airborne drips (in the open chamber above the box rim) barely cool: a slough is
+  // only in the air for a fraction of a second, and the THROTTLED slow fall must not
+  // let it freeze mid-gap (the classic drips-freeze-in-the-air failure). It sheds its
+  // heat once it lands in the pool (iy<RIM), where full COOL applies and it sets.
   for (let id=0;id<FG_N;id++){
     const t=fgTemp[id];
     if (!fgFill[id]||t<=0) continue;
-    fgTemp[id]=Math.max(0,t-COOL);
+    const iy=((id/FGW)|0)%FGH;
+    fgTemp[id]=Math.max(0,t-(iy>=RIM?COOL*0.12:COOL));
     forgeDirty=true;
   }
   if (moved) forgeDirty=true;
@@ -6418,6 +6468,11 @@ function forgeFlowStep(){
 // a cell is a legal destination if it's inside the mould (below rim) or in the
 // chamber directly above the footprint (not off the edge below the rim)
 const RIM=MOULD_DEPTH;
+// A mid-air drop advances one cell every FALL_EVERY sim steps (~FALL_EVERY*FSTEP s
+// per cell), so the slough falls slowly enough to track instead of blurring down.
+// Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
+// how fast the pool levels (the temperature-throttled lateral spread).
+const FALL_EVERY=4;
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
