@@ -6011,16 +6011,22 @@ function forgeBuildMould(){
 // spare — the surplus is your allowable flash.
 function forgeSeedBillet(){
   fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
-  const cx=(FGW-1)/2|0, cz=(FGD-1)/2|0, half=3, want=Math.round(fgMouldTotal*1.06);
+  // A COPPER STONE: a tall rounded column standing on the mould floor and rising
+  // well above the rim. It is solid and supported, so it stands until you melt
+  // it; melting drips metal down into the mould and the stone sinks as it goes.
+  const cx=(FGW-1)/2, cz=(FGD-1)/2, want=Math.round(fgMouldTotal*1.05);
+  const R=3.0;
   let placed=0;
-  // stack a 7x7 slab upward from just above the rim until the volume is met
-  for (let iy=MOULD_DEPTH; iy<FGH && placed<want; iy++)
-    for (let ix=cx-half; ix<=cx+half && placed<want; ix++)
-      for (let iz=cz-half; iz<=cz+half && placed<want; iz++){
-        if (!fIn(ix,iy,iz)) continue;
+  for (let iy=0; iy<FGH && placed<want; iy++){
+    // round the crown in over the top couple of layers so it reads as a stone
+    const rr=(iy>FGH-3)? R-(iy-(FGH-3)) : R;
+    for (let ix=0; ix<FGW && placed<want; ix++)
+      for (let iz=0; iz<FGD && placed<want; iz++){
+        if (Math.hypot(ix-cx,iz-cz) > rr+0.25) continue;
         const id=fIdx(ix,iy,iz);
-        fgFill[id]=1; fgTemp[id]=0.28; placed++;   // warm but below FLOW_T
+        fgFill[id]=1; fgTemp[id]=0.12; placed++;   // cold and solid
       }
+  }
 }
 
 // ---- rendering: a molten SURFACE, meshed from the field every frame ----
@@ -6047,13 +6053,16 @@ const forgePlane=new THREE.Mesh(new THREE.PlaneGeometry(50,50),
   new THREE.MeshBasicMaterial({visible:false}));
 forgePlane.rotation.x=-Math.PI/2; forgePlane.position.y=fWY(0); forgeGroup.add(forgePlane);
 
-// corner density grid (one larger than the cell grid), smoothed each rebuild
-const FC_W=FGW+1, FC_H=FGH+1, FC_D=FGD+1;
+// Density sampled at CELL CENTRES, padded by one empty cell on every side so the
+// surface closes around boundary cells. A filled cell is 1, empty 0, so the iso
+// surface sits on cell faces — it fills right to the mould edges, and a lone
+// cell renders as its own droplet instead of shrinking away.
+const FC_W=FGW+2, FC_H=FGH+2, FC_D=FGD+2;
 const fcIdx=(x,y,z)=>x+y*FC_W+z*FC_W*FC_H;
 const forgeDens=new Float32Array(FC_W*FC_H*FC_D);
 const forgeDens2=new Float32Array(FC_W*FC_H*FC_D);
-// worst case: 6 tets/cell x 2 tris x 3 verts. Preallocated, never grows.
-const FORGE_MAXV=FGW*FGH*FGD*6*2*3;
+// worst case over the padded grid: 6 tets/cube x 2 tris x 3 verts. Preallocated.
+const FORGE_MAXV=(FC_W-1)*(FC_H-1)*(FC_D-1)*6*2*3;
 const forgePos=new Float32Array(FORGE_MAXV*3);
 const forgeNor=new Float32Array(FORGE_MAXV*3);
 const forgeCol=new Float32Array(FORGE_MAXV*3);
@@ -6061,12 +6070,16 @@ const forgeSurfGeo=new THREE.BufferGeometry();
 forgeSurfGeo.setAttribute('position',new THREE.BufferAttribute(forgePos,3));
 forgeSurfGeo.setAttribute('normal',new THREE.BufferAttribute(forgeNor,3));
 forgeSurfGeo.setAttribute('color',new THREE.BufferAttribute(forgeCol,3));
-const forgeSurfMat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.6,
-  roughness:0.3,emissive:new THREE.Color(0xff5a1e),emissiveIntensity:0.4});
+// Low emissive on purpose: a strong uniform glow washes every vertex orange and
+// hides the finished shade. The heat read comes from vertex colour instead —
+// hot cells are near-white-bright, set cells are a cool bronze.
+const forgeSurfMat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.55,
+  roughness:0.32,emissive:new THREE.Color(0xff6a24),emissiveIntensity:0.14});
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeGroup.add(forgeSurf);
 
-const FISO=0.5, F_COLD=new THREE.Color(0x6f3f1e), F_HOT=new THREE.Color(0xffe6b0);
+const FISO=0.38, F_COLD=new THREE.Color(0x8a4e22), F_HOT=new THREE.Color(0xfff2d6),
+      F_SET=new THREE.Color(0x86a894);   // settled mould metal: a distinct cool finished tone
 const _fcp=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];   // 8 corner grid positions
 const _fcv=new Float32Array(8);                                                 // 8 corner densities
 const _fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];                     // 6 edge scratch points
@@ -6090,14 +6103,20 @@ function fGrad(x,y,z){ const e=0.6;             // outward normal = toward lower
   if (_ftmp.lengthSq()<1e-9) _ftmp.set(0,1,0); else _ftmp.normalize();
   return _ftmp;
 }
-function fPushVert(g){                          // g = [gx,gy,gz] in grid coords
+function fPushVert(g){                          // g = [gx,gy,gz] in padded-corner coords
   if (forgeVCount>=FORGE_MAXV) return;
   const o=forgeVCount*3, gx=g[0],gy=g[1],gz=g[2];
-  forgePos[o]=(gx-FGW/2)*FVOX; forgePos[o+1]=(gy-4.5)*FVOX; forgePos[o+2]=(gz-FGD/2)*FVOX;
+  // corner c maps to cell (c-1); world uses that cell's centre
+  forgePos[o]=(gx-(FGW+1)/2)*FVOX; forgePos[o+1]=(gy-5)*FVOX; forgePos[o+2]=(gz-(FGD+1)/2)*FVOX;
   const n=fGrad(gx,gy,gz); forgeNor[o]=n.x; forgeNor[o+1]=n.y; forgeNor[o+2]=n.z;
-  const ix=Math.min(FGW-1,Math.max(0,gx|0)), iy=Math.min(FGH-1,Math.max(0,gy|0)), iz=Math.min(FGD-1,Math.max(0,gz|0));
-  const t=fgTemp[fIdx(ix,iy,iz)]||0;
-  _fcolor.copy(F_COLD).lerp(F_HOT,Math.min(1,t*1.35));
+  const ix=Math.min(FGW-1,Math.max(0,Math.round(gx)-1)), iy=Math.min(FGH-1,Math.max(0,Math.round(gy)-1)),
+        iz=Math.min(FGD-1,Math.max(0,Math.round(gz)-1));
+  const cid=fIdx(ix,iy,iz), t=fgTemp[cid]||0;
+  // "finished" = cold metal filling a mould column, up to and including the rim
+  // cap, so the settled top surface reads as done rather than the mould below it
+  const inCol=fgMould[fIdx(ix,0,iz)];
+  if (t<0.12 && iy<=MOULD_DEPTH && inCol) _fcolor.copy(F_SET);  // settled, filling the mould: finished
+  else _fcolor.copy(F_COLD).lerp(F_HOT,Math.min(1,t*1.35));     // molten glow gradient
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   forgeVCount++;
 }
@@ -6113,27 +6132,24 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
 function syncForgeMesh(){
-  // 1) corner density = fraction of the 8 surrounding cells that are filled
+  // 1) cell-centred density with an empty border (corner c -> cell c-1)
   const D=forgeDens;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    let s=0;
-    for (let dz=-1;dz<=0;dz++) for (let dy=-1;dy<=0;dy++) for (let dx=-1;dx<=0;dx++){
-      const ix=cx+dx,iy=cy+dy,iz=cz+dz;
-      if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]) s++;
-    }
-    D[fcIdx(cx,cy,cz)]=s*0.125;
+    const ix=cx-1,iy=cy-1,iz=cz-1;
+    D[fcIdx(cx,cy,cz)]=(ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)])?1:0;
   }
-  // 2) one smoothing pass — rounds the surface toward liquid
+  // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
+  //    liquid while keeping lone cells above the iso so droplets survive
   const D2=forgeDens2, row=FC_W, sl=FC_W*FC_H;
   D2.set(D);
   for (let cz=1;cz<FC_D-1;cz++) for (let cy=1;cy<FC_H-1;cy++) for (let cx=1;cx<FC_W-1;cx++){
     const i=fcIdx(cx,cy,cz);
-    D2[i]=(D[i]*2 + D[i-1]+D[i+1]+D[i-row]+D[i+row]+D[i-sl]+D[i+sl])*0.125;
+    D2[i]=(D[i]*4 + D[i-1]+D[i+1]+D[i-row]+D[i+row]+D[i-sl]+D[i+sl])*0.1;
   }
   D.set(D2);
-  // 3) march tetrahedra
+  // 3) march tetrahedra over every cube of the padded corner grid
   forgeVCount=0;
-  for (let cz=0;cz<FGD;cz++) for (let cy=0;cy<FGH;cy++) for (let cx=0;cx<FGW;cx++){
+  for (let cz=0;cz<FC_D-1;cz++) for (let cy=0;cy<FC_H-1;cy++) for (let cx=0;cx<FC_W-1;cx++){
     for (let k=0;k<8;k++){ const o=_fcO[k], p=_fcp[k];
       p[0]=cx+o[0]; p[1]=cy+o[1]; p[2]=cz+o[2]; _fcv[k]=D[fcIdx(p[0],p[1],p[2])]; }
     for (let ti=0;ti<6;ti++){
@@ -6204,15 +6220,31 @@ function forgeFlowStep(){
     if (!fgFill[below] && forgeAllowed(ix,iy-1,iz)){
       fgFill[below]=1; fgTemp[below]=fgTemp[id]; fgFill[id]=0; fgTemp[id]=0; moved=true; continue;
     }
-    if (fgTemp[id]<FLOW_T) continue;      // cold metal is rigid: it falls but never spreads
-    // molten: slump down-and-to-a-side, biased by a rotating order so it spreads evenly
+    const t=fgTemp[id];
+    if (t<FLOW_T) continue;               // cold metal is rigid: it falls but never spreads
+    // MALLEABLE FOR A SHORT TIME. Lateral spreading is throttled by temperature:
+    // freshly-heated metal creeps sideways briskly, cooling metal slows, and once
+    // it drops below FLOW_T it stops until you heat it again. Dripping straight
+    // down (gravity, above) stays prompt; only the spread is slowed, which is the
+    // part that used to feel like instant transmission.
+    const p=0.10+0.42*((t-FLOW_T)/(1-FLOW_T));   // ~0.10 just-molten .. ~0.52 white-hot
+    if (Math.random()>=p) continue;
     const order=(ix+iz+ (forgeSpin|0))&3;
-    for (let s=0;s<4;s++){
-      const [dx,dz]=_lateral[(order+s)&3];
-      const nx=ix+dx, nz=iz+dz;
+    let did=false;
+    // first choice: slump down-and-to-a-side
+    for (let s=0;s<4 && !did;s++){
+      const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
       if (!forgeAllowed(nx,iy-1,nz)) continue;
       const nd=fIdx(nx,iy-1,nz);
-      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=fgTemp[id]; fgFill[id]=0; fgTemp[id]=0; moved=true; break; }
+      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.9; fgFill[id]=0; fgTemp[id]=0; moved=true; did=true; }
+    }
+    // otherwise LEVEL sideways — liquid finding its level, so a central pile
+    // spreads out to fill the mould edges and reach the rim instead of doming
+    if (!did) for (let s=0;s<4 && !did;s++){
+      const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+      if (!forgeAllowed(nx,iy,nz)) continue;
+      const nd=fIdx(nx,iy,nz);
+      if (!fgFill[nd]){ fgFill[nd]=1; fgTemp[nd]=t*0.92; fgFill[id]=0; fgTemp[id]=0; moved=true; did=true; }
     }
   }
   // spill: molten metal that has spread to the footprint edge columns and is

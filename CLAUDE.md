@@ -105,13 +105,20 @@ plane code because it depends on them.
 
 **The flux press — heat-and-slump forging (MVP).** NOT carving in reverse.
 Carving aims a tool at a static object and removes; this aims HEAT at a live one
-and lets physics move it. A copper billet drops into a mould dish; you sweep a
-flux torch (hold-and-sweep, like the polish lap) and metal goes molten where the
-beam touches and **slumps** into the mould. Gravity acts on all metal (nothing
-floats); only molten metal *spreads*, so the flux is what walks copper out to
-the corners. Overheat and the melt runs off the footprint edge — flash, gone.
-Then the recess (the seat a core drops into) is sunk with a few taps — not
-skill-based, as specced. Quality = mould-fill × (1 − flash penalty).
+and lets physics move it. A **copper stone** stands tall above a mould dish; you
+sweep a flux torch (hold-and-sweep, like the polish lap) and metal goes molten
+where the beam touches. Gravity acts on all metal (nothing floats); molten metal
+also **spreads and levels** — down-and-to-a-side first, then sideways to find its
+level — so it slumps down and fills the mould like a liquid, walking out to the
+edges as you heat. Spreading is **throttled by temperature** (`p` in
+`forgeFlowStep`): fresh heat creeps briskly, cooling metal slows, cold stops till
+reheated — malleable for a short time, not instant. Overheat and it runs off the
+footprint edge as flash, gone. Settled metal that has filled a mould column reads
+in a cool **finished shade** (`F_SET`) so "correct and done" is visible. Then the
+recess (the seat a core drops into) is sunk with a few taps. Quality = mould-fill
+× (1 − flash penalty). Future: **obstacle moulds** — `forgeAllowed` already routes
+flow around blocked cells, so complex cavities the metal must thread down through
+are a data change, not an engine one.
 
 **It is rendered as a liquid SURFACE, not cubes** — this is the thing that
 makes the forge feel unlike carving. Drawing one cube per cell looked like
@@ -126,13 +133,15 @@ Why it doesn't lag, and how it's built (read before touching it):
 - `forgeFlowStep` runs every frame in the forge view (a few thousand int ops,
   microseconds). The **surface only re-meshes when `forgeDirty`** — set when a
   cell moves or is still cooling — so a settled, cold bench costs nothing.
-- The surface mesher (`syncForgeMesh`) builds a corner **density field** (one
-  smoothing pass), marches 6 tetrahedra per cell, and writes into **preallocated**
-  position/normal/colour buffers (`forgePos/Nor/Col`) — no per-frame allocation.
-  Winding is aligned to the outward density **gradient** (`fEmit`), so it renders
-  single-sided cleanly. Per-cell glow is baked into vertex colour (cold copper →
-  white-hot). Measured ~1.5ms/rebuild, ~1.3k triangles, **5 draw calls** — it's
-  actually cheaper than the cube version it replaced.
+- The surface mesher (`syncForgeMesh`) builds a **cell-centred** density field
+  (filled cell = 1, padded by an empty border, one centre-weighted smoothing
+  pass), marches 6 tetrahedra per cell, and writes into **preallocated**
+  position/normal/colour buffers — no per-frame allocation. Cell-centred is what
+  makes the surface fill to the mould edges and lets lone cells show as droplets
+  (a fraction-of-neighbours field shrank boundaries inward). Winding is aligned
+  to the outward density **gradient** (`fEmit`), so it renders single-sided
+  cleanly. Measured ~2.4ms/rebuild, ~2k triangles, **5 draw calls** — cheaper
+  than the cube version it replaced.
 - Normals come from the density gradient, not triangle winding, so the marching
   table only has to be topologically right; winding errors can't dark-face it.
 - `COOL` is deliberately slow (0.008/tick): molten metal must stay liquid long
