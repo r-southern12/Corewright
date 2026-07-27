@@ -5973,7 +5973,7 @@ const SEED_UP={
      activeCore or the shard batches. (NB `forgeAnvil` is already the
      seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FGW=11, FGH=13, FGD=11;          // grid dims (footprint x height x depth)
+const FGW=11, FGH=15, FGD=11;          // grid dims (footprint x height x depth)
 const FG_N=FGW*FGH*FGD;
 const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
 const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
@@ -5998,7 +5998,7 @@ const FLOW_T=0.45;                      // temperature at which metal turns molt
 // drip down AND level across the mould before it sets, and slow means
 // patient/forgiving, not twitchy. Too fast and drips freeze in mid-air in the
 // gap between the stone and the dish instead of pooling.
-const COOL=0.004;                       // per-tick temperature decay (~2s of liquid life)
+const COOL=0.0016;                      // per-STEP temperature decay (~a few seconds of liquid life at FSTEP)
 
 // The mould: a rectangular dish inset one cell from the footprint edge. Metal
 // slumps in and fills it bottom-up like a liquid; the far corners fill last, so
@@ -6019,16 +6019,16 @@ function forgeBuildMould(){
 function forgeSeedBillet(){
   fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2, want=Math.round(fgMouldTotal*1.08);
-  const BASE=MOULD_DEPTH+2;      // hangs two cells clear of the rim, so the dish starts empty
+  const BASE=MOULD_DEPTH+4;      // hangs FOUR cells clear of the rim — a tall air gap
   // R is near the footprint edge on purpose: the billet must out-volume the mould
   // (want > mould) so a careful melt can fill it with a little to spare. A thinner
   // stone would cap max fill below 100% and no amount of skill could finish it.
-  const R=4.0;
+  const R=4.1;
   let placed=0;
   for (let iy=BASE; iy<FGH && placed<want; iy++){
     const up=iy-BASE;
     // round the crown off over the top layers so it reads as a stone, not a can
-    const taper=up>4 ? (up-4)*0.7 : 0;
+    const taper=up>4 ? (up-4)*0.55 : 0;
     for (let ix=0; ix<FGW && placed<want; ix++)
       for (let iz=0; iz<FGD && placed<want; iz++){
         // Craggy silhouette: a cheap two-frequency lump on the radius makes raw
@@ -6062,7 +6062,7 @@ const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghost
 forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
 forgeGroup.add(forgeGhostWire);
 // the flux beam marker
-const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.5,16,12),
+const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
   new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
 forgeBeam.visible=false; forgeGroup.add(forgeBeam);
 
@@ -6103,7 +6103,7 @@ const _fcv=new Float32Array(8);                                                 
 const _fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];                     // 6 edge scratch points
 const _fcO=[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];    // cube corner offsets
 const _ftet=[[0,5,1,6],[0,1,2,6],[0,2,3,6],[0,3,7,6],[0,7,4,6],[0,4,5,6]];       // 6-tet split of a cube
-const _fn0=new THREE.Vector3(),_fn1=new THREE.Vector3(),_fn2=new THREE.Vector3(),_ftmp=new THREE.Vector3();
+const _fn0=new THREE.Vector3(),_fn1=new THREE.Vector3(),_fn2=new THREE.Vector3(),_ftmp=new THREE.Vector3(),_fnf=new THREE.Vector3();
 const _fcolor=new THREE.Color();
 let forgeDirty=true, forgeVCount=0;
 
@@ -6121,13 +6121,16 @@ function fGrad(x,y,z){ const e=0.6;             // outward normal = toward lower
   if (_ftmp.lengthSq()<1e-9) _ftmp.set(0,1,0); else _ftmp.normalize();
   return _ftmp;
 }
-function fPushVert(g){                          // g = [gx,gy,gz] in padded-corner coords
+function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-corner coords; fn = flat normal or null
   if (forgeVCount>=FORGE_MAXV) return;
   const o=forgeVCount*3, gx=g[0],gy=g[1],gz=g[2];
   // corner c maps to cell (c-1); world uses that cell's centre. The Y offset is
   // FY0+1: FY0 is the origin row, +1 undoes the one-cell padding shift.
   forgePos[o]=(gx-(FGW+1)/2)*FVOX; forgePos[o+1]=(gy-(FY0+1))*FVOX; forgePos[o+2]=(gz-(FGD+1)/2)*FVOX;
-  const n=fGrad(gx,gy,gz); forgeNor[o]=n.x; forgeNor[o+1]=n.y; forgeNor[o+2]=n.z;
+  // a flat (per-triangle) normal gives angular facets for cold ore; the smooth
+  // gradient normal gives liquid molten metal. fEmit decides which by temperature.
+  if (fn){ forgeNor[o]=fn.x; forgeNor[o+1]=fn.y; forgeNor[o+2]=fn.z; }
+  else { const n=fGrad(gx,gy,gz); forgeNor[o]=n.x; forgeNor[o+1]=n.y; forgeNor[o+2]=n.z; }
   const ix=Math.min(FGW-1,Math.max(0,Math.round(gx)-1)), iy=Math.min(FGH-1,Math.max(0,Math.round(gy)-1)),
         iz=Math.min(FGD-1,Math.max(0,Math.round(gz)-1));
   const cid=fIdx(ix,iy,iz), t=fgTemp[cid]||0;
@@ -6145,12 +6148,28 @@ function fPushVert(g){                          // g = [gx,gy,gz] in padded-corn
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   forgeVCount++;
 }
+const FLAT_T=0.35;                               // below this a triangle is flat-shaded (angular ore)
+function fCellTempAt(g){                          // temperature of the cell a corner sits in
+  const ix=Math.min(FGW-1,Math.max(0,Math.round(g[0])-1)), iy=Math.min(FGH-1,Math.max(0,Math.round(g[1])-1)),
+        iz=Math.min(FGD-1,Math.max(0,Math.round(g[2])-1));
+  return fgTemp[fIdx(ix,iy,iz)]||0;
+}
 function fEmit(a,b,c){                           // winding aligned to the outward gradient
   const gn=fGrad((a[0]+b[0]+c[0])/3,(a[1]+b[1]+c[1])/3,(a[2]+b[2]+c[2])/3);
   _fn1.set(b[0]-a[0],b[1]-a[1],b[2]-a[2]); _fn2.set(c[0]-a[0],c[1]-a[1],c[2]-a[2]);
   _fn0.crossVectors(_fn1,_fn2);
-  if (_fn0.dot(gn)<0){ fPushVert(a); fPushVert(c); fPushVert(b); }
-  else { fPushVert(a); fPushVert(b); fPushVert(c); }
+  const flip=_fn0.dot(gn)<0;
+  // Cold ore renders FLAT (angular crystalline facets); molten metal renders
+  // SMOOTH (gradient normals). Keyed on the hottest of the triangle's corners and
+  // rebuilt every step, so a patch morphs faceted -> smooth as it melts and back
+  // to faceted as it re-freezes in the mould. Max (not avg) biases toward smooth
+  // so a barely-molten surface never flickers as facets.
+  const tt=Math.max(fCellTempAt(a),fCellTempAt(b),fCellTempAt(c));
+  let fn=null;
+  if (tt<FLAT_T){ _fnf.copy(_fn0); if (flip) _fnf.negate();
+    if (_fnf.lengthSq()<1e-9) _fnf.set(0,1,0); else _fnf.normalize(); fn=_fnf; }
+  if (flip){ fPushVert(a,fn); fPushVert(c,fn); fPushVert(b,fn); }
+  else { fPushVert(a,fn); fPushVert(b,fn); fPushVert(c,fn); }
 }
 function fEdge(k,ci,cj){                          // isocrossing on the edge between cube corners ci,cj
   const vi=_fcv[ci], vj=_fcv[cj], t=(FISO-vi)/(vj-vi), pi=_fcp[ci], pj=_fcp[cj], e=_fe[k];
@@ -6206,18 +6225,27 @@ let forgePhase='flux';                 // 'flux' | 'stamp'
 let forgeActive=false, forgePart=null;
 let forgeSX=null, forgeSY=null;        // last pointer position, for re-aiming each tick
 let forgeRotating=false, forgePX=0, forgePY=0;
-let fluxOn=false, fluxAim=null, fluxRadius=1.5;
-const FLUX_ADD=0.13;                    // per-tick heat gain at the sphere centre
+let fluxOn=false, fluxAim=null, fluxRadius=1.7;
+// Slow enough that a held torch visibly HEATS a patch — it glows up over most of
+// a second — before it crosses FLOW_T and sloughs. That heat-up delay is the ore's
+// "heat resistance", and it was invisible when this was fast (the slough looked
+// instant). ~0.03/step over ~30Hz ≈ 0.8s of glow-up from cold before it sloughs.
+const FLUX_ADD=0.03;                    // per-step heat gain at the sphere centre
 // Aim by raycasting the ACTUAL metal surface, not a flat ground plane. The old
 // code cast a floor plane, so a click on the tall stone resolved to a point far
 // below where the stone appeared — the grey sphere never sat under the cursor.
-// Casting forgeSurf gives the true 3D hit, so the brush lands exactly where the
-// pointer is. Returns floating grid coords, or null when the ray misses metal.
+// Casting forgeSurf gives the true 3D hit. The heat centre is then pushed a cell
+// deeper ALONG THE VIEW RAY, so the sphere sits INSIDE the metal and melts a
+// solid plug rather than skimming the cold surface skin (which kept re-exposing
+// fresh cold ore and stalled the melt). Because the push is along the ray, the
+// point still projects to the same pixel — the brush stays under the cursor.
+const _faim=new THREE.Vector3();
 function forgeAimCell(sx,sy){
   ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
   const h=ray.intersectObject(forgeSurf,false); if (!h.length) return null;
-  const lp=forgeGroup.worldToLocal(h[0].point.clone());
-  return {x:lp.x/FVOX+(FGW-1)/2, y:lp.y/FVOX+FY0, z:lp.z/FVOX+(FGD-1)/2};
+  _faim.copy(h[0].point).addScaledVector(ray.ray.direction,FVOX*1.2);
+  forgeGroup.worldToLocal(_faim);
+  return {x:_faim.x/FVOX+(FGW-1)/2, y:_faim.y/FVOX+FY0, z:_faim.z/FVOX+(FGD-1)/2};
 }
 // apply the torch: warm a 3D sphere of cells centred on the surface hit. Holding
 // on one spot drives that patch molten and it sloughs off; the sim re-aims at
@@ -6231,12 +6259,17 @@ function fluxHeat(){
     if (!fIn(ix,iy,iz)) continue;
     const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
     const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
-    fgTemp[id]=Math.min(1,fgTemp[id]+FLUX_ADD*(1-d2/r2*0.6));
+    // Superlinear in current temperature: cold ore takes heat slowly (that's the
+    // visible "heat resistance" before it sloughs), but once a patch is warm it
+    // heats faster, so a sustained hold melts a plug briskly instead of crawling.
+    // This raises melt THROUGHPUT without touching how fast molten metal flows.
+    const t=fgTemp[id];
+    fgTemp[id]=Math.min(1,t+FLUX_ADD*(1-d2/r2*0.6)*(0.5+t*1.5));
     forgeDirty=true;
   }
 }
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
-const MELT_CREEP=0.05;
+const MELT_CREEP=0.09;
 // When molten metal drips out of a cell, nudge the cell directly above it toward
 // molten IF it is already warm — so the melt front climbs and the stone slumps
 // down from where you're working, like a candle, instead of leaving a cold cap
@@ -6248,6 +6281,14 @@ function fMeltCreep(ix,iy,iz){
   const up=fIdx(ix,iy+1,iz);
   if (fgFill[up] && fgTemp[up]>=0.15 && fgTemp[up]<FLOW_T)
     fgTemp[up]=Math.min(FLOW_T+0.02, fgTemp[up]+MELT_CREEP);
+}
+// A crumb is a fully detached cell — no filled neighbour in the 6-neighbourhood.
+// These are the lone specks that hang in the air when the metal under and around
+// them melts away; they're a pain to click, so the flow step drops them.
+function fCrumb(ix,iy,iz){
+  return !( (ix>0&&fgFill[fIdx(ix-1,iy,iz)]) || (ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)]) ||
+            (iy>0&&fgFill[fIdx(ix,iy-1,iz)]) || (iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)]) ||
+            (iz>0&&fgFill[fIdx(ix,iy,iz-1)]) || (iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)]) );
 }
 // one physics step. Only MOLTEN metal moves. Cold metal is HELD — the raw stone
 // hangs in its cradle above the empty dish and does not fall until you melt it
@@ -6261,15 +6302,25 @@ function forgeFlowStep(){
     const id=fIdx(ix,iy,iz);
     if (!fgFill[id]) continue;
     const t=fgTemp[id];
-    if (t<FLOW_T) continue;               // HELD: cold metal never moves — the stone hangs until melted
-    // gravity — molten metal drips straight down as FAR as it can this tick, so a
-    // drop reaches the pool below in one step instead of freezing in the air gap
-    // between the stone and the dish. Vertical fall is prompt; only lateral
-    // spread (below) is throttled, which is where the "runs too fast" feel was.
-    let fy=iy;
-    while (fy>0 && !fgFill[fIdx(ix,fy-1,iz)] && forgeAllowed(ix,fy-1,iz)) fy--;
-    if (fy!==iy){
-      const nd=fIdx(ix,fy,iz);
+    if (t<FLOW_T){
+      // HELD: cold metal doesn't move — the stone hangs until melted. The ONE
+      // exception is a fully detached crumb (no filled neighbour at all): those
+      // are the annoying single specks left hanging when their support melts
+      // away, impossible to click. Let a crumb drop straight down so it falls
+      // into the pool or off the edge instead of floating there forever.
+      if (fCrumb(ix,iy,iz)){
+        const bl=fIdx(ix,iy-1,iz);
+        if (iy>0 && !fgFill[bl] && forgeAllowed(ix,iy-1,iz)){
+          fgFill[bl]=1; fgTemp[bl]=t; fgFill[id]=0; fgTemp[id]=0; moved=true;
+        }
+      }
+      continue;
+    }
+    // gravity — molten metal drips ONE cell per step, so a drop visibly falls
+    // through the gap instead of teleporting to the pool. The crumb rule above is
+    // the safety net for the rare drip that cools mid-fall.
+    if (iy>0 && !fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){
+      const nd=fIdx(ix,iy-1,iz);
       fgFill[nd]=1; fgTemp[nd]=t; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; continue;
     }
     // MALLEABLE FOR A SHORT TIME. Lateral spreading is throttled by temperature:
@@ -6324,23 +6375,70 @@ function forgeAllowed(ix,iy,iz){
   if (iy>=RIM) return true;                 // open chamber above the mould
   return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: only the cavity
 }
-let forgeSpin=0;
+// Break-off cleanup. Melting a stone leaves small bits stranded in the air — not
+// lone cells (fCrumb drops those) but 2..N-cell clusters that still hang because
+// cold metal is held. They're a pain to click. So: label the connected filled
+// clusters; the biggest is the stone you're working and stays suspended, but any
+// OTHER cluster below CLUSTER_MIN is a broken-off crumb and drops (as far as it
+// can this pass) so it rejoins the pour instead of floating there.
+const _fgLabel=new Int32Array(FG_N), _fgStack=new Int32Array(FG_N), _fgSize=new Int32Array(FG_N+1);
+const CLUSTER_MIN=16;
+function forgeDropSmallClusters(){
+  _fgLabel.fill(0);
+  let lab=0, biggest=0, biggestSz=0, sl=FGW*FGH;
+  for (let s=0;s<FG_N;s++){
+    if (!fgFill[s]||_fgLabel[s]) continue;
+    lab++; let sp=0, sz=0; _fgStack[sp++]=s; _fgLabel[s]=lab;
+    while (sp){ const c=_fgStack[--sp]; sz++;
+      const iz=(c/sl)|0, rem=c-iz*sl, iy=(rem/FGW)|0, ix=rem-iy*FGW;
+      if (ix>0){const n=c-1; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+      if (ix<FGW-1){const n=c+1; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+      if (iy>0){const n=c-FGW; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+      if (iy<FGH-1){const n=c+FGW; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+      if (iz>0){const n=c-sl; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+      if (iz<FGD-1){const n=c+sl; if(fgFill[n]&&!_fgLabel[n]){_fgLabel[n]=lab;_fgStack[sp++]=n;}}
+    }
+    _fgSize[lab]=sz; if (sz>biggestSz){biggestSz=sz;biggest=lab;}
+  }
+  if (lab<=1) return;                       // one blob (or none): nothing stray
+  let moved=false;
+  for (let iy=1;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+    const L=_fgLabel[id]; if (L===biggest || _fgSize[L]>=CLUSTER_MIN) continue;
+    let fy=iy; while (fy>0 && !fgFill[fIdx(ix,fy-1,iz)] && forgeAllowed(ix,fy-1,iz)) fy--;
+    if (fy!==iy){ const nd=fIdx(ix,fy,iz); fgFill[nd]=1; fgTemp[nd]=fgTemp[id]; fgFill[id]=0; fgTemp[id]=0; moved=true; }
+  }
+  if (moved) forgeDirty=true;
+}
+let forgeSpin=0, forgeAccum=0, forgeLastMs=0;
+// The heat + flow sim runs on a FIXED timestep, not once per rendered frame. Two
+// reasons: (1) coupling it to the frame rate made the melt run 60 steps/sec on a
+// fast panel and drip visibly too fast — the player's complaint; (2) it made a
+// slow display melt slower than a fast one. FSTEP decouples it. Fewer, discrete
+// steps per second also *is* the "reduce tickspeed" the flow needed: at ~22Hz the
+// heat ramps visibly before a patch turns molten, and molten metal moves in
+// readable increments instead of a blur. Tune melt SPEED with FSTEP; tune melt
+// AMOUNT-per-step with FLUX_ADD / the flow rates.
+const FSTEP=0.033;                      // seconds per sim step (~30 steps/sec — half the old per-frame rate)
 function forgeSimTick(){
   if (!forgeActive) return;
-  forgeSpin++;
+  const now=performance.now();
+  if (!forgeLastMs) forgeLastMs=now;
+  let dt=(now-forgeLastMs)/1000; forgeLastMs=now;
+  if (dt>0.25) dt=0.25;                  // clamp after a stall so we don't spiral
+  // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
   if (fluxOn){
-    // re-aim at the CURRENT surface every tick from the held pointer position, so
-    // holding still keeps the brush on the metal as it recedes and the melt eats
-    // downward instead of stalling once the top cell drips away
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
-    fluxHeat(); forgeBeam.visible=!!fluxAim;
+    forgeBeam.visible=!!fluxAim;
+  } else forgeBeam.visible=false;
+  forgeAccum+=dt;
+  while (forgeAccum>=FSTEP){
+    forgeAccum-=FSTEP; forgeSpin++;
+    if (fluxOn) fluxHeat();
+    forgeFlowStep();
+    if ((forgeSpin&3)===0) forgeDropSmallClusters();   // reclaim stray broken-off bits
   }
-  else forgeBeam.visible=false;
-  // The step is a few thousand integer ops — cheap enough to run every frame,
-  // which keeps gravity settling the billet even when nothing is molten. The
-  // mesh only rebuilds when forgeDirty, so a fully cold, settled bench is free.
-  forgeFlowStep();
-  if (forgeDirty) { syncForgeMesh(); updateForgeHud(); }
+  if (forgeDirty){ syncForgeMesh(); updateForgeHud(); }
 }
 
 function forgeFillFrac(){
