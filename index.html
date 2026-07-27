@@ -790,7 +790,6 @@
   <div class="row">
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
-    <button class="act" id="fbStamp">Sink seat ▾</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -5973,7 +5972,10 @@ const SEED_UP={
      activeCore or the shard batches. (NB `forgeAnvil` is already the
      seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FGW=11, FGH=15, FGD=11;          // grid dims (footprint x height x depth)
+const FGW=11, FGH=19, FGD=11;          // grid dims (footprint x height x depth). Taller than the
+                                       // original 15 on purpose: a DEEP core socket eats down into the
+                                       // box, so the billet chamber ABOVE needs extra headroom to hold a
+                                       // billet that still out-volumes the (now larger) cavity.
 const FG_N=FGW*FGH*FGD;
 const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
 const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
@@ -5982,16 +5984,20 @@ const FVOX=0.34;                       // cell edge, world units
 // bottom (iy 0..) and the copper stone hangs high above it, so the origin is set
 // low-ish to frame both. fPushVert's vertex Y and forgeAimCell's inverse both
 // derive from FY0 — change it here and they follow, so they never drift apart.
-const FY0=5;
+const FY0=7;                           // origin row; raised with FGH so the deeper box + taller
+                                       // billet chamber still frame in the forge camera
 const fWX=ix=>(ix-(FGW-1)/2)*FVOX;
 const fWY=iy=>(iy-FY0)*FVOX;
 const fWZ=iz=>(iz-(FGD-1)/2)*FVOX;
 
 const fgFill=new Uint8Array(FG_N);     // 1 = metal present
 const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
-const fgMould=new Uint8Array(FG_N);    // 1 = inside the mould cavity
+const fgMould=new Uint8Array(FG_N);    // 1 = box interior that SHOULD fill with framework metal
+const fgSeat=new Uint8Array(FG_N);     // 1 = core socket void — metal never enters (see forgeAllowed)
 let fgMouldTotal=0, fgFlash=0;
-const MOULD_DEPTH=3;                    // mould cavity is iy 0..DEPTH-1; DEPTH+ is chamber
+const MOULD_DEPTH=7;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
+                                       // Deepened from 3 so a real core socket sinks into it and metal
+                                       // wraps the seat's SIDES (that side contact is what a core needs).
 const MOULD_INSET=1;                    // cavity inset from the footprint edge
 const FLOW_T=0.45;                      // temperature at which metal turns molten and flows
 // Cooling is SLOW on purpose — molten metal has to stay liquid long enough to
@@ -6000,15 +6006,40 @@ const FLOW_T=0.45;                      // temperature at which metal turns molt
 // gap between the stone and the dish instead of pooling.
 const COOL=0.0016;                      // per-STEP temperature decay (~a few seconds of liquid life at FSTEP)
 
-// The mould: a rectangular dish inset one cell from the footprint edge. Metal
-// slumps in and fills it bottom-up like a liquid; the far corners fill last, so
-// reaching them without flooding the near edge (which spills) is the skill. A
-// filled dish is the drill frame — the recess for the core is sunk into it after.
+// The core SOCKET. The finished part is a metal body with the drill-core seat cast
+// straight into it: instead of stamping a dimple after the fact, the seat is a VOID
+// present from the first pour that resists metal exactly like the walls do (see
+// forgeAllowed), so the casting forms the seat by construction. The void is the
+// lapidary drill-core silhouette (COMPONENTS.drill) sampled into the grid — a cube
+// today, but sampled through the component's own inside() so a future non-cube core
+// (sphere cell, cylinder coil…) drops in as a data change, not an engine one.
+const SEAT_COMP='drill';               // which component template the socket is cut for
+const SEAT_CELLS=5;                     // socket edge in cells (odd, so it centres on a grid column)
+const SEAT_TOP=MOULD_DEPTH-1;           // socket opens flush with the box rim
+const SEAT_MINY=SEAT_TOP-(SEAT_CELLS-1);// deepest socket layer; metal floor sits below it
+const SEAT_HALF=1.05;                   // core-local half-extent the templates are authored at
+const SEAT_PER=(SEAT_CELLS/2)/SEAT_HALF;// grid cells per core-unit
+const SEAT_CY=(SEAT_MINY+SEAT_TOP)/2;   // socket centre row
+// Map a grid cell to the component's own local frame (core spans ±SEAT_HALF≈1.05)
+// and ask its inside(). Centred in the footprint; SEAT_CELLS/2 cells map to ±1.05.
+function forgeSeatInside(ix,iy,iz){
+  const lx=(ix-(FGW-1)/2)/SEAT_PER, ly=(iy-SEAT_CY)/SEAT_PER, lz=(iz-(FGD-1)/2)/SEAT_PER;
+  return COMPONENTS[SEAT_COMP].inside(lx,ly,lz);
+}
+// Build the box interior (fgMould) with the socket carved out (fgSeat). The seat is
+// ONLY the void itself — metal can't enter it, but the chamber directly above it is
+// open, so metal reaching the rim there simply slides off the mouth (forgeFlowStep
+// force-slides any molten cell sitting over the void). Keeping the keep-out to the
+// void alone — no tall chimney — is what lets the solid billet still out-volume the
+// cavity; a full-height chimney starved the billet below the mould volume.
 function forgeBuildMould(){
-  fgMould.fill(0); fgMouldTotal=0;
+  fgMould.fill(0); fgSeat.fill(0); fgMouldTotal=0;
   for (let ix=MOULD_INSET;ix<FGW-MOULD_INSET;ix++)
     for (let iz=MOULD_INSET;iz<FGD-MOULD_INSET;iz++)
-      for (let iy=0;iy<MOULD_DEPTH;iy++){ fgMould[fIdx(ix,iy,iz)]=1; fgMouldTotal++; }
+      for (let iy=0;iy<MOULD_DEPTH;iy++){
+        if (iy>=SEAT_MINY && forgeSeatInside(ix,iy,iz)) fgSeat[fIdx(ix,iy,iz)]=1;
+        else { fgMould[fIdx(ix,iy,iz)]=1; fgMouldTotal++; }
+      }
 }
 // The starting billet: a lump of raw copper ore suspended in the cradle ABOVE
 // the empty dish, with clear air between it and the mould. It is cold and solid,
@@ -6019,11 +6050,13 @@ function forgeBuildMould(){
 function forgeSeedBillet(){
   fgFill.fill(0); fgTemp.fill(0); fgFlash=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2, want=Math.round(fgMouldTotal*1.08);
-  const BASE=MOULD_DEPTH+4;      // hangs FOUR cells clear of the rim — a tall air gap
+  const BASE=MOULD_DEPTH+1;      // hangs one cell clear of the rim — the deep socket eats the chamber,
+                                 // so the air gap is tighter than the old dish; a drip still falls it.
   // R is near the footprint edge on purpose: the billet must out-volume the mould
   // (want > mould) so a careful melt can fill it with a little to spare. A thinner
   // stone would cap max fill below 100% and no amount of skill could finish it.
-  const R=4.1;
+  // Widened with the deeper cavity (bigger `want`) so the lump still holds it.
+  const R=4.7;
   let placed=0;
   for (let iy=BASE; iy<FGH && placed<want; iy++){
     const up=iy-BASE;
@@ -6061,6 +6094,15 @@ const _mgeo=new THREE.BoxGeometry((FGW-2*MOULD_INSET)*FVOX,MOULD_DEPTH*FVOX,(FGD
 const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghostEdge);
 forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
 forgeGroup.add(forgeGhostWire);
+// socket ghost — the core SEAT the casting forms around, drawn in warm amber so it
+// reads as the goal, not the box. Uses the component's own ghost geometry scaled to
+// the grid (SEAT_PER cells per core-unit x FVOX world/cell), so a future non-cube
+// core shows its true silhouette here for free.
+const seatEdge=new THREE.LineBasicMaterial({color:0xffb347,transparent:true,opacity:0.55});
+const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(COMPONENTS[SEAT_COMP].ghost()),seatEdge);
+forgeSeatWire.scale.setScalar(SEAT_PER*FVOX);           // core-units -> world
+forgeSeatWire.position.y=fWY(SEAT_CY); forgeSeatWire.renderOrder=12;
+forgeGroup.add(forgeSeatWire);
 // the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
   new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
@@ -6221,7 +6263,7 @@ function syncForgeMesh(){
 }
 
 // ---- the simulation: heat, flow, cool, spill ----
-let forgePhase='flux';                 // 'flux' | 'stamp'
+let forgePhase='flux';                 // only 'flux' now — the seat is cast, not stamped
 let forgeActive=false, forgePart=null;
 let forgeSX=null, forgeSY=null;        // last pointer position, for re-aiming each tick
 let forgeRotating=false, forgePX=0, forgePY=0;
@@ -6328,8 +6370,14 @@ function forgeFlowStep(){
     // it drops below FLOW_T it stops until you heat it again. Dripping straight
     // down (gravity, above) stays prompt; only the spread is slowed, which is the
     // part that used to feel like instant transmission.
+    // Over the OPEN SEAT MOUTH: the cell below is the socket void, so this molten
+    // metal has nowhere to drip. Force it to slide off sideways (bypass the throttle)
+    // so the mouth reliably clears — otherwise a drip settling over the seat could
+    // freeze into a skin across it. The seat void itself never takes metal (it's not
+    // an allowed destination); this only sheds what's perched on the rim above it.
+    const overSeat = iy>0 && fgSeat[fIdx(ix,iy-1,iz)];
     const p=0.10+0.42*((t-FLOW_T)/(1-FLOW_T));   // ~0.10 just-molten .. ~0.52 white-hot
-    if (Math.random()>=p) continue;
+    if (!overSeat && Math.random()>=p) continue;
     const order=(ix+iz+ (forgeSpin|0))&3;
     let did=false;
     // first choice: slump down-and-to-a-side
@@ -6372,8 +6420,9 @@ function forgeFlowStep(){
 const RIM=MOULD_DEPTH;
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
-  if (iy>=RIM) return true;                 // open chamber above the mould
-  return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: only the cavity
+  if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
+  if (iy>=RIM) return true;                 // open chamber above the box
+  return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: box interior (socket already removed)
 }
 // Break-off cleanup. Melting a stone leaves small bits stranded in the air — not
 // lone cells (fCrumb drops those) but 2..N-cell clusters that still hang because
@@ -6452,25 +6501,17 @@ function forgeQualityNow(){
   return Math.max(0,Math.min(0.99, fill*(1-0.5*flashFrac)));
 }
 
-// ---- recess stamp: sink the core's socket into the cooled top (easy) ----
-let recessHits=0; const RECESS_NEED=3;
-function stampRecess(){
-  if (forgePhase!=='stamp') return;
-  // sink a small dimple in the top-centre — a few taps clears it fully
-  const cx=(FGW-1)/2|0, cz=(FGD-1)/2|0, r=2;
-  for (let ix=cx-r;ix<=cx+r;ix++) for (let iz=cz-r;iz<=cz+r;iz++){
-    if (!fIn(ix,0,iz)) continue;
-    let top=-1; for (let iy=FGH-1;iy>=0;iy--) if (fgFill[fIdx(ix,iy,iz)]){ top=iy; break; }
-    if (top>=RIM){ fgFill[fIdx(ix,top,iz)]=0; }   // shave proud metal into a seat
-  }
-  recessHits++; forgeDirty=true; syncForgeMesh(); updateForgeHud();
-  if (typeof addShake==='function') addShake(0.05);
-}
+// The core seat is no longer a separate "stamp" step — it is cast into the metal as
+// a socket VOID from the first pour (forgeBuildMould / fgSeat), so filling the box
+// around it IS forming the seat. A clean fill is therefore the whole job; there is
+// no crown to tap. FILL_DONE is the fraction of the framework the part needs before
+// it can be finished (the seat walls and floor are what the core actually rides).
+const FILL_DONE=0.6;
 
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
   forgeBuildMould(); forgeSeedBillet();
-  forgePhase='flux'; fluxOn=false; fluxAim=null; recessHits=0; fgFlash=0;
+  forgePhase='flux'; fluxOn=false; fluxAim=null; fgFlash=0;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
@@ -6492,29 +6533,16 @@ function finishForge(){
   }
   updateMeters(); showView('forge');
 }
-function forgeToStamp(){
-  if (forgeFillFrac()<0.55){ say('Fill more of the frame before you sink the seat.','warn'); return; }
-  forgePhase='stamp'; fluxOn=false; forgeBeam.visible=false; updateForgeHud();
-  say('Now sink the core seat — a few taps on the crown.','good');
-}
 
 function updateForgeHud(){
   const hint=document.getElementById('fbHint'), stat=document.getElementById('fbStat'),
-        fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish'),
-        toStamp=document.getElementById('fbStamp');
+        fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
   if (!hint) return;
-  const fpc=Math.round(forgeFillFrac()*100), q=Math.round(forgeQualityNow()*100);
-  if (forgePhase==='flux'){
-    hint.textContent='Hold the flux torch on the copper to melt it — molten metal sloughs off and slumps into the frame. Drag empty space to turn the bench. Ease off before it runs off the edge.';
-    stat.textContent=fpc+'% filled  ·  '+q+'% quality'+(fgFlash?'  ·  '+fgFlash+' spilled':'');
-    fill.style.width=fpc+'%';
-    toStamp.style.display=''; toStamp.disabled=forgeFillFrac()<0.55; fin.style.display='none';
-  } else {
-    hint.textContent='Tap the crown to sink the seat the core drops into. A few taps is enough — this part needs no finesse.';
-    stat.textContent='seat '+Math.min(RECESS_NEED,recessHits)+' / '+RECESS_NEED+'  ·  '+q+'% quality';
-    fill.style.width=Math.min(100,recessHits/RECESS_NEED*100)+'%';
-    toStamp.style.display='none'; fin.style.display=''; fin.disabled=recessHits<RECESS_NEED;
-  }
+  const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
+  hint.textContent='Hold the flux torch on the copper to melt it — molten metal sloughs off and slumps into the frame around the core seat. Drag empty space to turn the bench. Ease off before it runs off the edge.';
+  stat.textContent=fpc+'% filled  ·  '+q+'% quality'+(fgFlash?'  ·  '+fgFlash+' spilled':'');
+  fill.style.width=fpc+'%';
+  fin.disabled=frac<FILL_DONE;
 }
 
 // ---- pointer: press metal to flux, drag empty space to rotate ----
@@ -6526,7 +6554,6 @@ function forgeSetBeam(){
 // begin a drag-rotate. One gesture, disambiguated by what's under the pointer —
 // no turn buttons.
 function forgeDown(x,y){
-  if (forgePhase==='stamp'){ stampRecess(); return; }
   const aim=forgeAimCell(x,y);
   if (aim){ fluxOn=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
   else { forgeRotating=true; forgePX=x; forgePY=y; }
@@ -7310,7 +7337,6 @@ document.getElementById('handForgeBtn').onclick=()=>{
   showView('forgeb');
 };
 document.getElementById('fbFinish').onclick=finishForge;
-document.getElementById('fbStamp').onclick=forgeToStamp;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
