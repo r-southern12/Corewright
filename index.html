@@ -790,9 +790,6 @@
   <div class="row">
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
-    <button class="act on" id="fbTool_torch">🔥 Torch</button>
-    <button class="act" id="fbTool_level">▤ Level</button>
-    <button class="act" id="fbTool_grind">◑ Grind</button>
     <button class="act" id="fbQuench">❄ Quench</button>
     <button class="act" id="fbTurn">⟳ Turn</button>
     <button class="act" id="fbFinish">Finish</button>
@@ -6195,6 +6192,116 @@ const forgeLevelPlane=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.3,FVOX*0.5
 forgeLevelPlane.visible=false; forgeLevelPlane.renderOrder=12; forgePivot.add(forgeLevelPlane);
 function forgePlaceLevelPlane(){ forgeLevelPlane.position.y=fWY(forgeLevelY)-PIVOT_Y; }
 
+// ---------- forge tool palette: 3D alchemical tools on a side rack ----------
+// The held tools (torch / leveller / grinder) are 3D MODELS the player picks off a brass
+// rack on the left, not buttons. The chosen tool FOLLOWS THE CURSOR over the work; move
+// the cursor off the metal — into the rotate zone — and a turning glyph shows instead,
+// signalling "drag here to turn the bench". Brass, glass and glowing flux, to match the
+// instrument-maker chrome. Each builder returns a Group whose business end points down.
+const _brass=new THREE.MeshStandardMaterial({color:0xc9a24a,metalness:0.92,roughness:0.34});
+const _brassD=new THREE.MeshStandardMaterial({color:0x6e5220,metalness:0.9,roughness:0.5});
+const _steelM=new THREE.MeshStandardMaterial({color:0x9aa2ad,metalness:0.85,roughness:0.4});
+const _glassM=new THREE.MeshStandardMaterial({color:0x9fd8ff,metalness:0,roughness:0.08,transparent:true,opacity:0.33});
+const _fGlow=(c)=>new THREE.MeshBasicMaterial({color:c});
+const _tm=(geo,mat,x,y,z)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x||0,y||0,z||0); return m; };
+function buildTorchModel(){
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.085,0.1,0.6,16),_brass,0,0.42,0));      // handle
+  const grip=_tm(new THREE.TorusGeometry(0.1,0.022,8,16),_brassD,0,0.28,0); grip.rotation.x=Math.PI/2; g.add(grip);
+  const bulb=_tm(new THREE.SphereGeometry(0.13,16,12),_glassM,0,0.6,0); g.add(bulb);
+  g.add(_tm(new THREE.SphereGeometry(0.08,12,10),_fGlow(0xff9030),0,0.6,0));      // glowing flux in the bulb
+  g.add(_tm(new THREE.CylinderGeometry(0.055,0.085,0.16,16),_brass,0,0.05,0));    // collar
+  const noz=_tm(new THREE.ConeGeometry(0.06,0.14,16),_brass,0,-0.06,0); noz.rotation.x=Math.PI; g.add(noz);
+  const flame=_tm(new THREE.ConeGeometry(0.09,0.28,16),_fGlow(0xffd070),0,-0.24,0); flame.rotation.x=Math.PI; flame.material.transparent=true; flame.material.opacity=0.85; g.add(flame);
+  return g;
+}
+function buildLevelModel(){
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.07,0.085,0.5,14),_brass,0,0.42,0));      // handle
+  g.add(_tm(new THREE.BoxGeometry(0.66,0.07,0.46),_brass,0,0.06,0));              // screed plate
+  g.add(_tm(new THREE.BoxGeometry(0.7,0.025,0.5),_fGlow(0xff6a2a),0,0.0,0));      // glowing hot underside
+  return g;
+}
+function buildGrindModel(){
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.07,0.085,0.5,14),_brass,0,0.42,0));      // handle
+  g.add(_tm(new THREE.CylinderGeometry(0.05,0.05,0.28,12),_steelM,0.0,0.18,0));   // spindle
+  const wheel=_tm(new THREE.CylinderGeometry(0.26,0.26,0.06,28),_steelM,0,0.02,0); wheel.rotation.z=Math.PI/2; g.add(wheel);
+  const rim=_tm(new THREE.TorusGeometry(0.26,0.03,10,28),_fGlow(0xffb24a),0,0.02,0); rim.rotation.y=Math.PI/2; g.add(rim);
+  return g;
+}
+function buildCrucibleModel(){
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.22,0.15,0.3,18),_brass,0,0.16,0));       // pot
+  g.add(_tm(new THREE.TorusGeometry(0.22,0.03,8,20),_brassD,0,0.3,0));            // rim
+  const pour=_tm(new THREE.CircleGeometry(0.19,18),_fGlow(0xff7a30),0,0.305,0); pour.rotation.x=-Math.PI/2; g.add(pour);
+  g.add(_tm(new THREE.CylinderGeometry(0.05,0.06,0.5,10),_brass,0.32,0.28,0));    // handle
+  return g;
+}
+function buildRotateModel(){
+  // Two curved arrows in the XY plane forming a ring — placed camera-facing (lookAt) so
+  // it reads as "turn". Arc runs ~270°; an arrowhead sits tangent at each open end.
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.TorusGeometry(0.3,0.035,10,28,Math.PI*1.5),_fGlow(0x59d6ff),0,0,0));   // XY arc, ends at right & bottom
+  const h1=_tm(new THREE.ConeGeometry(0.1,0.22,12),_fGlow(0x59d6ff),0.3,0.02,0); g.add(h1);          // right end, points up (CCW tangent)
+  const h2=_tm(new THREE.ConeGeometry(0.1,0.22,12),_fGlow(0x59d6ff),0.02,-0.3,0); h2.rotation.z=-Math.PI/2; g.add(h2); // bottom end, points right
+  return g;
+}
+const FORGE_TOOL_DEFS=[{id:'torch',build:buildTorchModel},{id:'level',build:buildLevelModel},{id:'grind',build:buildGrindModel}];
+// The RACK: brass slots down the left, parented to the camera so it stays screen-fixed.
+scene.add(camera);                          // camera must be in the graph for its children to render
+const forgeRack=new THREE.Group(); forgeRack.visible=false; camera.add(forgeRack);
+forgeRack.position.set(1.16,-0.08,-2.5); forgeRack.scale.setScalar(0.8);   // right side, clear of the left panel + top HUD
+const _rackSlots={};                        // id -> {group, ring}
+FORGE_TOOL_DEFS.forEach((d,i)=>{
+  const slot=new THREE.Group(); slot.position.y=0.62-i*0.62; slot.userData.forgeTool=d.id;
+  const plate=_tm(new THREE.CylinderGeometry(0.32,0.32,0.05,20),_brassD,0,0,-0.1); plate.rotation.x=Math.PI/2; slot.add(plate);
+  const ring=_tm(new THREE.TorusGeometry(0.32,0.024,10,24),_brass,0,0,-0.08); slot.add(ring);      // mount ring (highlights when active)
+  const model=d.build(); model.scale.setScalar(0.48); model.rotation.set(-0.35,0.4,0); model.position.y=0.03; slot.add(model);
+  slot.scale.setScalar(0.66); forgeRack.add(slot); _rackSlots[d.id]={group:slot,ring};
+});
+// Cursor tool (the active tool that follows the pointer over the work) and the rotate
+// glyph (shown when the pointer is off the metal). Both live in the world scene.
+const forgeCursorTool=new THREE.Group(); forgeCursorTool.visible=false; scene.add(forgeCursorTool);
+forgeCursorTool.scale.setScalar(1.7); forgeCursorTool.rotation.set(0.22,0.35,-0.34);   // held-in-hand tilt
+const _cursorModels={}; FORGE_TOOL_DEFS.forEach(d=>{ const m=d.build(); m.visible=false; _cursorModels[d.id]=m; forgeCursorTool.add(m); });
+const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forgeRotateGlyph.scale.setScalar(0.9); scene.add(forgeRotateGlyph);
+// Highlight the active rack slot and show the matching cursor model.
+function forgeSyncPalette(){
+  for (const id in _rackSlots){ const on=id===forgeTool; _rackSlots[id].ring.material=on?_fGlow(0x59d6ff):_brass;
+    _rackSlots[id].group.scale.setScalar(on?0.72:0.62); }
+  for (const id in _cursorModels) _cursorModels[id].visible=(id===forgeTool);
+}
+// Place the cursor tool at the aimed metal cell, or — if the pointer is over empty space
+// (the rotate zone) — hide it and show the turning glyph under the cursor instead.
+const _fCurW=new THREE.Vector3();
+function forgeUpdateCursor(x,y){
+  if (!forgeActive){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }
+  if (forgeRackPick(x,y)){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }  // over the rack
+  const aim=forgeAimCell(x,y);
+  if (aim){
+    _fCurW.set(fWX(aim.x),fWY(aim.y),fWZ(aim.z)); forgeGroup.localToWorld(_fCurW);
+    forgeCursorTool.position.copy(_fCurW); forgeCursorTool.position.y+=0.55;   // sit above the surface
+    forgeCursorTool.visible=true; forgeRotateGlyph.visible=false;
+  } else {
+    // rotate zone: put the glyph on a plane through the bench centre under the cursor,
+    // facing the camera so the ring reads as "turn".
+    ndc.set((x/VW)*2-1,-(y/VH)*2+1); ray.setFromCamera(ndc,camera);
+    const t=(0-ray.ray.origin.z)/ray.ray.direction.z;   // z=0 plane
+    forgeRotateGlyph.position.copy(ray.ray.origin).addScaledVector(ray.ray.direction,Math.max(2,t));
+    forgeRotateGlyph.lookAt(camera.position);
+    forgeRotateGlyph.visible=true; forgeCursorTool.visible=false;
+  }
+}
+// Click on the rack? Return the tool id under (x,y), else null.
+function forgeRackPick(x,y){
+  if (!forgeRack.visible) return null;
+  ndc.set((x/VW)*2-1,-(y/VH)*2+1); ray.setFromCamera(ndc,camera);
+  const hits=ray.intersectObjects(forgeRack.children,true);
+  for (const h of hits){ let o=h.object; while (o&&!o.userData.forgeTool) o=o.parent; if (o) return o.userData.forgeTool; }
+  return null;
+}
+
 // Density sampled at CELL CENTRES, padded by one empty cell on every side so the
 // surface closes around boundary cells. A filled cell is 1, empty 0, so the iso
 // surface sits on cell faces — it fills right to the mould edges, and a lone
@@ -6758,6 +6865,7 @@ function enterForge(){
   forgeSeedNugget();                        // first nugget hangs ready
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
+  forgeSyncPalette();                        // rack highlight + cursor model to the torch
   forgeTurnT=1; forgePivot.rotation.x=0;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
@@ -6840,6 +6948,7 @@ function forgeSetBeam(){
 // Press dispatches on the active tool. Torch/Grind aim at the metal (miss -> drag-rotate);
 // Level press-holds and drags the slab up/down.
 function forgeDown(x,y){
+  const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
   if (forgeTool==='level'){ forgeLevelHold=true; forgePY=y; return; }
   const aim=forgeAimCell(x,y);
   if (forgeTool==='grind'){
@@ -6851,6 +6960,7 @@ function forgeDown(x,y){
   else { forgeRotating=true; forgePX=x; forgePY=y; }
 }
 function forgeMove(x,y){
+  forgeUpdateCursor(x,y);                       // the tool model tracks the pointer (hover + drag)
   if (forgeLevelHold){                         // drag vertically to move the heat plane
     forgeLevelY=Math.max(0,Math.min(forgeRim, forgeLevelY-(y-forgePY)*0.02));
     forgePY=y; forgePlaceLevelPlane(); return;
@@ -7585,6 +7695,8 @@ function showView(name){
   document.getElementById('forgeBench').classList.toggle('on',inForge);
   mineral.visible=!inForge;                 // hide the carving core while forging
   forgeGroup.visible=inForge;
+  forgeRack.visible=inForge;                // the 3D tool rack rides the camera in-forge only
+  if (!inForge){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; }
   if (inForge){ if (!forgeActive) enterForge(); } else if (forgeActive) leaveForge();
   document.getElementById('benchBack').classList.toggle('on',isMachine||inForge);
   renderWingNav();          // wing tiles replace the old expedition/lab toggle
@@ -7664,9 +7776,6 @@ document.getElementById('handForgeBtn').onclick=()=>{
 };
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
-document.getElementById('fbTool_torch').onclick=()=>forgeSetTool('torch');
-document.getElementById('fbTool_level').onclick=()=>forgeSetTool('level');
-document.getElementById('fbTool_grind').onclick=()=>forgeSetTool('grind');
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
