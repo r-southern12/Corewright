@@ -6276,17 +6276,26 @@ function buildRotateModel(){
   const h2=_tm(new THREE.ConeGeometry(0.1,0.22,12),_fGlow(0x59d6ff),0.02,-0.3,0); h2.rotation.z=-Math.PI/2; g.add(h2); // bottom end, points right
   return g;
 }
-const FORGE_TOOL_DEFS=[{id:'torch',build:buildTorchModel},{id:'level',build:buildLevelModel},{id:'grind',build:buildGrindModel},{id:'crucible',build:buildCrucibleModel}];
-// The RACK: brass slots down the left, parented to the camera so it stays screen-fixed.
+// rx/ry/rs are per-tool RACK offsets so each model sits centred in its ring — the crucible's
+// side handle and the torch's downward nozzle both throw their bounding box off-centre, so
+// they're nudged back to the ring centre and scaled to sit inside it.
+const FORGE_TOOL_DEFS=[
+  {id:'torch',   build:buildTorchModel,    ry:-0.08, rs:0.44},   // torch is tall/nozzle-down — drop + shrink to centre
+  {id:'level',   build:buildLevelModel},
+  {id:'grind',   build:buildGrindModel},
+  {id:'crucible',build:buildCrucibleModel, rx:-0.08, ry:-0.06, rs:0.42},  // pull the side handle back to centre
+];
+// The RACK: brass slots down the right, parented to the camera so it stays screen-fixed.
 scene.add(camera);                          // camera must be in the graph for its children to render
 const forgeRack=new THREE.Group(); forgeRack.visible=false; camera.add(forgeRack);
-forgeRack.position.set(1.16,-0.02,-2.5); forgeRack.scale.setScalar(0.72);   // right side, clear of the left panel + top HUD
+forgeRack.position.set(1.16,-0.02,-2.5); forgeRack.scale.setScalar(0.5);   // 30% smaller than before, clear of the panels
 const _rackSlots={};                        // id -> {group, ring}
 FORGE_TOOL_DEFS.forEach((d,i)=>{
   const slot=new THREE.Group(); slot.position.y=(FORGE_TOOL_DEFS.length-1)*0.29-i*0.58; slot.userData.forgeTool=d.id;
   const plate=_tm(new THREE.CylinderGeometry(0.32,0.32,0.05,20),_brassD,0,0,-0.1); plate.rotation.x=Math.PI/2; slot.add(plate);
   const ring=_tm(new THREE.TorusGeometry(0.32,0.024,10,24),_brass,0,0,-0.08); slot.add(ring);      // mount ring (highlights when active)
-  const model=d.build(); model.scale.setScalar(0.48); model.rotation.set(-0.35,0.4,0); model.position.y=0.03; slot.add(model);
+  const model=d.build(); model.scale.setScalar(d.rs||0.48); model.rotation.set(-0.35,0.4,0);
+  model.position.set(d.rx||0, d.ry!==undefined?d.ry:0.03, 0); slot.add(model);
   slot.scale.setScalar(0.66); forgeRack.add(slot); _rackSlots[d.id]={group:slot,ring};
 });
 // Cursor tool (the active tool that follows the pointer over the work) and the rotate
@@ -6300,8 +6309,10 @@ const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forge
 // SEES it charge from cold to white-hot before it can pour. Lives in forgeGroup (rides the
 // camera drag) but not forgePivot (it's a tool above the work; it doesn't turn with the part).
 const _crucCol=new THREE.Color();
-const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(1.7);
-forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-1.5), fWZ((FGD-1)/2)); forgeGroup.add(forgeCrucStage);
+const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(1.35);
+// hangs over the chamber but LOW enough to stay on-screen (it was up near the grid ceiling and
+// clipped off the top of the view); ~a nugget's height above the box, tipped to pour inward.
+forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-8), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=0.5; forgeGroup.add(forgeCrucStage);
 const _crucGlow=_tm(new THREE.SphereGeometry(0.17,14,12),_fGlow(0xff7a30),0,0.17,0); forgeCrucStage.add(_crucGlow);
 function forgeCrucGlow(){
   const show=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
@@ -6702,6 +6713,31 @@ function forgeLevelHeat(){
     }
   }
 }
+// ACTIVE lateral transport for the level tool. The passive slump in forgeFlowStep is local and
+// random, so a central pile "bounced around the same area and never reached the far corner"
+// (the complaint): molten metal cooled after a couple of sideways hops and locked before it
+// crossed the box. This is the fix — a steepest-DESCENT relaxation over the whole footprint that
+// physically MOVES a molten top cell from a taller column onto a shorter neighbour, so the pile
+// migrates toward the low corners and the surface flattens under the plane. Only workable
+// (not-quenched, warm) top cells move; the socket void and mould walls are respected.
+const COL_TOP=(ix,iz)=>{ for (let iy=forgeRim-1; iy>=0; iy--){ const id=fIdx(ix,iy,iz); if (fgFill[id]&&fgMould[id]) return iy; } return -1; };
+function forgeLevelRelax(){
+  const order=forgeSpin&3;
+  for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    const h=COL_TOP(ix,iz); if (h<0) continue;
+    const id=fIdx(ix,h,iz);
+    if (fgLocked[id] || fgTemp[id]<FLOW_T*0.5) continue;   // only push warm, workable metal
+    // steepest descent: the neighbouring column that is at least 2 cells shorter
+    let bestNd=-1, bestH=h-1;
+    for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+      if (!fIn(nx,0,nz) || !fgMould[fIdx(nx,0,nz)]) continue;   // neighbour must be a real box column
+      const nh=COL_TOP(nx,nz);
+      if (nh<bestH){ const tgt=fIdx(nx,nh+1,nz);
+        if (forgeAllowed(nx,nh+1,nz) && !fgFill[tgt]){ bestH=nh; bestNd=tgt; } }
+    }
+    if (bestNd>=0){ fMove(id,bestNd,Math.max(fgTemp[id],FLOW_T+0.05)); forgeDirty=true; }   // keep it molten so it keeps flowing
+  }
+}
 // Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
 // not thermal — so it works on QUENCHED metal too. It ONLY removes metal that is OUTSIDE
 // the template (proud lumps, overspill) — cells that are part of the intended mould volume
@@ -6752,12 +6788,15 @@ function forgeCrucibleStep(){
     forgeCrucGlow(); renderForgeFeed(); updateForgeHud();
   }
 }
-// Load one ore into the crucible pot (up to two). The second ore commits the charge:
-// it deducts both ores from stores and sets the molten budget to two nuggets' worth.
-function forgeCrucAdd(metalKey){
+// Load one ore into the crucible pot (up to two) FROM THE FEED — the alloy is melted down from
+// two of the ten ores the player selected for this part, not pulled separately from stores. The
+// picked feed chunk is marked used (consumed from the run). The second ore commits the charge:
+// it arms the molten budget at two nuggets' worth (2 x a feed nugget).
+function forgeCrucLoadFromFeed(i){
   if (forgeCrucChargesLeft<=0){ say('The crucible is spent for this part.','warn'); return; }
   if (forgeCrucHeat>0 || forgeCrucLoad.length>=2){ say('Pot is charged — pour it before loading again.','warn'); return; }
-  forgeCrucLoad.push(metalKey);
+  const f=forgeFeed[i]; if (!f||f.used){ return; }
+  f.used=true; forgeCrucLoad.push(f.metal);
   if (forgeCrucLoad.length===2){
     // commit: arm the molten budget at two nuggets' worth. (The part's metal cost is still
     // taken at Finish via templateCost; Stage D folds the crucible load into real cost.)
@@ -6970,7 +7009,7 @@ function forgeSimTick(){
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn) fluxHeat();
-    if (forgeLevelHold) forgeLevelHeat();
+    if (forgeLevelHold){ forgeLevelHeat(); forgeLevelRelax(); }   // heat the slab AND push metal laterally to the low corners
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7003,11 +7042,10 @@ function enterForge(){
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
   // recharge the crucible and clear any half-built load for a fresh part
   forgeCrucChargesLeft=forgeCrucibleMax; forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucBudget=0; forgeCrucSpent=false;
-  // Compose the feed. Default to a full run of copper (the plain framework) so a player who
-  // just wants to forge can — but every slot is editable, so trying an alloy feed (some tin)
-  // is a click away. Nothing is dropped automatically: the player clicks a slot to melt it.
+  // The feed starts EMPTY — the player composes it from stores (up to FORGE_NUGGETS ore),
+  // then clicks which chunk to drop and melt. Nothing is queued or dropped automatically.
   forgeNugSize=Math.ceil(forgeNugWant()/FORGE_NUGGETS);
-  forgeFeed=[]; for (let i=0;i<FORGE_NUGGETS;i++) forgeFeed.push({metal:'copper',used:false});
+  forgeFeed=[];
   renderForgeFeed();
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
@@ -7133,14 +7171,22 @@ function renderForgeFeed(){
   }).join('');
   let html='';
   if (forgeTool==='crucible'){
+    // The crucible melts its alloy down from TWO of the ten ores in the feed (not from stores):
+    // pick two un-used feed chunks to load the pot.
+    const canLoad = forgeCrucHeat<=0 && forgeCrucLoad.length<2 && forgeCrucChargesLeft>0;
+    const feedChips=forgeFeed.map((f,i)=>{ const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
+      const loadable=canLoad && !f.used;
+      return `<button class="fbSlot${f.used?' used':''}" ${loadable?`data-act="crucfeed" data-idx="${i}"`:''} `+
+        `title="${info.label}${f.used?' — used':loadable?' — click to load the pot':''}"><span class="fbSw" style="background:${info.col}"></span></button>`;
+    }).join('') || '<span class="fbLbl" style="color:var(--dim)">feed is empty — add ore with the torch tool</span>';
     const slot=(i)=>{ const k=forgeCrucLoad[i];
       if (!k) return `<span class="fbSlot empty" title="empty crucible slot"></span>`;
       const info=ORE_INFO[k]||{col:'#999'}; return `<span class="fbSlot" title="${info.label}"><span class="fbSw" style="background:${info.col}"></span></span>`; };
     const hpc=Math.round(forgeCrucHeat*100);
-    const state = forgeCrucLoad.length<2 ? 'pick two ores to load'
+    const state = forgeCrucLoad.length<2 ? 'pick two feed ores'
       : forgeCrucHeat<1 ? 'hold to heat — '+hpc+'%'
       : 'molten · '+forgeCrucBudget+' left';
-    html = `<span class="fbLbl">Load</span><div class="fbGrp">${storeChips('cruc')}</div>`+
+    html = `<span class="fbLbl">Feed</span><div class="fbGrp">${feedChips}</div>`+
       `<span class="fbSep"></span><span class="fbLbl">Crucible</span>`+
       `<div class="fbGrp">${slot(0)}${slot(1)}`+
       `<span class="fbHeatWrap"><span class="fbHeatFill" style="width:${hpc}%"></span></span>`+
@@ -7163,7 +7209,7 @@ document.getElementById('fbFeed').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if (!b) return;
   const act=b.dataset.act;
   if (act==='feed') forgeAddFeed(b.dataset.metal);
-  else if (act==='cruc') forgeCrucAdd(b.dataset.metal);
+  else if (act==='crucfeed') forgeCrucLoadFromFeed(+b.dataset.idx);
   else if (act==='drop') forgeDropFeed(+b.dataset.idx);
   else if (act==='clear') forgeClearFeed();
 });
