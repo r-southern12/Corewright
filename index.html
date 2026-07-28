@@ -790,7 +790,9 @@
   <div class="row">
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
-    <button class="act" id="fbLevel">▤ Level</button>
+    <button class="act on" id="fbTool_torch">🔥 Torch</button>
+    <button class="act" id="fbTool_level">▤ Level</button>
+    <button class="act" id="fbTool_grind">◑ Grind</button>
     <button class="act" id="fbQuench">❄ Quench</button>
     <button class="act" id="fbTurn">⟳ Turn</button>
     <button class="act" id="fbFinish">Finish</button>
@@ -6413,9 +6415,14 @@ let fluxOn=false, fluxAim=null, fluxRadius=1.7;
 // re-melts everything at its level so the pour slumps and finds a FLAT surface — the
 // fine control the torch can't give ("almost impossible to get flat surfaces"). Metal
 // above the plane melts and drains below it; metal at the plane levels out.
-let forgeLevelMode=false, forgeLevelHold=false, forgeLevelY=2;
+// The active tool. Torch melts, Level flattens (a heat-slab), Grind shaves metal off —
+// the grinder is the ONLY way to clean a lump off QUENCHED metal, which can't be re-melted.
+// (Quench and Turn are one-shot actions, not held tools.) The 3D tool palette selects this.
+let forgeTool='torch';                  // 'torch' | 'level' | 'grind'
+let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false;
 const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
 const LEVEL_BAND=1.3;                   // half-thickness of the heated slab, in cells
+const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // Slow enough that a held torch visibly HEATS a patch — it glows up over most of
 // a second — before it crosses FLOW_T and sloughs. That heat-up delay is the ore's
 // "heat resistance", and it was invisible when this was fast (the slough looked
@@ -6496,6 +6503,23 @@ function forgeLevelHeat(){
       forgeDirty=true;
     }
   }
+}
+// Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
+// not thermal — so it works on QUENCHED metal too (the only way to clean a lump you've
+// already locked). Ground-off cells are gone (returned as a little dust). Holding on a
+// proud lump erodes it; the sim re-aims at the receding surface each tick like the torch.
+function forgeGrindStep(){
+  if (!fluxAim) return;
+  const R=1.35, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
+  let removed=0;
+  for (let iy=Math.ceil(cy+R); iy>=Math.floor(cy-R) && removed<GRIND_RATE; iy--)
+    for (let ix=Math.floor(cx-R); ix<=Math.ceil(cx+R) && removed<GRIND_RATE; ix++)
+      for (let iz=Math.floor(cz-R); iz<=Math.ceil(cz+R) && removed<GRIND_RATE; iz++){
+        if (!fIn(ix,iy,iz)) continue;
+        if ((ix-cx)**2+(iy-cy)**2+(iz-cz)**2>r2) continue;
+        const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+        fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; removed++; forgeDirty=true;
+      }
 }
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
 const MELT_CREEP=0.09;
@@ -6693,7 +6717,7 @@ function forgeSimTick(){
   if (forgeTurnT<1){ forgeTurnT=Math.min(1,forgeTurnT+dt/0.3);
     forgePivot.rotation.x=forgeTurnFrom*Math.pow(1-forgeTurnT,3); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
-  if (fluxOn){
+  if (fluxOn||forgeGrinding){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
     forgeBeam.visible=!!fluxAim;
   } else forgeBeam.visible=false;
@@ -6702,6 +6726,7 @@ function forgeSimTick(){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn) fluxHeat();
     if (forgeLevelHold) forgeLevelHeat();
+    if (forgeGrinding) forgeGrindStep();
     forgeFlowStep();
     if ((forgeSpin&3)===0){ forgeDropSmallClusters(); forgeMaybeNextNugget(); }
   }
@@ -6732,7 +6757,7 @@ function enterForge(){
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); forgeNugUsed=0;
   forgeSeedNugget();                        // first nugget hangs ready
   forgePhase='flux'; fluxOn=false; fluxAim=null;
-  forgeLevelMode=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
+  forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
   forgeTurnT=1; forgePivot.rotation.x=0;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
@@ -6795,9 +6820,10 @@ function updateForgeHud(){
   if (!hint) return;
   const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
   const nugLeft=FORGE_NUGGETS-forgeNugUsed;   // nuggets not yet fed (the one hanging counts as fed)
-  hint.textContent=forgeLevelMode
-    ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to move it through the metal. Metal at the slab melts and finds its level — sweep it down to flatten the surface. Level again to holster.'
-    : 'Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each one level before the next drops. Drag empty space to turn the bench.';
+  hint.textContent=
+    forgeTool==='level' ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to sweep it through the metal — it melts at the slab and finds its level, flattening the surface.'
+    : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
+    : 'Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each level before the next drops. Drag empty space to turn the bench.';
   stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left';
   fill.style.width=fpc+'%';
   fin.disabled=frac<FILL_DONE;
@@ -6811,11 +6837,17 @@ function forgeSetBeam(){
 // Press: if the ray hits metal, start fluxing there; if it misses (empty space),
 // begin a drag-rotate. One gesture, disambiguated by what's under the pointer —
 // no turn buttons.
+// Press dispatches on the active tool. Torch/Grind aim at the metal (miss -> drag-rotate);
+// Level press-holds and drags the slab up/down.
 function forgeDown(x,y){
-  // Leveling mode: press-and-hold heats the slab; drag up/down moves it. Nothing else.
-  if (forgeLevelMode){ forgeLevelHold=true; forgePY=y; return; }
+  if (forgeTool==='level'){ forgeLevelHold=true; forgePY=y; return; }
   const aim=forgeAimCell(x,y);
-  if (aim){ fluxOn=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+  if (forgeTool==='grind'){
+    if (aim){ forgeGrinding=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+    else { forgeRotating=true; forgePX=x; forgePY=y; }
+    return;
+  }
+  if (aim){ fluxOn=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }   // torch
   else { forgeRotating=true; forgePX=x; forgePY=y; }
 }
 function forgeMove(x,y){
@@ -6828,25 +6860,25 @@ function forgeMove(x,y){
     forgeGroup.rotation.x=Math.max(-0.35,Math.min(1.0,forgeGroup.rotation.x+(y-forgePY)*0.006));
     forgePX=x; forgePY=y; return;
   }
-  if (forgePhase!=='flux'||!fluxOn) return;
-  forgeSX=x; forgeSY=y;                       // the tick re-aims from here
+  if (!fluxOn && !forgeGrinding) return;
+  forgeSX=x; forgeSY=y;                        // the tick re-aims from here
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
-function forgeUp(){ fluxOn=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
-// Toggle the leveling tool. When on, the plane shows and the torch is holstered; when
-// off, back to torch/turn. The plane parks at the current fill's top so it starts useful.
-function forgeToggleLevel(){
-  forgeLevelMode=!forgeLevelMode; forgeLevelHold=false;
-  if (forgeLevelMode){
-    fluxOn=false; forgeBeam.visible=false;
-    // park the plane at the top of the poured metal (highest filled cell in the box)
+function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
+// Select the active held tool. Holsters the others; parks the level plane at the fill top
+// when Level is chosen; syncs the palette/button highlight.
+function forgeSetTool(name){
+  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeBeam.visible=false;
+  const lvl=name==='level';
+  if (lvl){
     let top=1; for (let iy=forgeRim-1;iy>=0;iy--){ let any=false;
       for (let ix=0;ix<FGW&&!any;ix++) for (let iz=0;iz<FGD;iz++) if (fgFill[fIdx(ix,iy,iz)]&&fgMould[fIdx(ix,iy,iz)]){any=true;break;}
       if (any){ top=iy; break; } }
     forgeLevelY=top;
   }
-  forgeLevelPlane.visible=forgeLevelMode; forgePlaceLevelPlane();
-  const btn=document.getElementById('fbLevel'); if (btn) btn.classList.toggle('on',forgeLevelMode);
+  forgeLevelPlane.visible=lvl; forgePlaceLevelPlane();
+  for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
+  if (typeof forgeSyncPalette==='function') forgeSyncPalette();
   updateForgeHud();
 }
 // QUENCH: freeze the metal currently in the frame (everything below the rim). Quenched
@@ -7632,7 +7664,9 @@ document.getElementById('handForgeBtn').onclick=()=>{
 };
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
-document.getElementById('fbLevel').onclick=forgeToggleLevel;
+document.getElementById('fbTool_torch').onclick=()=>forgeSetTool('torch');
+document.getElementById('fbTool_level').onclick=()=>forgeSetTool('level');
+document.getElementById('fbTool_grind').onclick=()=>forgeSetTool('grind');
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
