@@ -1535,6 +1535,20 @@ function drillPower(){
   const coreScore=partScore(drill.core)*coreAff;
   return (partScore(drill.frame)+partScore(drill.bit)+coreScore+partScore(drill.power))/4;
 }
+/* ALLOY RESONANCE. The forged frame is the core's HOUSING; where its seat walls are lined with
+   crucible alloy, that alloy RESONATES with a core whose hue the alloy suits, driving mining
+   harder PAST parity (the "beyond 100%" surplus). It is deliberately strong: a fully alloy-housed,
+   hue-matched core is a major lever. Reads the frame's stored alloySeat (0..1, forge-time) times
+   how well the seated drill core's hue is favoured — no resonance for a copper frame or a clashing
+   core. Later (unified seating) this reads the core actually housed in the frame; today the drill's
+   frame+core slots ARE that pairing. */
+const RESONANCE_MAX=0.35;   // a perfect alloy housing pushes surplus-power mining ~35%+ further
+function frameResonance(){
+  const f=drill.frame; if (!f||!f.alloySeat) return 0;
+  const aff=affinityFactor(drill.core,'drill');           // >1 favoured hue, 1 neutral, <1 clash
+  const hueMatch=Math.max(0,(aff-1)/AFFINITY_BONUS);      // 1 at full match, 0 at neutral/clash
+  return f.alloySeat*hueMatch;                            // 0..1
+}
 /* THE REFINEMENT LADDER. A drill core and power core of the SAME tier form a
    set; their outputs ADD into the set's charge. Crossing each rung unlocks a
    bonus against strata of that tier, cumulative:
@@ -1574,7 +1588,10 @@ function mineSpeed(resist){
   if (r<0.60) return 0;
   if (r<0.95) return 0.12+0.48*(r-0.60)/0.35;
   if (r<1) return 0.55+r*0.45;
-  return Math.min(OVERKILL_MAX,Math.pow(r,OVERKILL_EXP));
+  // Past parity, alloy resonance amplifies the SURPLUS power (not the gate) — a hue-matched
+  // alloy-housed core tears through its tier's surface stone well beyond a bare drill's overkill.
+  const rr=r*(1+RESONANCE_MAX*frameResonance());
+  return Math.min(OVERKILL_MAX,Math.pow(rr,OVERKILL_EXP));
 }
 function scanRange(){ const o=suitOutput('coil'); return o?3+suitTier('coil')*2+o*4:0; }
 // Ward Prism → elemental burn resistance. Aegis Torus → impact/melee armor.
@@ -7096,6 +7113,32 @@ function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false;
 // if it beats what's seated. Quality is the hands-on POUR (forgeQualityNow, the fill %)
 // plus what a seated anvil assists and the alloy premium — the skill of the pour now sets
 // quality, where the old forge leaned entirely on the seated anvil.
+
+// The forged frame is not just a % — it PERSISTS as a 3D object. forgeSnapshot captures the
+// finished voxel grid (filled cells + their metal id, dims, orientation, seat component) so the
+// part can be rendered and inspected elsewhere and, later, house a core. Stored compactly as
+// flat indices + small ints, it rides straight through the save with the part.
+function forgeSnapshot(){
+  const cells=[], metal=[];
+  for (let id=0; id<FG_N; id++) if (fgFill[id]){ cells.push(id); metal.push(fgMetal[id]); }
+  return { W:FGW, H:FGH, D:FGD, orient:forgeOrient, seat:SEAT_COMP, cells, metal };
+}
+// How much ALLOY lines the core seat: of the frame cells touching the seat void, the fraction
+// that are crucible alloy. This is the frame's RESONANCE potential — the alloy housing the core
+// drops into. A frame poured pure copper reads 0; one whose seat walls are lined with alloy
+// reads toward 1, and that alloy "resonates" with a matching core to push mining past parity.
+function forgeAlloySeatFrac(){
+  let wall=0, alloy=0;
+  for (let ix=0;ix<FGW;ix++) for (let iy=0;iy<FGH;iy++) for (let iz=0;iz<FGD;iz++){
+    const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+    if ((ix>0&&fgSeat[fIdx(ix-1,iy,iz)])||(ix<FGW-1&&fgSeat[fIdx(ix+1,iy,iz)])||
+        (iy>0&&fgSeat[fIdx(ix,iy-1,iz)])||(iy<FGH-1&&fgSeat[fIdx(ix,iy+1,iz)])||
+        (iz>0&&fgSeat[fIdx(ix,iy,iz-1)])||(iz<FGD-1&&fgSeat[fIdx(ix,iy,iz+1)])){
+      wall++; if (fgMetal[id]===FORGE_ALLOY_ID) alloy++;
+    }
+  }
+  return wall? alloy/wall : 0;
+}
 function finishForge(){
   const m=forgePart;
   if (!canAfford(m)&&!adminOn){ say('Not enough metal to finish this part.','warn'); return; }
@@ -7103,13 +7146,17 @@ function finishForge(){
   const q=Math.min(0.99, forgeQualityNow()+anvilB+alloyBonus(m));
   if (!adminOn) spendCost(m);
   const made={name:m.label,tier:m.tier,q};
+  made.alloySeat=forgeAlloySeatFrac();                   // resonance potential: alloy lining the seat
+  made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
+  made.forge=forgeSnapshot();                            // the persistent 3D voxel frame
   if (m.alloyBase) made.tin=tinFraction;                 // carries its hardness into mining
   const isSuit=m.part==='suitFrame';
   const cur=isSuit?suitFrames[m.system]:drill[m.part];
   if (partScore(made)>partScore(cur)){
     if (isSuit) suitFrames[m.system]=made; else drill[m.part]=made;
     floatText('★ '+Math.round(q*100)+'%','var(--amber)');
-    say(`${m.label} forged at ${Math.round(q*100)}% — fitted.`,'good');
+    const alloyNote = made.alloySeat>0.02 ? ` Alloy lines ${Math.round(made.alloySeat*100)}% of the core seat — it resonates with a matching core.` : '';
+    say(`${m.label} forged at ${Math.round(q*100)}% — fitted.`+alloyNote,'good');
   } else {
     dust+=Math.floor(20*m.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
     say(`Forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
@@ -8342,7 +8389,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=11;  // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=12;  // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
