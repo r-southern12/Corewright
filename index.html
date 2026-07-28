@@ -801,13 +801,10 @@
   <button class="closeX" id="x_forge" aria-label="Close forge">✕</button>
   <div class="wrap">
     <h2>Metal stores</h2>
-    <div class="card t1"><div class="info">Copper ore<div class="sub">soft veins in the topsoil</div></div><div class="mono" id="m_copper">0</div></div>
-    <div class="card t2"><div class="info">Iron ore<div class="sub">banded through the grey stone</div></div><div class="mono" id="m_iron">0</div></div>
-    <div class="card t2"><div class="info">Tin ore<div class="sub">soft, runs with iron; makes bronze</div></div><div class="mono" id="m_tin">0</div></div>
-    <div class="card t3"><div class="info">Voidsteel ore<div class="sub">deep strata only</div></div><div class="mono" id="m_vst">0</div></div>
-    <button class="act" id="handForgeBtn" style="width:100%;margin:4px 0 10px">⚒ Hand-forge a copper frame — 10 copper</button>
-    <h2>Forge machines <span class="mono" id="forgeBonusNote"></span></h2>
-    <div class="sub" style="margin:2px 0 4px">Insert core (consumed on forge):</div>
+    <div id="forgeOreList"></div>
+    <h2>Forge templates <span class="mono" id="forgeBonusNote"></span></h2>
+    <div class="sub" style="margin:2px 0 6px">Pick a template — it opens the flux press to forge by hand.</div>
+    <div class="sub" style="margin:2px 0 4px">Seat a Forge Anvil core to assist press quality (durable — not consumed):</div>
     <div id="forgeInsertList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
     <div id="tinControl" style="display:none">
       <div class="tinHead">Tin fraction <b id="tinPct">12%</b>
@@ -1394,6 +1391,22 @@ const ORE_INFO={
   iron:  {label:'Iron ore',   note:'banded through grey stone',  col:'#8a94b8'},
   vst:   {label:'Voidsteel ore',note:'deep strata only',         col:'#6f5fa8'}
 };
+/* METALS — the single source of truth for a metal's TIER, role and colour. The forge
+   reads tier off here (metalTier), so the forge scales to five tiers and more metals
+   per tier as a DATA change: add an entry and its templates, no forge-code edits. `agent`
+   marks an alloy agent (tin) — it pairs with a base metal in the crucible, not forged
+   solo. Tier-4/5 metals slot straight in once the deeper strata mine them. */
+const METALS={
+  copper:{name:'Copper',    tier:1, agent:false},
+  tin:   {name:'Tin',       tier:1, agent:true },
+  iron:  {name:'Iron',      tier:2, agent:false},
+  vst:   {name:'Voidsteel', tier:3, agent:false},
+  // adamant:{name:'Adamant', tier:4, agent:false},   // ready for the deep strata
+  // aether: {name:'Aether',  tier:5, agent:false},
+};
+const metalTier=k=>METALS[k]?METALS[k].tier:1;
+// Ores worth showing in the forge's metal stores, ordered by tier then name.
+const FORGE_ORE_ORDER=Object.keys(METALS).sort((a,b)=>METALS[a].tier-METALS[b].tier||a.localeCompare(b));
 function renderRail(){
   const rr=document.getElementById('reagentRail');
   if (rr){
@@ -4290,7 +4303,7 @@ function seatCore(){
     const prev=forgeAnvil;
     if (!prev||s.output>prev.output){
       seatInto('forgeAnvil');
-      extra=` Seated in the press — parts now forge at ${Math.round(forgeQuality()*100)}% quality.`;
+      extra=` Seated in the press — it now assists every part you forge by hand.`;
     } else extra=' The press already holds a finer anvil; this one stays in storage.';
     consumed=false;
   } else if (comp==='coil'){
@@ -5806,20 +5819,20 @@ function updateTinReadout(){
     ` — hard: +${bite}% bite · soft: +${yld}% ore recovery`;
 }
 function renderForge(){
-  document.getElementById('m_copper').textContent=metals.copper;
-  document.getElementById('m_iron').textContent=metals.iron;
-  document.getElementById('m_vst').textContent=metals.vst;
-  document.getElementById('m_tin').textContent=metals.tin;
+  // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
+  const ol=document.getElementById('forgeOreList');
+  if (ol) ol.innerHTML=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,note:''};
+    return `<div class="card t${Math.min(3,metalTier(k))}"><div class="info">${oi.label}<div class="sub">${oi.note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
+  }).join('');
   // the tin slider shows only when a bronze recipe is available to forge
   const hasBronze=FORGE_TEMPLATES.some(m=>m.alloyBase);
   const tc=document.getElementById('tinControl');
   tc.style.display=hasBronze?'':'none';
   if (hasBronze) updateTinReadout();
-  // ANVIL SLOT — the durable tool. Not consumed; swapped only for a better one.
-  const q=forgeQuality();
+  // ANVIL SLOT — the durable tool. Not consumed; it now ASSISTS the hands-on press quality.
   document.getElementById('forgeBonusNote').textContent=
-    forgeAnvil?`— anvil seated: T${forgeAnvil.tier} at ${Math.round(forgeAnvil.output*100)}% → parts forge at ${Math.round(q*100)}%`
-              :`— no anvil in the press → parts forge at the ${Math.round(FORGE_BASE_Q*100)}% floor`;
+    forgeAnvil?`— anvil seated: T${forgeAnvil.tier} at ${Math.round(forgeAnvil.output*100)}% → assists the press`
+              :`— no anvil seated → the press quality is all in the pour`;
   const pick=document.getElementById('forgeInsertList');
   if (pick){
     pick.innerHTML='';
@@ -5828,7 +5841,7 @@ function renderForge(){
       b.className='chip lit';
       b.textContent=`remove anvil (${Math.round(forgeAnvil.output*100)}%)`;
       b.onclick=()=>{ unseat('forgeAnvil'); renderForge();
-        say('Anvil lifted out of the press. Parts now stamp at the floor.','warn'); };
+        say('Anvil lifted out of the press. Quality is all in the pour now.','warn'); };
       pick.appendChild(b);
     } else {
       pick.innerHTML='<span class="sub">Carve a Forge Anvil at the lapidary and seat it to raise quality. '+
@@ -5839,41 +5852,22 @@ function renderForge(){
   list.innerHTML='';
   for (const m of FORGE_TEMPLATES){
     const div=document.createElement('div');
-    div.className='card t'+m.tier;
-    // an alloy stamps at a premium — that bonus is what pays for the second metal
-    const mq=Math.min(0.99,q+alloyBonus(m));
+    div.className='card t'+Math.min(3,m.tier);
     const isSuit=m.part==='suitFrame';
     const fitted=isSuit?suitFrames[m.system]:drill[m.part];
-    const cand={name:m.label,tier:m.tier,q:mq};
-    const better=partScore(cand)>partScore(fitted);
+    const fitQ=fitted?Math.round((fitted.q||0)*100)+'% fitted':'slot empty';
     div.innerHTML=`<div class="info">${m.label}<span class="badge">T${'I'.repeat(m.tier)}</span>
-      ${m.alloy?'<span class="badge" style="border-color:var(--amber);color:var(--amber)">ALLOY</span>':''}
+      ${(m.alloyBase||m.alloy)?'<span class="badge" style="border-color:var(--amber);color:var(--amber)">ALLOY</span>':''}
       <div class="sub">${m.desc} — ${costLabel(m)}
-      · stamps at <b style="color:var(--amber)">${Math.round(mq*100)}%</b>
-      ${m.bonus?`<span style="color:var(--amber)"> (+${Math.round(m.bonus*100)} alloy)</span>`:''}
-      ${better?'<span style="color:var(--crystal)"> · better than fitted</span>'
-              :'<span style="color:var(--dim)"> · weaker than fitted</span>'}</div></div>`;
+      ${m.bonus?`<span style="color:var(--amber)"> · +${Math.round(m.bonus*100)} alloy premium</span>`:''}
+      · <span style="color:var(--dim)">${fitQ}</span></div></div>`;
     const btn=document.createElement('button');
     btn.className='act';
-    btn.textContent='Forge';
+    btn.textContent='Forge at the press ⚒';
     btn.disabled=!canAfford(m);
-    btn.onclick=()=>{
-      spendCost(m);
-      const made={name:m.label,tier:m.tier,q:Math.min(0.99,forgeQuality()+alloyBonus(m))};
-      if (m.alloyBase) made.tin=tinFraction;   // carries its hardness into mining
-      const cur=isSuit?suitFrames[m.system]:drill[m.part];
-      if (partScore(made)>partScore(cur)){
-        if (isSuit) suitFrames[m.system]=made; else drill[m.part]=made;
-        floatText('★ '+Math.round(made.q*100)+'%','var(--amber)');
-        say(`${made.name} forged at ${Math.round(made.q*100)}% — fitted to the drill.`,'good');
-      } else {
-        dust+=Math.floor(20*m.tier*made.q);
-        floatText(Math.round(made.q*100)+'% — scrapped','var(--dim)');
-        say(`Forged at ${Math.round(made.q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
-      }
-      updateMeters(); renderForge(); renderLab();
-      pulse(document.getElementById('forgeList'),'fxShake');
-    };
+    // Retired the instant stamp: every template now opens the flux press to forge by
+    // hand. The spend + fit happens in finishForge, so the pour quality is what counts.
+    btn.onclick=()=>{ forgePart=m; forgeActive=false; showView('forgeb'); };
     div.appendChild(btn);
     list.appendChild(div);
   }
@@ -6904,18 +6898,29 @@ function forgeToggleOrient(){
 }
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
+// Finish the part forged at the PRESS. Generalised from the old instant-forge button so
+// the press is the only path: it forges ANY template (drill part, suit frame, or alloy),
+// spends the recipe cost (templateCost — alloys fill from the tin fraction), and fits it
+// if it beats what's seated. Quality is the hands-on POUR (forgeQualityNow, the fill %)
+// plus what a seated anvil assists and the alloy premium — the skill of the pour now sets
+// quality, where the old forge leaned entirely on the seated anvil.
 function finishForge(){
-  const q=forgeQualityNow(), m=forgePart, cost=m.cost||10;
-  if ((metals[m.metal]||0)<cost&&!adminOn){ say('Not enough '+m.metal+' to finish.','warn'); return; }
-  if (!adminOn) metals[m.metal]-=cost;
+  const m=forgePart;
+  if (!canAfford(m)&&!adminOn){ say('Not enough metal to finish this part.','warn'); return; }
+  const anvilB=forgeAnvil?forgeAnvil.output*(forgeAnvil.tier/3)*0.15:0;   // a seated anvil still helps a little
+  const q=Math.min(0.99, forgeQualityNow()+anvilB+alloyBonus(m));
+  if (!adminOn) spendCost(m);
   const made={name:m.label,tier:m.tier,q};
-  const cur=drill[m.part];
+  if (m.alloyBase) made.tin=tinFraction;                 // carries its hardness into mining
+  const isSuit=m.part==='suitFrame';
+  const cur=isSuit?suitFrames[m.system]:drill[m.part];
   if (partScore(made)>partScore(cur)){
-    drill[m.part]=made; floatText('★ '+Math.round(q*100)+'%','var(--amber)');
-    say(`${m.label} forged at ${Math.round(q*100)}% — fitted to the drill.`,'good');
+    if (isSuit) suitFrames[m.system]=made; else drill[m.part]=made;
+    floatText('★ '+Math.round(q*100)+'%','var(--amber)');
+    say(`${m.label} forged at ${Math.round(q*100)}% — fitted.`,'good');
   } else {
     dust+=Math.floor(20*m.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
-    say(`Forged at ${Math.round(q*100)}% — weaker than fitted; melted for dust.`,'warn');
+    say(`Forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
   }
   updateMeters(); showView('forge');
 }
@@ -7766,12 +7771,6 @@ document.getElementById('x_brew').onclick=()=>showView('lab');
 document.getElementById('x_forge').onclick=()=>showView('lab');
 // The hand-forge: enter the 3D press to shape a copper frame by placing and
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
-document.getElementById('handForgeBtn').onclick=()=>{
-  if ((metals.copper||0)<10&&!adminOn){ say('You need 10 copper to hand-forge a frame.','warn'); return; }
-  forgePart=FORGE_TEMPLATES.find(m=>m.id==='copperFrame')||FORGE_TEMPLATES[0];
-  forgeActive=false;                 // force a fresh enter
-  showView('forgeb');
-};
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
 document.getElementById('fbQuench').onclick=forgeQuench;
