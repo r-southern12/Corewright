@@ -6274,14 +6274,15 @@ function forgeSyncPalette(){
 }
 // Place the cursor tool at the aimed metal cell, or — if the pointer is over empty space
 // (the rotate zone) — hide it and show the turning glyph under the cursor instead.
-const _fCurW=new THREE.Vector3();
 function forgeUpdateCursor(x,y){
   if (!forgeActive){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }
+  // Level tool: the glowing SLAB is the cursor — don't show a follow-tool or the rotate
+  // glyph (which wrongly read as "rotate" while you were levelling). Pressing always levels.
+  if (forgeTool==='level'){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }
   if (forgeRackPick(x,y)){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }  // over the rack
   const aim=forgeAimCell(x,y);
   if (aim){
-    _fCurW.set(fWX(aim.x),fWY(aim.y),fWZ(aim.z)); forgeGroup.localToWorld(_fCurW);
-    forgeCursorTool.position.copy(_fCurW); forgeCursorTool.position.y+=0.55;   // sit above the surface
+    forgeCursorTool.position.copy(_faimW); forgeCursorTool.position.y+=0.25;   // sit ON the near ore edge
     forgeCursorTool.visible=true; forgeRotateGlyph.visible=false;
   } else {
     // rotate zone: put the glyph on a plane through the bench centre under the cursor,
@@ -6544,30 +6545,26 @@ const FLUX_ADD=0.03;                    // per-step heat gain at the sphere cent
 // fresh cold ore and stalled the melt). Because the push is along the ray, the
 // point still projects to the same pixel — the brush stays under the cursor.
 const _faim=new THREE.Vector3(), _fro=new THREE.Vector3(), _frd=new THREE.Vector3(), _frp=new THREE.Vector3();
+const _faimW=new THREE.Vector3();       // world point where the aim ray first meets metal (for the cursor model)
 const _l2g=(v)=>({x:v.x/FVOX+(FGW-1)/2, y:v.y/FVOX+FY0, z:v.z/FVOX+(FGD-1)/2});
+// Aim by MARCHING the view ray through the voxel grid and returning the first FILLED
+// cell it enters — the nearest metal under the cursor. This is robust where the old
+// surface raycast failed (top-down, grazing angles, or through a template wall), which
+// is why some spots "couldn't be torched". Also stashes _faimW, the world point at that
+// near surface, so the cursor tool sits ON the ore edge instead of clipping inside it.
 function forgeAimCell(sx,sy){
   ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
-  // 1) precise: hit the actual metal surface, push a cell deeper along the ray so the
-  //    brush sits INSIDE the metal (melts a plug, not the cold skin).
-  const h=ray.intersectObject(forgeSurf,false);
-  if (h.length){
-    _faim.copy(h[0].point).addScaledVector(ray.ray.direction,FVOX*1.2);
-    forgeGroup.worldToLocal(_faim);
-    return _l2g(_faim);
-  }
-  // 2) forgiving fallback: march the view ray through the voxel grid and return the
-  //    first FILLED cell it passes through. The precise hit misses when you click over
-  //    metal sitting deep in the box (the ray enters the open mouth, hits nothing until
-  //    the surface far below) — without this, that click fell through to "rotate the
-  //    bench", which is exactly the "can't select the slough inside the template" bug.
   _fro.copy(ray.ray.origin); forgeGroup.worldToLocal(_fro);           // ray origin in forge-local
   _frp.copy(ray.ray.origin).add(ray.ray.direction); forgeGroup.worldToLocal(_frp);
   _frd.subVectors(_frp,_fro).normalize();
-  const step=FVOX*0.5, maxT=(FGW+FGH+FGD)*FVOX;
+  const step=FVOX*0.45, maxT=(FGW+FGH+FGD)*FVOX*1.3;
   for (let tt=0; tt<maxT; tt+=step){
     _faim.copy(_fro).addScaledVector(_frd,tt);
     const c=_l2g(_faim), ix=Math.round(c.x), iy=Math.round(c.y), iz=Math.round(c.z);
-    if (fIn(ix,iy,iz) && fgFill[fIdx(ix,iy,iz)]) return c;
+    if (fIn(ix,iy,iz) && fgFill[fIdx(ix,iy,iz)]){
+      _faimW.copy(_faim); forgeGroup.localToWorld(_faimW);            // near-surface world point
+      return c;
+    }
   }
   return null;
 }
@@ -6612,9 +6609,10 @@ function forgeLevelHeat(){
   }
 }
 // Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
-// not thermal — so it works on QUENCHED metal too (the only way to clean a lump you've
-// already locked). Ground-off cells are gone (returned as a little dust). Holding on a
-// proud lump erodes it; the sim re-aims at the receding surface each tick like the torch.
+// not thermal — so it works on QUENCHED metal too. It ONLY removes metal that is OUTSIDE
+// the template (proud lumps, overspill) — cells that are part of the intended mould volume
+// (fgMould) are protected, so you can never grind into the actual part. That's exactly its
+// job: clean up what sits proud of the frame, nothing inside it.
 function forgeGrindStep(){
   if (!fluxAim) return;
   const R=1.35, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
@@ -6624,7 +6622,7 @@ function forgeGrindStep(){
       for (let iz=Math.floor(cz-R); iz<=Math.ceil(cz+R) && removed<GRIND_RATE; iz++){
         if (!fIn(ix,iy,iz)) continue;
         if ((ix-cx)**2+(iy-cy)**2+(iz-cz)**2>r2) continue;
-        const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+        const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgMould[id]) continue;   // protect metal inside the template
         fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; removed++; forgeDirty=true;
       }
 }
