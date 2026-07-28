@@ -791,6 +791,7 @@
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
     <button class="act" id="fbLevel">▤ Level</button>
+    <button class="act" id="fbQuench">❄ Quench</button>
     <button class="act" id="fbTurn">⟳ Turn</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
@@ -5997,6 +5998,7 @@ const fgFill=new Uint8Array(FG_N);     // 1 = metal present
 const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
 const fgMould=new Uint8Array(FG_N);    // 1 = box interior that SHOULD fill with framework metal
 const fgSeat=new Uint8Array(FG_N);     // 1 = core socket void — metal never enters (see forgeAllowed)
+const fgLocked=new Uint8Array(FG_N);   // 1 = QUENCHED metal: frozen in place, immune to heat/level/flow
 let fgMouldTotal=0;
 const MOULD_DEPTH=7;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
                                        // Deepened from 3 so a real core socket sinks into it and metal
@@ -6039,8 +6041,10 @@ const FORGE_HY=(MOULD_DEPTH-1)/2;          // 3  -> 7 cells tall (lying)
 const FORGE_HZ=(FGD-2*MOULD_INSET-1)/2;    // 4  -> 9 cells deep
 const FORGE_SEAT_PY=FORGE_HY-(SEAT_CELLS-1)/2;   // socket centre: its top sits flush with the box top
 const FORGE_ORIENTS=[
-  { id:'lying',    label:'lying',    cy:FORGE_HY, rx:0,           fwd:(x,y,z)=>[x, y,z], inv:(x,y,z)=>[x,y, z] },
-  { id:'standing', label:'standing', cy:FORGE_HZ, rx:-Math.PI/2,  fwd:(x,y,z)=>[x,-z,y], inv:(x,y,z)=>[x,z,-y] },
+  { id:'lying',    label:'lying',    cy:FORGE_HY, rx:0,          fwd:(x,y,z)=>[x, y,z], inv:(x,y,z)=>[x,y, z] },
+  // rx MUST equal the fwd map as a rotation: fwd=(x,-z,y) is rotX(+90°), so rx=+π/2.
+  // (It was -π/2, which rotated the ghost/animation opposite the data — the 180° flip.)
+  { id:'standing', label:'standing', cy:FORGE_HZ, rx:Math.PI/2,  fwd:(x,y,z)=>[x,-z,y], inv:(x,y,z)=>[x,z,-y] },
 ];
 let forgeOrient=0;
 let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
@@ -6078,7 +6082,10 @@ function forgeBuildMould(){
 // so a sloughed drip has a real distance to fall (throttled in forgeFlowStep).
 const FORGE_NUGGETS=10;                 // how many nuggets make up one part's worth of ore
 let forgeNugUsed=0, forgeNugSize=48;    // nuggets spawned so far this part; cells per nugget
-function forgeNugWant(){ return Math.round(fgMouldTotal*1.10); }   // total ore across all nuggets
+// Total ore across all nuggets = the cavity volume, no surplus. With no spill and a
+// leveling tool, extra ore just piled on top as excess; matching the cavity means a
+// clean, well-levelled pour fills it with nothing left over.
+function forgeNugWant(){ return fgMouldTotal; }
 // Drop one nugget of cold ore high in the chamber, grown outward from a centre point
 // so it's a compact rounded lump. Returns false when the run is spent.
 function forgeSeedNugget(){
@@ -6235,6 +6242,11 @@ const FISO=0.38,
       // desaturated base just reflects gold and looks unfinished. A deep teal holds
       // its hue through the reflection, so "done" is unmistakable against the copper.
       F_SET=new THREE.Color(0x137a63);
+// Quenched (locked) metal reads as cold hardened steel-blue. It must be SATURATED for
+// the same reason F_SET is (the metallic surface reflects the warm env and a pale tone
+// just reflects gold), so it holds a clear blue against the copper/verdigris and "this
+// is frozen and won't move" is legible at a glance.
+const F_LOCK=new THREE.Color(0x1f9fd6);
 // Incandescence ramp: what a heating patch looks like as temperature climbs, and —
 // run backwards as it cools — how it fades. Cold raw ore is dark copper; heat drives
 // it dull red -> red -> orange -> yellow -> white-hot just before it sloughs, so the
@@ -6304,6 +6316,14 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   // a cheap hash nudges each cell's brightness a little (skip once it's setting patina)
   if (t<0.2 && !(setDone && t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
     _fcolor.multiplyScalar(0.8+hsh*0.36); }
+  // quenched: cold steel, overrides all. A surface vertex often maps to the EMPTY
+  // exterior cell (same reason the temp colours read the outside), so check the filled
+  // neighbours too — otherwise the lock tint never reaches the visible skin.
+  let _lk=fgLocked[cid];
+  if (!_lk && ((ix>0&&fgLocked[cid-1])||(ix<FGW-1&&fgLocked[cid+1])||
+      (iy>0&&fgLocked[cid-FGW])||(iy<FGH-1&&fgLocked[cid+FGW])||
+      (iz>0&&fgLocked[cid-FGW*FGH])||(iz<FGD-1&&fgLocked[cid+FGW*FGH]))) _lk=1;
+  if (_lk) _fcolor.copy(F_LOCK);
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   // heat glow (0..1): ramps in from ~dull-red so ANY incandescence reads, hard by the
   // time it's near white. Set/verdigris metal (blended above, low t) emits nothing.
@@ -6447,7 +6467,7 @@ function fluxHeat(){
         y1=Math.ceil(cy+R), z0=Math.floor(cz-R), z1=Math.ceil(cz+R);
   for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
     if (!fIn(ix,iy,iz)) continue;
-    const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+    const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;   // quenched metal won't reheat
     const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
     // Superlinear in current temperature: cold ore takes heat slowly (that's the
     // visible "heat resistance" before it sloughs), but once a patch is warm it
@@ -6470,7 +6490,7 @@ function forgeLevelHeat(){
     const w=Math.max(0,1-Math.abs(iy-y)/LEVEL_BAND);   // band falloff
     if (w<=0) continue;
     for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-      const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+      const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;   // quenched metal won't reheat
       const t=fgTemp[id];
       fgTemp[id]=Math.min(1,t+LEVEL_ADD*w*(0.5+t*1.5));
       forgeDirty=true;
@@ -6488,7 +6508,7 @@ const MELT_CREEP=0.09;
 function fMeltCreep(ix,iy,iz){
   if (iy+1>=FGH) return;
   const up=fIdx(ix,iy+1,iz);
-  if (fgFill[up] && fgTemp[up]>=0.15 && fgTemp[up]<FLOW_T)
+  if (fgFill[up] && !fgLocked[up] && fgTemp[up]>=0.15 && fgTemp[up]<FLOW_T)
     fgTemp[up]=Math.min(FLOW_T+0.02, fgTemp[up]+MELT_CREEP);
 }
 // A crumb is a fully detached cell — no filled neighbour in the 6-neighbourhood.
@@ -6509,7 +6529,7 @@ function forgeFlowStep(){
   // bottom-up so a cell that moves down doesn't get processed twice this pass
   for (let iy=1;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
     const id=fIdx(ix,iy,iz);
-    if (!fgFill[id]) continue;
+    if (!fgFill[id]||fgLocked[id]) continue;    // quenched metal is frozen — never moves
     const t=fgTemp[id];
     if (t<FLOW_T){
       // HELD: cold metal doesn't move — the stone hangs until melted. The ONE
@@ -6709,7 +6729,7 @@ function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
   forgeOrient=0;                             // always start lying
   forgeBuildMould(); forgePlaceGhosts();
-  fgFill.fill(0); fgTemp.fill(0); forgeNugUsed=0;
+  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); forgeNugUsed=0;
   forgeSeedNugget();                        // first nugget hangs ready
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeLevelMode=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
@@ -6732,19 +6752,19 @@ function forgeToggleOrient(){
     const id=fIdx(gx,gy,gz); if (!fgFill[id]) continue;
     const p=oldO.inv(gx-cx, gy-oldO.cy, gz-cz);
     if (Math.abs(p[0])<=FORGE_HX+0.01 && Math.abs(p[1])<=FORGE_HY+0.01 && Math.abs(p[2])<=FORGE_HZ+0.01)
-      cast.push([p[0],p[1],p[2],fgTemp[id]]);          // inside the box -> rotate with the part
-    else air.push([id,fgTemp[id]]);                    // hanging nugget / falling drip -> keep put
+      cast.push([p[0],p[1],p[2],fgTemp[id],fgLocked[id]]);   // inside the box -> rotate with the part
+    else air.push([id,fgTemp[id],fgLocked[id]]);             // hanging nugget / falling drip -> keep put
   }
   forgeOrient=(forgeOrient+1)%FORGE_ORIENTS.length;
   const newO=FORGE_ORIENTS[forgeOrient];
-  fgFill.fill(0); fgTemp.fill(0);
+  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0);
   forgeBuildMould(); forgePlaceGhosts();
-  for (const c of cast){                               // re-lay cast metal, rotated
+  for (const c of cast){                               // re-lay cast metal, rotated (locked stays locked)
     const g=newO.fwd(c[0],c[1],c[2]);
     const gx=Math.round(g[0]+cx), gy=Math.round(g[1]+newO.cy), gz=Math.round(g[2]+cz);
-    if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; } }
+    if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; fgLocked[id]=c[4]; } }
   }
-  for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; }
+  for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; fgLocked[a[0]]=a[2]; }
   // animate: start the part looking like the OLD pose and ease to the new one, so the
   // turn reads as a real ~0.3s rotation rather than an instant snap.
   forgeTurnFrom=oldO.rx-newO.rx; forgeTurnT=0; forgePivot.rotation.x=forgeTurnFrom;
@@ -6828,6 +6848,20 @@ function forgeToggleLevel(){
   forgeLevelPlane.visible=forgeLevelMode; forgePlaceLevelPlane();
   const btn=document.getElementById('fbLevel'); if (btn) btn.classList.toggle('on',forgeLevelMode);
   updateForgeHud();
+}
+// QUENCH: freeze the metal currently in the frame (everything below the rim). Quenched
+// cells go instantly cold, lock (fgLocked), and are thereafter immune to the torch, the
+// leveling plane and the flow — so you can commit a good layer and build on it without
+// re-melting what you've already levelled. New nuggets poured after stay workable.
+function forgeQuench(){
+  if (!forgeActive) return;
+  let n=0;
+  for (let iy=0;iy<forgeRim;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+    const id=fIdx(ix,iy,iz);
+    if (fgFill[id] && !fgLocked[id]){ fgLocked[id]=1; fgTemp[id]=0; n++; }
+  }
+  forgeDirty=true; syncForgeMesh(); updateForgeHud();
+  if (typeof say==='function') say(n?('Quenched — '+n+' locked in.'):'Nothing in the frame to quench yet.', n?'good':'warn');
 }
 
 function renderBrew(){
@@ -7599,6 +7633,7 @@ document.getElementById('handForgeBtn').onclick=()=>{
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
 document.getElementById('fbLevel').onclick=forgeToggleLevel;
+document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
