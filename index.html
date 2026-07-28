@@ -790,6 +790,7 @@
   <div class="row">
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
+    <button class="act" id="fbLevel">▤ Level</button>
     <button class="act" id="fbTurn">⟳ Turn</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
@@ -6128,14 +6129,22 @@ function forgeMaybeNextNugget(){
 // aligned to the outward density gradient, so it renders single-sided cleanly.
 // Every buffer is preallocated and reused — no per-frame allocation.
 const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=false;
-// anvil plate under the mould (local, not the forgeAnvil global)
+// forgeGroup carries the camera-drag pose (user turning the bench to look). The WORKPIECE
+// (metal surface, box + seat ghosts, level plane) lives in a nested pivot so the Turn can
+// animate a real 90° rotation of just the part about the box centre, while the anvil plate
+// stays put. The pivot sits at the box centre (PIVOT_Y) and its children are offset by
+// -PIVOT_Y so their world positions are unchanged at rest (rotation 0).
+const PIVOT_Y=fWY((FORGE_HY+FORGE_HZ)/2);   // ~box centre; the axis the turn rotates about
+const forgePivot=new THREE.Group(); forgePivot.position.y=PIVOT_Y; forgeGroup.add(forgePivot);
+let forgeTurnFrom=0, forgeTurnT=1;          // turn animation: rotate pivot.x from forgeTurnFrom->0
+// anvil plate under the mould (local, not the forgeAnvil global) — stays with the bench
 const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
   new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
 forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.15; forgeGroup.add(forgeAnvilPlate);
 // box ghost — the container's wire outline. A UNIT cube scaled/placed per orientation
 // (forgePlaceGhosts), since turning the template changes the box's proportions.
 const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),ghostEdge);
-forgeGhostWire.renderOrder=11; forgeGroup.add(forgeGhostWire);
+forgeGhostWire.renderOrder=11; forgePivot.add(forgeGhostWire);
 // socket ghost — the core SEAT the casting forms around. A faint wireframe got lost
 // against the glowing billet ("I can't see where the template is"), so it's now a
 // solid TRANSLUCENT amber block filling the seat volume plus a bright edge: it reads
@@ -6148,11 +6157,11 @@ const _seatGeo=COMPONENTS[SEAT_COMP].ghost();
 const forgeSeatFill=new THREE.Mesh(_seatGeo,
   new THREE.MeshBasicMaterial({color:0xffb347,transparent:true,opacity:0.24,depthWrite:false,side:THREE.DoubleSide}));
 forgeSeatFill.scale.setScalar(SEAT_PER*FVOX);           // core-units -> world
-forgeSeatFill.renderOrder=11; forgeGroup.add(forgeSeatFill);
+forgeSeatFill.renderOrder=11; forgePivot.add(forgeSeatFill);
 const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(_seatGeo),
   new THREE.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:0.9,depthWrite:false}));
 forgeSeatWire.scale.setScalar(SEAT_PER*FVOX); forgeSeatWire.renderOrder=13;
-forgeGroup.add(forgeSeatWire);
+forgePivot.add(forgeSeatWire);
 // Position + rotate the box and seat ghosts to match the current orientation. The box
 // is a unit cube scaled to the box's grid dims (rotating the extent vector); the seat
 // sits at the socket's grid centre, rotated the same way as the part.
@@ -6161,9 +6170,9 @@ function forgePlaceGhosts(){
   const O=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
   const e=O.fwd(FORGE_HX,FORGE_HY,FORGE_HZ);
   forgeGhostWire.scale.set((2*Math.abs(e[0])+1)*FVOX,(2*Math.abs(e[1])+1)*FVOX,(2*Math.abs(e[2])+1)*FVOX);
-  forgeGhostWire.position.set(0, fWY(O.cy), 0);
+  forgeGhostWire.position.set(0, fWY(O.cy)-PIVOT_Y, 0);
   const s=O.fwd(0,FORGE_SEAT_PY,0);
-  _fbC.set(fWX(cx+s[0]), fWY(O.cy+s[1]), fWZ(cz+s[2]));
+  _fbC.set(fWX(cx+s[0]), fWY(O.cy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
   forgeSeatFill.rotation.x=O.rx; forgeSeatWire.rotation.x=O.rx;
 }
@@ -6171,6 +6180,11 @@ function forgePlaceGhosts(){
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
   new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
 forgeBeam.visible=false; forgeGroup.add(forgeBeam);
+// leveling plane marker — a translucent hot slab, dragged up/down through the cast
+const forgeLevelPlane=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.3,FVOX*0.5,FGD*FVOX+0.3),
+  new THREE.MeshBasicMaterial({color:0xff5a2a,transparent:true,opacity:0.32,depthWrite:false}));
+forgeLevelPlane.visible=false; forgeLevelPlane.renderOrder=12; forgePivot.add(forgeLevelPlane);
+function forgePlaceLevelPlane(){ forgeLevelPlane.position.y=fWY(forgeLevelY)-PIVOT_Y; }
 
 // Density sampled at CELL CENTRES, padded by one empty cell on every side so the
 // surface closes around boundary cells. A filled cell is 1, empty 0, so the iso
@@ -6185,17 +6199,34 @@ const FORGE_MAXV=(FC_W-1)*(FC_H-1)*(FC_D-1)*6*2*3;
 const forgePos=new Float32Array(FORGE_MAXV*3);
 const forgeNor=new Float32Array(FORGE_MAXV*3);
 const forgeCol=new Float32Array(FORGE_MAXV*3);
+const forgeHeat=new Float32Array(FORGE_MAXV);   // per-vertex hotness 0..1, drives the glow
 const forgeSurfGeo=new THREE.BufferGeometry();
 forgeSurfGeo.setAttribute('position',new THREE.BufferAttribute(forgePos,3));
 forgeSurfGeo.setAttribute('normal',new THREE.BufferAttribute(forgeNor,3));
 forgeSurfGeo.setAttribute('color',new THREE.BufferAttribute(forgeCol,3));
-// Low emissive on purpose: a strong uniform glow washes every vertex orange and
-// hides the finished shade. The heat read comes from vertex colour instead —
-// hot cells are near-white-bright, set cells are a cool bronze.
+forgeSurfGeo.setAttribute('heat',new THREE.BufferAttribute(forgeHeat,1));
+// Base material carries a tiny ambient emissive; the REAL heat glow is per-vertex,
+// injected below. A uniform emissive would wash the cool set metal orange, so it's
+// kept near-zero and the incandescence is driven by the `heat` attribute instead.
 const forgeSurfMat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.55,
-  roughness:0.32,emissive:new THREE.Color(0xff6a24),emissiveIntensity:0.14});
+  roughness:0.32,emissive:new THREE.Color(0xff6a24),emissiveIntensity:0.05});
+// Per-vertex emissive: a hot vertex ADDS its own (near-white) colour back as emitted
+// light, scaled hard by FORGE_GLOW, so white-hot metal reads as OBSCENELY bright while
+// cool/set metal (heat≈0) emits nothing. This is the "I can see it charging" glow —
+// vertex colour clamps at white, but emissive stacks on top of the lit surface, so a
+// white-hot cell blows out well past a merely white one.
+const FORGE_GLOW=4.2;
+forgeSurfMat.onBeforeCompile=sh=>{
+  sh.vertexShader='attribute float heat;\nvarying float vHeat;\n'+
+    sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n  vHeat=heat;');
+  // Linear in heat (not squared) so the glow ramps in as the patch WARMS — dull red
+  // already emits, and it blows out to a blinding white just before it sloughs.
+  sh.fragmentShader='varying float vHeat;\n'+
+    sh.fragmentShader.replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vColor.rgb * vHeat * '+FORGE_GLOW.toFixed(3)+';');
+};
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
-forgeSurf.frustumCulled=false; forgeGroup.add(forgeSurf);
+forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
@@ -6274,6 +6305,9 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   if (t<0.2 && !(setDone && t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
     _fcolor.multiplyScalar(0.8+hsh*0.36); }
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
+  // heat glow (0..1): ramps in from ~dull-red so ANY incandescence reads, hard by the
+  // time it's near white. Set/verdigris metal (blended above, low t) emits nothing.
+  forgeHeat[forgeVCount]= setDone && t<0.16 ? 0 : Math.max(0,Math.min(1,(t-0.08)/0.34));
   forgeVCount++;
 }
 const FLAT_T=0.35;                               // below this a triangle is flat-shaded (angular ore)
@@ -6344,6 +6378,7 @@ function syncForgeMesh(){
   for (const a of [forgeSurfGeo.attributes.position,forgeSurfGeo.attributes.normal,forgeSurfGeo.attributes.color]){
     a.updateRange.offset=0; a.updateRange.count=n; a.needsUpdate=true;
   }
+  { const a=forgeSurfGeo.attributes.heat; a.updateRange.offset=0; a.updateRange.count=forgeVCount; a.needsUpdate=true; }
   forgeSurfGeo.setDrawRange(0,forgeVCount);
   forgeDirty=false;
 }
@@ -6354,6 +6389,13 @@ let forgeActive=false, forgePart=null;
 let forgeSX=null, forgeSY=null;        // last pointer position, for re-aiming each tick
 let forgeRotating=false, forgePX=0, forgePY=0;
 let fluxOn=false, fluxAim=null, fluxRadius=1.7;
+// Leveling plane: a horizontal heat-slab you drag up/down through the cast. Holding it
+// re-melts everything at its level so the pour slumps and finds a FLAT surface — the
+// fine control the torch can't give ("almost impossible to get flat surfaces"). Metal
+// above the plane melts and drains below it; metal at the plane levels out.
+let forgeLevelMode=false, forgeLevelHold=false, forgeLevelY=2;
+const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
+const LEVEL_BAND=1.3;                   // half-thickness of the heated slab, in cells
 // Slow enough that a held torch visibly HEATS a patch — it glows up over most of
 // a second — before it crosses FLOW_T and sloughs. That heat-up delay is the ore's
 // "heat resistance", and it was invisible when this was fast (the slough looked
@@ -6367,13 +6409,33 @@ const FLUX_ADD=0.03;                    // per-step heat gain at the sphere cent
 // solid plug rather than skimming the cold surface skin (which kept re-exposing
 // fresh cold ore and stalled the melt). Because the push is along the ray, the
 // point still projects to the same pixel — the brush stays under the cursor.
-const _faim=new THREE.Vector3();
+const _faim=new THREE.Vector3(), _fro=new THREE.Vector3(), _frd=new THREE.Vector3(), _frp=new THREE.Vector3();
+const _l2g=(v)=>({x:v.x/FVOX+(FGW-1)/2, y:v.y/FVOX+FY0, z:v.z/FVOX+(FGD-1)/2});
 function forgeAimCell(sx,sy){
   ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
-  const h=ray.intersectObject(forgeSurf,false); if (!h.length) return null;
-  _faim.copy(h[0].point).addScaledVector(ray.ray.direction,FVOX*1.2);
-  forgeGroup.worldToLocal(_faim);
-  return {x:_faim.x/FVOX+(FGW-1)/2, y:_faim.y/FVOX+FY0, z:_faim.z/FVOX+(FGD-1)/2};
+  // 1) precise: hit the actual metal surface, push a cell deeper along the ray so the
+  //    brush sits INSIDE the metal (melts a plug, not the cold skin).
+  const h=ray.intersectObject(forgeSurf,false);
+  if (h.length){
+    _faim.copy(h[0].point).addScaledVector(ray.ray.direction,FVOX*1.2);
+    forgeGroup.worldToLocal(_faim);
+    return _l2g(_faim);
+  }
+  // 2) forgiving fallback: march the view ray through the voxel grid and return the
+  //    first FILLED cell it passes through. The precise hit misses when you click over
+  //    metal sitting deep in the box (the ray enters the open mouth, hits nothing until
+  //    the surface far below) — without this, that click fell through to "rotate the
+  //    bench", which is exactly the "can't select the slough inside the template" bug.
+  _fro.copy(ray.ray.origin); forgeGroup.worldToLocal(_fro);           // ray origin in forge-local
+  _frp.copy(ray.ray.origin).add(ray.ray.direction); forgeGroup.worldToLocal(_frp);
+  _frd.subVectors(_frp,_fro).normalize();
+  const step=FVOX*0.5, maxT=(FGW+FGH+FGD)*FVOX;
+  for (let tt=0; tt<maxT; tt+=step){
+    _faim.copy(_fro).addScaledVector(_frd,tt);
+    const c=_l2g(_faim), ix=Math.round(c.x), iy=Math.round(c.y), iz=Math.round(c.z);
+    if (fIn(ix,iy,iz) && fgFill[fIdx(ix,iy,iz)]) return c;
+  }
+  return null;
 }
 // apply the torch: warm a 3D sphere of cells centred on the surface hit. Holding
 // on one spot drives that patch molten and it sloughs off; the sim re-aims at
@@ -6394,6 +6456,25 @@ function fluxHeat(){
     const t=fgTemp[id];
     fgTemp[id]=Math.min(1,t+FLUX_ADD*(1-d2/r2*0.6)*(0.5+t*1.5));
     forgeDirty=true;
+  }
+}
+// Leveling plane: warm every filled cell in a horizontal slab at forgeLevelY across the
+// WHOLE footprint (falloff toward the band edge), so a held plane melts a layer and it
+// slumps flat. Same superlinear heat-resistance as the torch. Metal above the slab, once
+// molten, drains down past it and levels; sweep the plane down to flatten progressively.
+function forgeLevelHeat(){
+  const y=forgeLevelY;
+  const y0=Math.floor(y-LEVEL_BAND), y1=Math.ceil(y+LEVEL_BAND);
+  for (let iy=y0;iy<=y1;iy++){
+    if (iy<0||iy>=FGH) continue;
+    const w=Math.max(0,1-Math.abs(iy-y)/LEVEL_BAND);   // band falloff
+    if (w<=0) continue;
+    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+      const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+      const t=fgTemp[id];
+      fgTemp[id]=Math.min(1,t+LEVEL_ADD*w*(0.5+t*1.5));
+      forgeDirty=true;
+    }
   }
 }
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -6530,7 +6611,7 @@ function forgeFlowStep(){
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
 // how fast the pool levels (the temperature-throttled lateral spread).
-const FALL_EVERY=7;
+const FALL_EVERY=12;
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
@@ -6588,6 +6669,9 @@ function forgeSimTick(){
   if (!forgeLastMs) forgeLastMs=now;
   let dt=(now-forgeLastMs)/1000; forgeLastMs=now;
   if (dt>0.25) dt=0.25;                  // clamp after a stall so we don't spiral
+  // turn animation: ease the pivot back to upright (cubic ease-out) over ~0.3s
+  if (forgeTurnT<1){ forgeTurnT=Math.min(1,forgeTurnT+dt/0.3);
+    forgePivot.rotation.x=forgeTurnFrom*Math.pow(1-forgeTurnT,3); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
   if (fluxOn){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
@@ -6597,6 +6681,7 @@ function forgeSimTick(){
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn) fluxHeat();
+    if (forgeLevelHold) forgeLevelHeat();
     forgeFlowStep();
     if ((forgeSpin&3)===0){ forgeDropSmallClusters(); forgeMaybeNextNugget(); }
   }
@@ -6627,6 +6712,8 @@ function enterForge(){
   fgFill.fill(0); fgTemp.fill(0); forgeNugUsed=0;
   forgeSeedNugget();                        // first nugget hangs ready
   forgePhase='flux'; fluxOn=false; fluxAim=null;
+  forgeLevelMode=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
+  forgeTurnT=1; forgePivot.rotation.x=0;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
@@ -6658,6 +6745,9 @@ function forgeToggleOrient(){
     if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; } }
   }
   for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; }
+  // animate: start the part looking like the OLD pose and ease to the new one, so the
+  // turn reads as a real ~0.3s rotation rather than an instant snap.
+  forgeTurnFrom=oldO.rx-newO.rx; forgeTurnT=0; forgePivot.rotation.x=forgeTurnFrom;
   forgeDirty=true; syncForgeMesh(); updateForgeHud();
   if (typeof say==='function') say('Template turned '+newO.label+'.','good');
 }
@@ -6685,7 +6775,9 @@ function updateForgeHud(){
   if (!hint) return;
   const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
   const nugLeft=FORGE_NUGGETS-forgeNugUsed;   // nuggets not yet fed (the one hanging counts as fed)
-  hint.textContent='Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each one level before the next drops. Drag empty space to turn the bench.';
+  hint.textContent=forgeLevelMode
+    ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to move it through the metal. Metal at the slab melts and finds its level — sweep it down to flatten the surface. Level again to holster.'
+    : 'Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each one level before the next drops. Drag empty space to turn the bench.';
   stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left';
   fill.style.width=fpc+'%';
   fin.disabled=frac<FILL_DONE;
@@ -6700,11 +6792,17 @@ function forgeSetBeam(){
 // begin a drag-rotate. One gesture, disambiguated by what's under the pointer —
 // no turn buttons.
 function forgeDown(x,y){
+  // Leveling mode: press-and-hold heats the slab; drag up/down moves it. Nothing else.
+  if (forgeLevelMode){ forgeLevelHold=true; forgePY=y; return; }
   const aim=forgeAimCell(x,y);
   if (aim){ fluxOn=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
   else { forgeRotating=true; forgePX=x; forgePY=y; }
 }
 function forgeMove(x,y){
+  if (forgeLevelHold){                         // drag vertically to move the heat plane
+    forgeLevelY=Math.max(0,Math.min(forgeRim, forgeLevelY-(y-forgePY)*0.02));
+    forgePY=y; forgePlaceLevelPlane(); return;
+  }
   if (forgeRotating){
     forgeGroup.rotation.y+=(x-forgePX)*0.008;
     forgeGroup.rotation.x=Math.max(-0.35,Math.min(1.0,forgeGroup.rotation.x+(y-forgePY)*0.006));
@@ -6714,7 +6812,23 @@ function forgeMove(x,y){
   forgeSX=x; forgeSY=y;                       // the tick re-aims from here
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
-function forgeUp(){ fluxOn=false; forgeRotating=false; forgeSX=null; forgeSY=null; }
+function forgeUp(){ fluxOn=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
+// Toggle the leveling tool. When on, the plane shows and the torch is holstered; when
+// off, back to torch/turn. The plane parks at the current fill's top so it starts useful.
+function forgeToggleLevel(){
+  forgeLevelMode=!forgeLevelMode; forgeLevelHold=false;
+  if (forgeLevelMode){
+    fluxOn=false; forgeBeam.visible=false;
+    // park the plane at the top of the poured metal (highest filled cell in the box)
+    let top=1; for (let iy=forgeRim-1;iy>=0;iy--){ let any=false;
+      for (let ix=0;ix<FGW&&!any;ix++) for (let iz=0;iz<FGD;iz++) if (fgFill[fIdx(ix,iy,iz)]&&fgMould[fIdx(ix,iy,iz)]){any=true;break;}
+      if (any){ top=iy; break; } }
+    forgeLevelY=top;
+  }
+  forgeLevelPlane.visible=forgeLevelMode; forgePlaceLevelPlane();
+  const btn=document.getElementById('fbLevel'); if (btn) btn.classList.toggle('on',forgeLevelMode);
+  updateForgeHud();
+}
 
 function renderBrew(){
   const shelf=document.getElementById('reagentShelf');
@@ -7484,6 +7598,7 @@ document.getElementById('handForgeBtn').onclick=()=>{
 };
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
+document.getElementById('fbLevel').onclick=forgeToggleLevel;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
