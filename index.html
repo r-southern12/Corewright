@@ -790,6 +790,7 @@
   <div class="row">
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
+    <button class="act" id="fbTurn">⟳ Turn</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -6022,31 +6023,51 @@ const COOL=0.0016;                      // per-STEP temperature decay (~a few se
 // (sphere cell, cylinder coil…) drops in as a data change, not an engine one.
 const SEAT_COMP='drill';               // which component template the socket is cut for
 const SEAT_CELLS=5;                     // socket edge in cells (odd, so it centres on a grid column)
-const SEAT_TOP=MOULD_DEPTH-1;           // socket opens flush with the box rim
-const SEAT_MINY=SEAT_TOP-(SEAT_CELLS-1);// deepest socket layer; metal floor sits below it
 const SEAT_HALF=1.05;                   // core-local half-extent the templates are authored at
 const SEAT_PER=(SEAT_CELLS/2)/SEAT_HALF;// grid cells per core-unit
-const SEAT_CY=(SEAT_MINY+SEAT_TOP)/2;   // socket centre row
-// Map a grid cell to the component's own local frame (core spans ±SEAT_HALF≈1.05)
-// and ask its inside(). Centred in the footprint; SEAT_CELLS/2 cells map to ±1.05.
-function forgeSeatInside(ix,iy,iz){
-  const lx=(ix-(FGW-1)/2)/SEAT_PER, ly=(iy-SEAT_CY)/SEAT_PER, lz=(iz-(FGD-1)/2)/SEAT_PER;
-  return COMPONENTS[SEAT_COMP].inside(lx,ly,lz);
+
+// ORIENTATION. Gravity is always grid -Y and the TOP face is always the open pour
+// face, so "turning the template" means rotating the whole cast part — box walls,
+// socket void and hardened metal — so that a DIFFERENT face is up. The part lives in
+// a fixed PART frame (a box HX x HY x HZ half-extents, 9 x 7 x 9 cells); an orientation
+// is a 90° axis map from part space into the grid (fwd) with its inverse (inv), plus
+// the grid row `cy` the part centre rests at so the box always sits on the floor with
+// the billet chamber above it. `rx` is the same rotation for the ghost meshes.
+const FORGE_HX=(FGW-2*MOULD_INSET-1)/2;    // 4  -> 9 cells across
+const FORGE_HY=(MOULD_DEPTH-1)/2;          // 3  -> 7 cells tall (lying)
+const FORGE_HZ=(FGD-2*MOULD_INSET-1)/2;    // 4  -> 9 cells deep
+const FORGE_SEAT_PY=FORGE_HY-(SEAT_CELLS-1)/2;   // socket centre: its top sits flush with the box top
+const FORGE_ORIENTS=[
+  { id:'lying',    label:'lying',    cy:FORGE_HY, rx:0,           fwd:(x,y,z)=>[x, y,z], inv:(x,y,z)=>[x,y, z] },
+  { id:'standing', label:'standing', cy:FORGE_HZ, rx:-Math.PI/2,  fwd:(x,y,z)=>[x,-z,y], inv:(x,y,z)=>[x,z,-y] },
+];
+let forgeOrient=0;
+let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
+// Socket test in the PART frame: the drill silhouette centred at (0,FORGE_SEAT_PY,0),
+// opening toward part +y (= up when lying). Sampled through the component's own
+// inside() so a future non-cube core is a data change, not an engine one.
+function forgeSeatInsideP(px,py,pz){
+  return COMPONENTS[SEAT_COMP].inside(px/SEAT_PER,(py-FORGE_SEAT_PY)/SEAT_PER,pz/SEAT_PER);
 }
-// Build the box interior (fgMould) with the socket carved out (fgSeat). The seat is
-// ONLY the void itself — metal can't enter it, but the chamber directly above it is
-// open, so metal reaching the rim there simply slides off the mouth (forgeFlowStep
-// force-slides any molten cell sitting over the void). Keeping the keep-out to the
-// void alone — no tall chimney — is what lets the solid billet still out-volume the
-// cavity; a full-height chimney starved the billet below the mould volume.
+// Build fgMould (box interior) + fgSeat (socket void) for the CURRENT orientation by
+// mapping every grid cell back into the part frame and testing the canonical box and
+// socket. The seat is ONLY the void — metal never enters it, but the chamber above is
+// open and forgeFlowStep force-slides any molten cell off the mouth, so it stays clear
+// without a keep-out chimney. Also sets forgeRim: the open-chamber floor, one row above
+// the box's highest cell in this pose (7 lying, 9 standing).
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgMouldTotal=0;
-  for (let ix=MOULD_INSET;ix<FGW-MOULD_INSET;ix++)
-    for (let iz=MOULD_INSET;iz<FGD-MOULD_INSET;iz++)
-      for (let iy=0;iy<MOULD_DEPTH;iy++){
-        if (iy>=SEAT_MINY && forgeSeatInside(ix,iy,iz)) fgSeat[fIdx(ix,iy,iz)]=1;
-        else { fgMould[fIdx(ix,iy,iz)]=1; fgMouldTotal++; }
-      }
+  const O=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
+  let topGy=0;
+  for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
+    const p=O.inv(gx-cx, gy-O.cy, gz-cz);
+    if (Math.abs(p[0])>FORGE_HX+0.01||Math.abs(p[1])>FORGE_HY+0.01||Math.abs(p[2])>FORGE_HZ+0.01) continue;
+    const id=fIdx(gx,gy,gz);
+    if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
+    else { fgMould[id]=1; fgMouldTotal++; }
+    if (gy>topGy) topGy=gy;
+  }
+  forgeRim=topGy+1;
 }
 // The feed: raw ore comes as a run of small NUGGETS fed one at a time, not one huge
 // stone. A player melting a whole mass at once can't smooth the pour — too much runs
@@ -6111,11 +6132,10 @@ const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=fa
 const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
   new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
 forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.15; forgeGroup.add(forgeAnvilPlate);
-// mould ghost — the target cavity, drawn as a wire frame of the dish
-const _mgeo=new THREE.BoxGeometry((FGW-2*MOULD_INSET)*FVOX,MOULD_DEPTH*FVOX,(FGD-2*MOULD_INSET)*FVOX);
-const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(_mgeo),ghostEdge);
-forgeGhostWire.position.y=fWY((MOULD_DEPTH-1)/2); forgeGhostWire.renderOrder=11;
-forgeGroup.add(forgeGhostWire);
+// box ghost — the container's wire outline. A UNIT cube scaled/placed per orientation
+// (forgePlaceGhosts), since turning the template changes the box's proportions.
+const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),ghostEdge);
+forgeGhostWire.renderOrder=11; forgeGroup.add(forgeGhostWire);
 // socket ghost — the core SEAT the casting forms around. A faint wireframe got lost
 // against the glowing billet ("I can't see where the template is"), so it's now a
 // solid TRANSLUCENT amber block filling the seat volume plus a bright edge: it reads
@@ -6123,18 +6143,30 @@ forgeGroup.add(forgeGhostWire);
 // and glows amber as "this is where the core drops in." depthWrite off + high
 // renderOrder so it always shows through the metal. Uses the component's own ghost
 // geometry (SEAT_PER cells per core-unit x FVOX world/cell), so a future non-cube
-// core shows its true silhouette here for free.
+// core shows its true silhouette here for free. Placed/rotated per orient below.
 const _seatGeo=COMPONENTS[SEAT_COMP].ghost();
 const forgeSeatFill=new THREE.Mesh(_seatGeo,
   new THREE.MeshBasicMaterial({color:0xffb347,transparent:true,opacity:0.24,depthWrite:false,side:THREE.DoubleSide}));
 forgeSeatFill.scale.setScalar(SEAT_PER*FVOX);           // core-units -> world
-forgeSeatFill.position.y=fWY(SEAT_CY); forgeSeatFill.renderOrder=11;
-forgeGroup.add(forgeSeatFill);
+forgeSeatFill.renderOrder=11; forgeGroup.add(forgeSeatFill);
 const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(_seatGeo),
   new THREE.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:0.9,depthWrite:false}));
-forgeSeatWire.scale.setScalar(SEAT_PER*FVOX);
-forgeSeatWire.position.y=fWY(SEAT_CY); forgeSeatWire.renderOrder=13;
+forgeSeatWire.scale.setScalar(SEAT_PER*FVOX); forgeSeatWire.renderOrder=13;
 forgeGroup.add(forgeSeatWire);
+// Position + rotate the box and seat ghosts to match the current orientation. The box
+// is a unit cube scaled to the box's grid dims (rotating the extent vector); the seat
+// sits at the socket's grid centre, rotated the same way as the part.
+const _fbC=new THREE.Vector3();
+function forgePlaceGhosts(){
+  const O=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
+  const e=O.fwd(FORGE_HX,FORGE_HY,FORGE_HZ);
+  forgeGhostWire.scale.set((2*Math.abs(e[0])+1)*FVOX,(2*Math.abs(e[1])+1)*FVOX,(2*Math.abs(e[2])+1)*FVOX);
+  forgeGhostWire.position.set(0, fWY(O.cy), 0);
+  const s=O.fwd(0,FORGE_SEAT_PY,0);
+  _fbC.set(fWX(cx+s[0]), fWY(O.cy+s[1]), fWZ(cz+s[2]));
+  forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
+  forgeSeatFill.rotation.x=O.rx; forgeSeatWire.rotation.x=O.rx;
+}
 // the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
   new THREE.MeshBasicMaterial({color:0xffd070,transparent:true,opacity:0.28,depthWrite:false}));
@@ -6433,7 +6465,7 @@ function forgeFlowStep(){
     // crumb rule above is the safety net for the rare drip that cools mid-fall.
     if (iy>0 && !fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){
       // hold a mid-air drop most steps, so it falls slowly enough to see
-      if (iy>=RIM && (forgeSpin % FALL_EVERY)!==0) continue;
+      if (iy>=forgeRim && (forgeSpin % FALL_EVERY)!==0) continue;
       const nd=fIdx(ix,iy-1,iz);
       fgFill[nd]=1; fgTemp[nd]=t; fgFill[id]=0; fgTemp[id]=0; fMeltCreep(ix,iy,iz); moved=true; continue;
     }
@@ -6481,12 +6513,12 @@ function forgeFlowStep(){
   // Airborne drips (in the open chamber above the box rim) barely cool: a slough is
   // only in the air for a fraction of a second, and the THROTTLED slow fall must not
   // let it freeze mid-gap (the classic drips-freeze-in-the-air failure). It sheds its
-  // heat once it lands in the pool (iy<RIM), where full COOL applies and it sets.
+  // heat once it lands in the pool (iy<forgeRim), where full COOL applies and it sets.
   for (let id=0;id<FG_N;id++){
     const t=fgTemp[id];
     if (!fgFill[id]||t<=0) continue;
     const iy=((id/FGW)|0)%FGH;
-    fgTemp[id]=Math.max(0,t-(iy>=RIM?COOL*0.12:COOL));
+    fgTemp[id]=Math.max(0,t-(iy>=forgeRim?COOL*0.12:COOL));
     forgeDirty=true;
   }
   if (moved) forgeDirty=true;
@@ -6494,7 +6526,6 @@ function forgeFlowStep(){
 }
 // a cell is a legal destination if it's inside the mould (below rim) or in the
 // chamber directly above the footprint (not off the edge below the rim)
-const RIM=MOULD_DEPTH;
 // A mid-air drop advances one cell every FALL_EVERY sim steps (~FALL_EVERY*FSTEP s
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
@@ -6503,7 +6534,7 @@ const FALL_EVERY=7;
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
-  if (iy>=RIM) return true;                 // open chamber above the box
+  if (iy>=forgeRim) return true;            // open chamber above the box
   return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: box interior (socket already removed)
 }
 // Break-off cleanup. Melting a stone leaves small bits stranded in the air — not
@@ -6591,13 +6622,44 @@ const FILL_DONE=0.6;
 
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
-  forgeBuildMould();
+  forgeOrient=0;                             // always start lying
+  forgeBuildMould(); forgePlaceGhosts();
   fgFill.fill(0); fgTemp.fill(0); forgeNugUsed=0;
   forgeSeedNugget();                        // first nugget hangs ready
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
+}
+// Turn the template between poses (lying <-> standing) at ANY time. Gravity stays grid
+// -Y; we rotate the PART instead. Cast metal (cells inside the box) is snapshotted in
+// the part frame and re-laid rotated into the new pose, so it RIDES the turn as a rigid
+// body; cold stays put, molten re-flows to the new down. The hanging nugget and any
+// mid-air drips keep their grid position (they still feed from the top). The seat void
+// never takes metal, so nothing is re-placed into it.
+function forgeToggleOrient(){
+  if (!forgeActive) return;
+  const oldO=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
+  const cast=[], air=[];                     // cast: [px,py,pz,temp]; air: [id,temp]
+  for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
+    const id=fIdx(gx,gy,gz); if (!fgFill[id]) continue;
+    const p=oldO.inv(gx-cx, gy-oldO.cy, gz-cz);
+    if (Math.abs(p[0])<=FORGE_HX+0.01 && Math.abs(p[1])<=FORGE_HY+0.01 && Math.abs(p[2])<=FORGE_HZ+0.01)
+      cast.push([p[0],p[1],p[2],fgTemp[id]]);          // inside the box -> rotate with the part
+    else air.push([id,fgTemp[id]]);                    // hanging nugget / falling drip -> keep put
+  }
+  forgeOrient=(forgeOrient+1)%FORGE_ORIENTS.length;
+  const newO=FORGE_ORIENTS[forgeOrient];
+  fgFill.fill(0); fgTemp.fill(0);
+  forgeBuildMould(); forgePlaceGhosts();
+  for (const c of cast){                               // re-lay cast metal, rotated
+    const g=newO.fwd(c[0],c[1],c[2]);
+    const gx=Math.round(g[0]+cx), gy=Math.round(g[1]+newO.cy), gz=Math.round(g[2]+cz);
+    if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; } }
+  }
+  for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; }
+  forgeDirty=true; syncForgeMesh(); updateForgeHud();
+  if (typeof say==='function') say('Template turned '+newO.label+'.','good');
 }
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
@@ -7421,6 +7483,7 @@ document.getElementById('handForgeBtn').onclick=()=>{
   showView('forgeb');
 };
 document.getElementById('fbFinish').onclick=finishForge;
+document.getElementById('fbTurn').onclick=forgeToggleOrient;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
