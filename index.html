@@ -584,6 +584,38 @@
     background:#0d1122;vertical-align:middle;margin:0 10px;overflow:hidden}
   #fbFill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--amber),var(--crystal));transition:width .12s}
 
+  /* The FEED bar — the player-composed ore queue along the top of the screen. Stores on the
+     left (click to add / load), the queued ore chunks on the right (click to drop & melt). */
+  #fbFeed{position:fixed;left:50%;top:52px;transform:translateX(-50%);z-index:9;display:none;
+    align-items:center;gap:10px;max-width:96vw;padding:6px 12px;
+    background:linear-gradient(rgba(9,12,22,.96),rgba(9,12,22,.90));
+    border:1px solid rgba(200,154,82,.24);border-top:none;
+    clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,12px 100%)}
+  #fbFeed.on{display:flex}
+  #fbFeed .fbGrp{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  #fbFeed .fbLbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);
+    text-shadow:var(--engrave);margin-right:2px}
+  #fbFeed .fbSep{width:1px;align-self:stretch;background:rgba(200,154,82,.22);margin:0 2px}
+  #fbFeed .fbOre{display:inline-flex;align-items:center;gap:5px;font:12px Georgia,serif;color:var(--ink);
+    background:#141826;border:1px solid var(--line);padding:3px 8px;cursor:pointer;
+    clip-path:polygon(0 0,100% 0,calc(100% - 5px) 100%,5px 100%)}
+  #fbFeed .fbOre:hover{border-color:var(--amber)}
+  #fbFeed .fbOre.dim{opacity:.35;cursor:not-allowed}
+  #fbFeed .fbOre.brush{border-color:var(--crystal);box-shadow:0 0 0 1px var(--crystal) inset}
+  #fbFeed .fbOre b{font-weight:700;color:var(--crystal);font-size:11px}
+  #fbFeed .fbSw{width:11px;height:11px;border:1px solid rgba(0,0,0,.5);box-shadow:inset 0 1px 1px rgba(255,255,255,.35)}
+  #fbFeed .fbSlot{width:20px;height:20px;padding:0;border:1px solid var(--line);background:#0d1122;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center}
+  #fbFeed .fbSlot:hover{border-color:var(--amber)}
+  #fbFeed .fbSlot.used{opacity:.3;cursor:default;filter:grayscale(.6)}
+  #fbFeed .fbSlot.empty{border-style:dashed;opacity:.5}
+  #fbFeed .fbSlot .fbSw{width:14px;height:14px}
+  #fbFeed .fbMini{font:11px Georgia,serif;color:var(--dim);background:none;border:1px solid var(--line);
+    padding:2px 7px;cursor:pointer}
+  #fbFeed .fbMini:hover{border-color:var(--amber);color:var(--ink)}
+  #fbFeed .fbHeatWrap{width:64px;height:7px;border:1px solid var(--line);background:#0d1122;overflow:hidden}
+  #fbFeed .fbHeatFill{display:block;height:100%;width:0;background:linear-gradient(90deg,#b02a0e,#ffe680)}
+
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;animation:none !important} }
 
 </style>
@@ -783,6 +815,8 @@
     </div>
   </div>
 </div>
+
+<div id="fbFeed"></div>
 
 <div id="forgeBench">
   <div id="fbTitle">Hand Forge</div>
@@ -6083,9 +6117,11 @@ let forgeNugUsed=0, forgeNugSize=48;    // nuggets spawned so far this part; cel
 // clean, well-levelled pour fills it with nothing left over.
 function forgeNugWant(){ return fgMouldTotal; }
 // Drop one nugget of cold ore high in the chamber, grown outward from a centre point
-// so it's a compact rounded lump. Returns false when the run is spent.
-function forgeSeedNugget(){
+// so it's a compact rounded lump. The nugget carries a metal id (metalKey) so a mixed
+// feed shows its constituents. Returns false when the run is spent.
+function forgeSeedNugget(metalKey){
   if (forgeNugUsed>=FORGE_NUGGETS) return false;
+  const mid=forgeMetalId(metalKey||'copper');
   forgeNugSize=Math.ceil(forgeNugWant()/FORGE_NUGGETS);
   const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-5;    // hangs high, centred over the seat
   // rank every empty cell by distance to the nugget centre (y squ/stretched a touch
@@ -6102,28 +6138,24 @@ function forgeSeedNugget(){
     const d=c[0],ix=c[1],iy=c[2],iz=c[3];
     // craggy skin: skip an occasional near-surface cell so it reads as rough ore
     if (d>1.7 && ((ix*73856093^iy*19349663^iz*83492791)>>>0)%4===0) continue;
-    const id=fIdx(ix,iy,iz); fgFill[id]=1; fgTemp[id]=0.05; placed++;   // cold and solid
+    const id=fIdx(ix,iy,iz); fgFill[id]=1; fgTemp[id]=0.05; fgMetal[id]=mid; placed++;   // cold and solid, tagged
   }
   forgeNugUsed++;
   return true;
 }
-// Feed the next nugget once the current one is essentially gone — i.e. almost no
-// cold ore is left hanging ANYWHERE in the chamber (above the box rim). Molten drips
-// in transit don't count (they're falling, not hanging), and pooled metal is below
-// the rim, so this is just "the nugget you were melting is used up". Counting the
-// whole hang, not a top band, stops a sagged half-nugget from triggering the next.
+// Is the upper chamber clear enough to drop the NEXT nugget? The feed is player-driven
+// now — the old code auto-advanced the moment a nugget melted, which took the choice of
+// WHICH ore comes next out of the player's hands. Now the player clicks a queued ore to
+// drop it; this only gates that click so two nuggets can't overlap in the hang zone.
+// Molten drips in transit and pooled metal below the rim don't count — only an actual
+// unmelted nugget still hanging up top blocks the next drop.
 const NUG_ZONE_LO=FGH-9;                 // the upper chamber where a nugget hangs + its first drips
-function forgeMaybeNextNugget(){
-  if (forgeNugUsed>=FORGE_NUGGETS) return;
-  // count metal in the UPPER chamber only — the hanging nugget and its fresh drips.
-  // Temperature-agnostic (torching turns it molten for a moment; a cold-only count
-  // would mis-fire). Looking only high up means overfill piling low at the rim never
-  // blocks the next nugget — only an actual unmelted nugget up top does.
+function forgeHangClear(){
   let hanging=0;
   for (let iy=NUG_ZONE_LO; iy<FGH; iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-    if (fgFill[fIdx(ix,iy,iz)]){ if (++hanging>=8) return; }
+    if (fgFill[fIdx(ix,iy,iz)]){ if (++hanging>=8) return false; }
   }
-  if (forgeSeedNugget()) forgeDirty=true;
+  return true;
 }
 
 // ---- rendering: a molten SURFACE, meshed from the field every frame ----
@@ -6263,6 +6295,22 @@ const forgeCursorTool=new THREE.Group(); forgeCursorTool.visible=false; scene.ad
 forgeCursorTool.scale.setScalar(1.7); forgeCursorTool.rotation.set(0.22,0.35,-0.34);   // held-in-hand tilt
 const _cursorModels={}; FORGE_TOOL_DEFS.forEach(d=>{ const m=d.build(); m.visible=false; _cursorModels[d.id]=m; forgeCursorTool.add(m); });
 const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forgeRotateGlyph.scale.setScalar(0.9); scene.add(forgeRotateGlyph);
+// The crucible STAGE — a pot that hangs over the chamber (where the ore nugget hangs) once the
+// crucible tool is active and loaded. Its molten glow ramps with forgeCrucHeat, so the player
+// SEES it charge from cold to white-hot before it can pour. Lives in forgeGroup (rides the
+// camera drag) but not forgePivot (it's a tool above the work; it doesn't turn with the part).
+const _crucCol=new THREE.Color();
+const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(1.7);
+forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-1.5), fWZ((FGD-1)/2)); forgeGroup.add(forgeCrucStage);
+const _crucGlow=_tm(new THREE.SphereGeometry(0.17,14,12),_fGlow(0xff7a30),0,0.17,0); forgeCrucStage.add(_crucGlow);
+function forgeCrucGlow(){
+  const show=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
+  forgeCrucStage.visible=show;
+  if (!show) return;
+  fHeatRamp(0.1+forgeCrucHeat*0.42,_crucCol);   // cold pot dull, molten near white-hot
+  _crucGlow.material.color.copy(_crucCol);
+  _crucGlow.scale.setScalar(0.6+forgeCrucHeat*0.9);
+}
 // Highlight the active rack slot and show the matching cursor model.
 function forgeSyncPalette(){
   for (const id in _rackSlots){ const on=id===forgeTool; _rackSlots[id].ring.material=on?_fGlow(0x59d6ff):_brass;
@@ -6358,6 +6406,21 @@ const F_LOCK=new THREE.Color(0x1f9fd6);
 // copper framework and the verdigris of set copper, so the two-metal build is obvious at a
 // glance. Placeholder hue: Stage D matches it to the seated core's colour requirement.
 const F_ALLOY=new THREE.Color(0xb060e0);
+// Quenched ALLOY — a frozen deep-violet, distinct from both live alloy (bright violet)
+// and quenched copper (steel blue), so locking alloy doesn't read as plain quenched copper.
+const F_LOCK_ALLOY=new THREE.Color(0x5a3fae);
+// Metal render id stored per cell in fgMetal (0 = copper framework default). A fed ore
+// nugget carries its own id; the crucible blend uses FORGE_ALLOY_ID. Each id has a SET
+// colour — how the metal reads once cooled — so a mixed feed shows its constituents and
+// the alloy housing reads apart from the copper.
+const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3};
+const FORGE_ALLOY_ID=9;
+const forgeMetalId=k=>FORGE_METAL_ID[k]!==undefined?FORGE_METAL_ID[k]:0;
+const FORGE_METAL_SET={
+  1:new THREE.Color(0xc2ccd6),        // tin  -> bright pewter
+  2:new THREE.Color(0x59657a),        // iron -> dark steel
+  3:new THREE.Color(0x7a5bc0),        // voidsteel -> void violet
+};
 // Incandescence ramp: what a heating patch looks like as temperature climbs, and —
 // run backwards as it cools — how it fades. Cold raw ore is dark copper; heat drives
 // it dull red -> red -> orange -> yellow -> white-hot just before it sloughs, so the
@@ -6419,18 +6482,23 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   // cap, so the settled top surface reads as done rather than the mould below it
   const inCol=fgMould[fIdx(ix,0,iz)], setDone=(iy<=MOULD_DEPTH && inCol);
   fHeatRamp(t,_fcolor);                                         // incandescence by temperature
-  // ALLOY (crucible metal) — neighbour-aware, because a surface vertex maps to the empty
-  // exterior cell (same reason the lock tint needs it); vacated cells clear fgMetal.
-  let _al=fgMetal[cid];
-  if (!_al && ((ix>0&&fgMetal[cid-1])||(ix<FGW-1&&fgMetal[cid+1])||
-      (iy>0&&fgMetal[cid-FGW])||(iy<FGH-1&&fgMetal[cid+FGW])||
-      (iz>0&&fgMetal[cid-FGW*FGH])||(iz<FGD-1&&fgMetal[cid+FGW*FGH]))) _al=1;
-  // set colour as it cools (t 0.22->0.06): alloy -> its own hue, copper-in-mould -> verdigris.
-  const setCol = _al?F_ALLOY:(setDone?F_SET:null);
+  // METAL TYPE of the nearest filled cell — neighbour-aware, because a surface vertex maps
+  // to the empty exterior cell (same reason the lock tint needs it); vacated cells clear fgMetal.
+  let mid = fgFill[cid]?fgMetal[cid]:-1;
+  if (mid<0){
+    if (ix>0&&fgFill[cid-1]) mid=fgMetal[cid-1]; else if (ix<FGW-1&&fgFill[cid+1]) mid=fgMetal[cid+1];
+    else if (iy>0&&fgFill[cid-FGW]) mid=fgMetal[cid-FGW]; else if (iy<FGH-1&&fgFill[cid+FGW]) mid=fgMetal[cid+FGW];
+    else if (iz>0&&fgFill[cid-FGW*FGH]) mid=fgMetal[cid-FGW*FGH]; else if (iz<FGD-1&&fgFill[cid+FGW*FGH]) mid=fgMetal[cid+FGW*FGH];
+  }
+  const _al = mid===FORGE_ALLOY_ID;
+  // set colour as it cools (t 0.22->0.06): the crucible alloy and non-copper feed metals
+  // read in their own hue; copper reads verdigris only once set in the mould (raw copper
+  // ore stays coppery via the ramp).
+  const setCol = _al?F_ALLOY : (mid>0?(FORGE_METAL_SET[mid]||F_SET) : (setDone?F_SET:null));
   if (setCol && t<0.22){ const f=Math.min(1,(0.22-t)/0.16); _fcolor.lerp(setCol,f); }
-  // raw, cold ore is mottled per cell so it reads as rough copper, not a smooth cast —
+  // raw, cold ore is mottled per cell so it reads as rough metal, not a smooth cast —
   // a cheap hash nudges each cell's brightness a little (skip once it's setting patina/alloy)
-  if (t<0.2 && !((setDone||_al) && t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
+  if (t<0.2 && !((setDone||mid>0) && t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295;
     _fcolor.multiplyScalar(0.8+hsh*0.36); }
   // quenched: cold steel, overrides all. A surface vertex often maps to the EMPTY
   // exterior cell (same reason the temp colours read the outside), so check the filled
@@ -6439,7 +6507,7 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   if (!_lk && ((ix>0&&fgLocked[cid-1])||(ix<FGW-1&&fgLocked[cid+1])||
       (iy>0&&fgLocked[cid-FGW])||(iy<FGH-1&&fgLocked[cid+FGW])||
       (iz>0&&fgLocked[cid-FGW*FGH])||(iz<FGD-1&&fgLocked[cid+FGW*FGH]))) _lk=1;
-  if (_lk) _fcolor.copy(F_LOCK);
+  if (_lk) _fcolor.copy(_al?F_LOCK_ALLOY:F_LOCK);   // quenched alloy keeps its own frozen tint
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   // heat glow (0..1): ramps in from ~dull-red so ANY incandescence reads, hard by the
   // time it's near white. Set/verdigris metal (blended above, low t) emits nothing.
@@ -6537,15 +6605,26 @@ let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=f
 const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
 const LEVEL_BAND=1.3;                   // half-thickness of the heated slab, in cells
 const GRIND_RATE=3;                     // cells the grinder shaves per sim step
-// THE CRUCIBLE — a RATIONED alloy pour. Copper is the base framework; the crucible lays a
-// second metal (the alloy housing) into any area of the template, in its own colour. It's
-// deliberately limited: one charge's worth of alloy per part (two once upgraded), so a
-// part is mostly copper with alloy only where it counts (the core's hot face). Each charge
-// dispenses ~CRUCIBLE_VOL alloy cells; forgeAlloyLeft is what remains this part.
-let forgeCrucibleMax=1;                 // charges per part (1; 2 once upgraded)
-const CRUCIBLE_VOL=45;                  // alloy cells one charge is worth
+// THE CRUCIBLE — the PLAYER-LOADED alloy pour. Copper is the base framework; the crucible
+// lays a second metal (the alloy housing) into any area of the template, in its own colour.
+// The player CHOOSES two ores, LOADS them into the pot, HEATS it to molten, then POURS —
+// nothing is automatic. A load is worth two ores of metal (2 x a feed nugget), so a part is
+// mostly copper with alloy only where it counts (the core's hot face). One load per part,
+// two once upgraded (forgeCrucibleMax).
+let forgeCrucibleMax=1;                 // crucible loads allowed per part (1; 2 once upgraded)
+let forgeCrucChargesLeft=1;             // loads not yet spent this part
 const CRUCIBLE_RATE=2;                  // alloy cells poured per sim step while held
-let forgeAlloyLeft=CRUCIBLE_VOL;        // alloy cells remaining this part
+const CRUC_HEAT_RATE=0.02;              // crucible heat gain/step: ~1.6s from cold to molten at 30Hz
+let forgeCrucLoad=[];                   // the (up to) two ore keys the player has loaded
+let forgeCrucHeat=0;                    // 0..1 melt of the loaded charge; must reach 1 before it pours
+let forgeCrucBudget=0;                  // alloy cells left in the molten charge (2 nuggets' worth)
+let forgeCrucSpent=false;               // ores for the current load already deducted from stores
+// THE FEED — the player composes up to FORGE_NUGGETS ore chunks (any owned ores; e.g. copper
+// AND tin to try an alloy feed), shown along the top of the screen, and clicks which one to
+// DROP into the chamber to melt right now. Each dropped nugget carries its ore's metal id, so
+// a mixed feed reads as its constituents. forgeFeed holds {metal, used} per queued chunk.
+let forgeFeed=[];                       // [{metal:'copper', used:false}, ...] up to FORGE_NUGGETS
+let forgeFeedMetal='copper';            // metal id the NEXT dropped nugget carries (set by the click)
 // Slow enough that a held torch visibly HEATS a patch — it glows up over most of
 // a second — before it crosses FLOW_T and sloughs. That heat-up delay is the ore's
 // "heat resistance", and it was invisible when this was fast (the slough looked
@@ -6641,24 +6720,51 @@ function forgeGrindStep(){
         fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; fgMetal[id]=0; removed++; forgeDirty=true;
       }
 }
-// Crucible: pour molten ALLOY (fgMetal=1) into the template at the aim, a couple of cells
-// per step, drawn from the rationed budget (forgeAlloyLeft). It's molten so it settles and
-// levels like copper; its own colour (F_ALLOY) marks the housing. Deposits at and just
-// above the aimed surface into empty, allowed cells so it lands and runs down into place.
+// Crucible: the player chose two ores and LOADED them; this heats the pot to molten, then
+// pours. Until forgeCrucHeat reaches 1 the charge isn't molten — a hold just heats it (the
+// pot glows up). Once molten, a hold POURS molten ALLOY (fgMetal=FORGE_ALLOY_ID, its own
+// colour) into the template at the aim, a couple of cells per step, drawn from the charge
+// budget (two nuggets' worth). It settles and levels like copper. Deposits at and just above
+// the aimed surface into empty, allowed cells so it lands and runs down into place.
 function forgeCrucibleStep(){
-  if (!fluxAim || forgeAlloyLeft<=0) return;
+  if (forgeCrucLoad.length<2) return;                    // nothing loaded yet
+  if (forgeCrucHeat<1){                                  // not molten: a hold heats the pot
+    forgeCrucHeat=Math.min(1, forgeCrucHeat+CRUC_HEAT_RATE);
+    forgeCrucGlow(); if (forgeCrucHeat>=1) updateForgeHud();
+    return;
+  }
+  if (!fluxAim || forgeCrucBudget<=0) return;
   const cx=Math.round(fluxAim.x), cy=Math.round(fluxAim.y), cz=Math.round(fluxAim.z);
   let poured=0;
   const spots=[[0,0],[1,0],[-1,0],[0,1],[0,-1]];
-  for (let dy=0; dy<=2 && poured<CRUCIBLE_RATE && forgeAlloyLeft>0; dy++)
+  for (let dy=0; dy<=2 && poured<CRUCIBLE_RATE && forgeCrucBudget>0; dy++)
     for (const [dx,dz] of spots){
       const ix=cx+dx, iy=cy+dy, iz=cz+dz;
       if (!fIn(ix,iy,iz)) continue;
       const id=fIdx(ix,iy,iz);
       if (fgFill[id] || !forgeAllowed(ix,iy,iz)) continue;
-      fgFill[id]=1; fgTemp[id]=0.9; fgMetal[id]=1; forgeAlloyLeft--; poured++; forgeDirty=true;
-      if (poured>=CRUCIBLE_RATE||forgeAlloyLeft<=0) break;
+      fgFill[id]=1; fgTemp[id]=0.9; fgMetal[id]=FORGE_ALLOY_ID; forgeCrucBudget--; poured++; forgeDirty=true;
+      if (poured>=CRUCIBLE_RATE||forgeCrucBudget<=0) break;
     }
+  if (forgeCrucBudget<=0){                                                 // charge emptied — spend it
+    forgeCrucPouring=false; forgeCrucChargesLeft=Math.max(0,forgeCrucChargesLeft-1);
+    forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucSpent=false;
+    forgeCrucGlow(); renderForgeFeed(); updateForgeHud();
+  }
+}
+// Load one ore into the crucible pot (up to two). The second ore commits the charge:
+// it deducts both ores from stores and sets the molten budget to two nuggets' worth.
+function forgeCrucAdd(metalKey){
+  if (forgeCrucChargesLeft<=0){ say('The crucible is spent for this part.','warn'); return; }
+  if (forgeCrucHeat>0 || forgeCrucLoad.length>=2){ say('Pot is charged — pour it before loading again.','warn'); return; }
+  forgeCrucLoad.push(metalKey);
+  if (forgeCrucLoad.length===2){
+    // commit: arm the molten budget at two nuggets' worth. (The part's metal cost is still
+    // taken at Finish via templateCost; Stage D folds the crucible load into real cost.)
+    forgeCrucBudget=2*forgeNugSize; forgeCrucSpent=true;
+    say('Crucible loaded — hold to HEAT it to molten, then pour.','good');
+  }
+  forgeCrucGlow(); renderForgeFeed(); updateForgeHud();
 }
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
 const MELT_CREEP=0.09;
@@ -6868,7 +6974,7 @@ function forgeSimTick(){
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
-    if ((forgeSpin&3)===0){ forgeDropSmallClusters(); forgeMaybeNextNugget(); }
+    if ((forgeSpin&3)===0){ forgeDropSmallClusters(); }
   }
   if (forgeDirty){ syncForgeMesh(); updateForgeHud(); }
 }
@@ -6895,8 +7001,14 @@ function enterForge(){
   forgeOrient=0;                             // always start lying
   forgeBuildMould(); forgePlaceGhosts();
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
-  forgeAlloyLeft=forgeCrucibleMax*CRUCIBLE_VOL;   // recharge the crucible for a fresh part
-  forgeSeedNugget();                        // first nugget hangs ready
+  // recharge the crucible and clear any half-built load for a fresh part
+  forgeCrucChargesLeft=forgeCrucibleMax; forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucBudget=0; forgeCrucSpent=false;
+  // Compose the feed. Default to a full run of copper (the plain framework) so a player who
+  // just wants to forge can — but every slot is editable, so trying an alloy feed (some tin)
+  // is a click away. Nothing is dropped automatically: the player clicks a slot to melt it.
+  forgeNugSize=Math.ceil(forgeNugWant()/FORGE_NUGGETS);
+  forgeFeed=[]; for (let i=0;i<FORGE_NUGGETS;i++) forgeFeed.push({metal:'copper',used:false});
+  renderForgeFeed();
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
   forgeSyncPalette();                        // rack highlight + cursor model to the torch
@@ -6972,17 +7084,89 @@ function updateForgeHud(){
         fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
   if (!hint) return;
   const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
-  const nugLeft=FORGE_NUGGETS-forgeNugUsed;   // nuggets not yet fed (the one hanging counts as fed)
+  const nugLeft=forgeFeed.filter(f=>!f.used).length;   // queued ore not yet dropped
+  const crucHint = forgeCrucLoad.length<2 ? 'Crucible: pick TWO ores in the top bar to load the pot.'
+    : forgeCrucHeat<1 ? 'Crucible loaded — hold ANYWHERE to HEAT it ('+Math.round(forgeCrucHeat*100)+'%); at molten it can pour.'
+    : 'Crucible molten — hold on the frame to POUR ALLOY (its own colour) around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
     forgeTool==='level' ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to sweep it through the metal — it melts at the slab and finds its level, flattening the surface.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
-    : forgeTool==='crucible' ? 'Crucible: hold to pour molten ALLOY (its own colour) into the frame — line the core seat where the hot face will sit. Rationed: '+forgeAlloyLeft+' left. Copper is the framework; alloy is the housing.'
-    : 'Hold the flux torch on a nugget to melt it — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time; let each level before the next drops. Drag empty space to turn the bench.';
-  const alloyNote = forgeAlloyLeft<CRUCIBLE_VOL*forgeCrucibleMax ? '  ·  alloy '+forgeAlloyLeft : '';
-  stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left'+alloyNote;
+    : forgeTool==='crucible' ? crucHint
+    : 'Click an ore in the top bar to DROP it into the chamber, then hold the flux torch on it to melt — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time. Drag empty space to turn the bench.';
+  const crucNote = forgeCrucChargesLeft<forgeCrucibleMax || forgeCrucLoad.length ? '  ·  crucible '+forgeCrucChargesLeft+' left' : '';
+  stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left'+crucNote;
   fill.style.width=fpc+'%';
   fin.disabled=frac<FILL_DONE;
 }
+
+// ---- the FEED bar: the player composes the ore queue (and loads the crucible) from a strip
+// along the TOP of the screen, then clicks which ore to DROP into the chamber right now. The
+// ore feed replaces the old auto-advancing single-metal run: a mixed feed (some copper, some
+// tin) is how you try an alloy, and each dropped nugget carries its ore's colour. ----
+function forgeAddFeed(metalKey){
+  if (forgeFeed.length>=FORGE_NUGGETS){ say('The feed is full ('+FORGE_NUGGETS+' ore).','warn'); return; }
+  if (!adminOn && (metals[metalKey]||0)<=0){ say('No '+(ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey)+' in stores.','warn'); return; }
+  forgeFeed.push({metal:metalKey,used:false}); renderForgeFeed(); updateForgeHud();
+}
+function forgeDropFeed(i){
+  const f=forgeFeed[i]; if (!f||f.used) return;
+  // one nugget hangs at a time — gate the drop until the last one has melted down, so two
+  // don't overlap up top (the sim expects a single hanging lump to eat through).
+  if (!forgeHangClear()){ say('Let the ore up top melt down before dropping the next.','warn'); return; }
+  if (forgeSeedNugget(f.metal)){ f.used=true; forgeFeedMetal=f.metal; forgeDirty=true; syncForgeMesh(); renderForgeFeed(); updateForgeHud(); }
+}
+function forgeClearFeed(){ forgeFeed=forgeFeed.filter(f=>f.used); renderForgeFeed(); updateForgeHud(); }
+// Build the top strip. Two modes: the feed queue (default) or, when the crucible tool is
+// held, the crucible loader (pick two ores, watch it heat). Stores on the left, gated by
+// what you own (admin shows all). Rebuilt on every state change; a single delegated click
+// handler (wired once) reads data-attributes, so no per-chip listeners leak.
+function renderForgeFeed(){
+  const el=document.getElementById('fbFeed'); if (!el) return;
+  const show=forgeActive && view==='forgeb';
+  el.classList.toggle('on',show);
+  if (!show){ el.innerHTML=''; return; }
+  const storeChips=(action)=>FORGE_ORE_ORDER.map(k=>{
+    const have=metals[k]||0, info=ORE_INFO[k]||{label:k,col:'#999'};
+    const dim=(!have&&!adminOn)?' dim':'';
+    return `<button class="fbOre${dim}" data-act="${action}" data-metal="${k}" title="${info.label} — ${have} in stores">`+
+      `<span class="fbSw" style="background:${info.col}"></span>${info.label.replace(' ore','')}<b>${have}</b></button>`;
+  }).join('');
+  let html='';
+  if (forgeTool==='crucible'){
+    const slot=(i)=>{ const k=forgeCrucLoad[i];
+      if (!k) return `<span class="fbSlot empty" title="empty crucible slot"></span>`;
+      const info=ORE_INFO[k]||{col:'#999'}; return `<span class="fbSlot" title="${info.label}"><span class="fbSw" style="background:${info.col}"></span></span>`; };
+    const hpc=Math.round(forgeCrucHeat*100);
+    const state = forgeCrucLoad.length<2 ? 'pick two ores to load'
+      : forgeCrucHeat<1 ? 'hold to heat — '+hpc+'%'
+      : 'molten · '+forgeCrucBudget+' left';
+    html = `<span class="fbLbl">Load</span><div class="fbGrp">${storeChips('cruc')}</div>`+
+      `<span class="fbSep"></span><span class="fbLbl">Crucible</span>`+
+      `<div class="fbGrp">${slot(0)}${slot(1)}`+
+      `<span class="fbHeatWrap"><span class="fbHeatFill" style="width:${hpc}%"></span></span>`+
+      `<span class="fbLbl" style="color:var(--crystal)">${state}</span></div>`+
+      `<span class="fbSep"></span><span class="fbLbl" style="color:var(--crystal)">${forgeCrucChargesLeft} charge${forgeCrucChargesLeft===1?'':'s'}</span>`;
+  } else {
+    const slots=forgeFeed.map((f,i)=>{ const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
+      return `<button class="fbSlot${f.used?' used':''}" data-act="drop" data-idx="${i}" title="${info.label}${f.used?' — melted':' — click to drop & melt'}">`+
+        `<span class="fbSw" style="background:${info.col}"></span></button>`; }).join('');
+    const pending=forgeFeed.filter(f=>!f.used).length;
+    html = `<span class="fbLbl">Stores</span><div class="fbGrp">${storeChips('feed')}</div>`+
+      `<span class="fbSep"></span><span class="fbLbl">Feed ${forgeFeed.length}/${FORGE_NUGGETS}</span>`+
+      `<div class="fbGrp">${slots||'<span class="fbLbl" style="color:var(--dim)">add ore →</span>'}</div>`+
+      (pending?`<button class="fbMini" data-act="clear" title="clear un-melted ore from the queue">clear</button>`:'');
+  }
+  el.innerHTML=html;
+}
+// One delegated click handler for the whole feed strip.
+document.getElementById('fbFeed').addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]'); if (!b) return;
+  const act=b.dataset.act;
+  if (act==='feed') forgeAddFeed(b.dataset.metal);
+  else if (act==='cruc') forgeCrucAdd(b.dataset.metal);
+  else if (act==='drop') forgeDropFeed(+b.dataset.idx);
+  else if (act==='clear') forgeClearFeed();
+});
 
 // ---- pointer: press metal to flux, drag empty space to rotate ----
 // The beam marker sits at the true 3D surface hit, so it lands under the cursor.
@@ -7004,8 +7188,14 @@ function forgeDown(x,y){
     return;
   }
   if (forgeTool==='crucible'){
-    if (forgeAlloyLeft<=0){ say('The crucible is spent — no alloy left for this part.','warn'); return; }
-    if (aim){ forgeCrucPouring=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+    if (forgeCrucLoad.length<2){                          // not charged yet
+      if (aim) say('Load two ores into the crucible (top bar) first.','warn');
+      else { forgeRotating=true; forgePX=x; forgePY=y; }
+      return;
+    }
+    if (forgeCrucHeat<1){ forgeCrucPouring=true; forgeSX=x; forgeSY=y; return; }   // hold heats the pot to molten
+    if (forgeCrucBudget<=0){ say('The crucible is empty — its charge is poured.','warn'); return; }
+    if (aim){ forgeCrucPouring=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }   // molten: pour
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
@@ -7042,6 +7232,8 @@ function forgeSetTool(name){
   forgeLevelPlane.visible=lvl; forgePlaceLevelPlane();
   for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
   if (typeof forgeSyncPalette==='function') forgeSyncPalette();
+  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the hanging pot
+  renderForgeFeed();                                        // top bar switches feed <-> crucible mode
   updateForgeHud();
 }
 // QUENCH: freeze the metal currently in the frame (everything below the rim). Quenched
@@ -7751,6 +7943,7 @@ function showView(name){
   forgeRack.visible=inForge;                // the 3D tool rack rides the camera in-forge only
   if (!inForge){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; }
   if (inForge){ if (!forgeActive) enterForge(); } else if (forgeActive) leaveForge();
+  renderForgeFeed();                          // show the top ore-feed strip in-forge, hide it out
   document.getElementById('benchBack').classList.toggle('on',isMachine||inForge);
   renderWingNav();          // wing tiles replace the old expedition/lab toggle
   // The excavation bench is dirt-and-core only: no template, no align, no ghost,
