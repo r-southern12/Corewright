@@ -5918,22 +5918,31 @@ function _voxThumb(list, mat){                 // list: [ [x,y,z,size,hex], ... 
   return inst;
 }
 const _thumbQI=new THREE.Quaternion();
+const FRAME_THUMB_FILL=4.6;   // frame fills the view (zoomed IN)
+const CORE_THUMB_FILL=2.9;    // cores sit smaller with margin (zoomed OUT)
+// Both builders CENTRE on the actual filled-cell bounding box (not the grid centre), so a part
+// that occupies only part of its grid still sits dead-centre, and scale to a target fill.
 function forgeThumbMesh(part){
   const f=part&&part.forge; if (!f||!f.cells||!f.cells.length) return null;
-  const W=f.W,H=f.H,D=f.D, cx=(W-1)/2, cy=(H-1)/2, cz=(D-1)/2, scl=3.4/Math.max(W,H,D);
-  const list=[];
+  const W=f.W,H=f.H, P=[];
+  let mnx=1e9,mny=1e9,mnz=1e9,mxx=-1e9,mxy=-1e9,mxz=-1e9;
   for (let k=0;k<f.cells.length;k++){ const id=f.cells[k]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
-    list.push([(ix-cx)*scl,(iy-cy)*scl,(iz-cz)*scl,scl,MET_ICON[f.metal[k]]!==undefined?MET_ICON[f.metal[k]]:0x137a63]); }
+    P.push([ix,iy,iz,f.metal[k]]);
+    if(ix<mnx)mnx=ix; if(ix>mxx)mxx=ix; if(iy<mny)mny=iy; if(iy>mxy)mxy=iy; if(iz<mnz)mnz=iz; if(iz>mxz)mxz=iz; }
+  const cx=(mnx+mxx)/2, cy=(mny+mxy)/2, cz=(mnz+mxz)/2, ext=Math.max(mxx-mnx,mxy-mny,mxz-mnz)+1, scl=FRAME_THUMB_FILL/ext;
+  const list=P.map(c=>[(c[0]-cx)*scl,(c[1]-cy)*scl,(c[2]-cz)*scl,scl,MET_ICON[c[3]]!==undefined?MET_ICON[c[3]]:0x137a63]);
   return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.55,roughness:0.42}));
 }
 function coreThumbMesh(core){
   if (!core||!core.cells) return null;
   const cells=core.cells.filter(isCrystal); if (!cells.length) return null;
   const H=coreHue(core), hot=new THREE.Color(0xffd070), c=new THREE.Color();
-  let mx=0.5; for (const s of cells) mx=Math.max(mx,Math.abs(s.px)+s.size,Math.abs(s.py)+s.size,Math.abs(s.pz)+s.size);
-  const scl=2.7/mx, list=[];
+  let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9], ssum=0;
+  for (const s of cells){ const q=[s.px,s.py,s.pz]; for (let a=0;a<3;a++){ if(q[a]<mn[a])mn[a]=q[a]; if(q[a]>mx[a])mx[a]=q[a]; } ssum+=s.size; }
+  const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  const ext=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])+ssum/cells.length, scl=CORE_THUMB_FILL/(ext||1), list=[];
   for (const s of cells){ c.setHex(H.base); if (s.conc>0.45) c.lerp(hot,Math.min(1,(s.conc-0.45)*1.6));
-    list.push([s.px*scl,s.py*scl,s.pz*scl,Math.max(0.12,s.size*scl),c.getHex()]); }
+    list.push([(s.px-ctr[0])*scl,(s.py-ctr[1])*scl,(s.pz-ctr[2])*scl,Math.max(0.12,s.size*scl),c.getHex()]); }
   return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.25,roughness:0.35,emissive:0x120a04,emissiveIntensity:0.3}));
 }
 // register/clear the live thumbnails currently on screen
@@ -5941,7 +5950,7 @@ function clearThumbs(){ for (const t of thumbRegistry){ if (t.mesh){ t.mesh.geom
 function registerThumb(canvas, mesh){ if (!canvas||!mesh) return; _thumbInit(); thumbRegistry.push({canvas,mesh,ctx:canvas.getContext('2d')}); }
 function thumbTick(){
   if (!thumbRegistry.length) return;
-  const rot=performance.now()*0.00055;
+  const rot=performance.now()*0.00022;   // slow, stately rotation
   for (let i=thumbRegistry.length-1;i>=0;i--){ const t=thumbRegistry[i];
     if (!t.canvas.isConnected){ thumbRegistry.splice(i,1); continue; }   // panel closed/rebuilt
     thumbHolder.clear(); thumbHolder.add(t.mesh); t.mesh.rotation.set(0.42,rot,0);
@@ -7096,10 +7105,30 @@ function forgeFlowStep(){
     // only advances every FALL_EVERY steps, so it visibly arcs down the air gap; once
     // it reaches the pool it settles promptly so filling doesn't feel sluggish. The
     // crumb rule above is the safety net for the rare drip that cools mid-fall.
-    if (iy>0 && !fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){
-      // hold a mid-air drop most steps, so it falls slowly enough to see
-      if (iy>=forgeRim && (forgeSpin % FALL_EVERY)!==0) continue;
-      fMove(id,fIdx(ix,iy-1,iz),t); fMeltCreep(ix,iy,iz); moved=true; continue;
+    // ONE-WAY SEAT CHUTE: the core socket is a barrier on every side EXCEPT the top mouth —
+    // molten metal can fall DOWN into and straight through the seat void (filling the box under
+    // the seat), but nothing ever rises, spreads, or drips sideways INTO it, so once metal has
+    // passed through it can't go back. (Lateral moves use forgeAllowed, which forbids seat cells,
+    // so entry is top-only; there is no upward flow anywhere, so exit-back is impossible.)
+    const inSeat = fgSeat[id];
+    if (iy>0){
+      const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
+      if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
+        // inside the chute (this cell or the one below is seat) fall promptly; only throttle a
+        // free mid-air drip in the open chamber so the slough is still trackable by eye.
+        if (iy>=forgeRim && !inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
+        fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
+      }
+    }
+    // Inside the seat but blocked below (the chute has filled): never REST or pool in the seat,
+    // and never spread within it — shed sideways OUT into the surrounding box so the void stays
+    // clean. Never move up. This is what keeps the seat a clean socket, one-way.
+    if (inSeat){
+      const order=(ix+iz+forgeSpin)&3;
+      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+        if (forgeAllowed(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)]){ fMove(id,fIdx(nx,iy-1,nz),t); moved=true; break; }
+        if (forgeAllowed(nx,iy,nz)   && !fgFill[fIdx(nx,iy,nz)]){   fMove(id,fIdx(nx,iy,nz),t);   moved=true; break; } }
+      continue;
     }
     // MALLEABLE FOR A SHORT TIME. Lateral spreading is throttled by temperature:
     // freshly-heated metal creeps sideways briskly, cooling metal slows, and once
