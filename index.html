@@ -847,6 +847,9 @@
       <input type="range" id="tinSlider" min="8" max="20" value="12" step="1">
     </div>
     <div id="forgeList"></div>
+    <h2>Forged parts <span class="mono" id="forgedNote"></span></h2>
+    <div class="sub" style="margin:2px 0 6px">Every part you forge is kept here as a 3D object — install it into its slot, or discard it.</div>
+    <div id="forgedShelf" style="display:flex;gap:8px;flex-wrap:wrap"></div>
   </div>
 </div>
 
@@ -1401,6 +1404,7 @@ const isCrystal=c=>c.mat===undefined;
 
 // ---------- state ----------
 let inventory=[], activeCore=null, built=0, builtNames=[];
+let forgedParts=[];   // the persistent shelf of forged frames/bits — each carries its 3D voxel snapshot
 let dust=0, hp=100, hardcore=true, corpse=null;
 // POWER (v16): cells are CONSUMABLE. A seated cell dumps its charge into
 // the bank and is spent. No recharging, no plinth — the only way to keep
@@ -5852,6 +5856,33 @@ function updateTinReadout(){
   document.getElementById('tinProps').textContent=
     ` — hard: +${bite}% bite · soft: +${yld}% ore recovery`;
 }
+// ---- forged-part ICON: a small isometric "screenshot" drawn straight from the part's 3D voxel
+// snapshot (part.forge). Cheap 2D canvas (no second WebGL context): each filled cell is an iso
+// cube shaded by its metal, painted back-to-front so the shape reads. This is the actual forged
+// item, not a generic glyph. ----
+const MET_ICON={0:0xb5713a,1:0xc2ccd6,2:0x59657a,3:0x7a5bc0,9:0xb060e0};   // copper/tin/iron/vst/alloy
+function _shade(hex,f){ const r=Math.min(255,((hex>>16)&255)*f|0),g=Math.min(255,((hex>>8)&255)*f|0),b=Math.min(255,(hex&255)*f|0); return `rgb(${r},${g},${b})`; }
+function _isoCube(g,x,y,s,hex){
+  const w=s, h=s*0.5;
+  g.fillStyle=_shade(hex,1.05); g.beginPath(); g.moveTo(x,y-h); g.lineTo(x+w,y); g.lineTo(x,y+h); g.lineTo(x-w,y); g.closePath(); g.fill();      // top
+  g.fillStyle=_shade(hex,0.55); g.beginPath(); g.moveTo(x-w,y); g.lineTo(x,y+h); g.lineTo(x,y+h+s); g.lineTo(x-w,y+s); g.closePath(); g.fill();  // left
+  g.fillStyle=_shade(hex,0.8);  g.beginPath(); g.moveTo(x+w,y); g.lineTo(x,y+h); g.lineTo(x,y+h+s); g.lineTo(x+w,y+s); g.closePath(); g.fill();  // right
+}
+function forgePartIcon(part,size){
+  size=size||76;
+  const cv=document.createElement('canvas'); cv.width=cv.height=size; const g=cv.getContext('2d');
+  const f=part&&part.forge; if (!f||!f.cells||!f.cells.length) return cv;
+  const W=f.W,H=f.H,D=f.D, s=size/(Math.max(W,D)*2.1);
+  const list=[];
+  for (let n=0;n<f.cells.length;n++){ const id=f.cells[n]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
+    list.push([ix,iy,iz,f.metal[n]]); }
+  list.sort((a,b)=>(a[2]+a[0]-a[1]*0.001)-(b[2]+b[0]-b[1]*0.001));   // painter's: back-top to front-bottom
+  const cx=(W-1)/2, cz=(D-1)/2, cyc=(H-1)/2, ox=size/2, oy=size*0.58;
+  for (const c of list){ const ix=c[0],iy=c[1],iz=c[2];
+    const sx=ox+((ix-cx)-(iz-cz))*s, sy=oy+(((ix-cx)+(iz-cz))*0.5-(iy-cyc))*s;
+    _isoCube(g,sx,sy,s*0.62,MET_ICON[c[3]]!==undefined?MET_ICON[c[3]]:0x137a63); }
+  return cv;
+}
 function renderForge(){
   // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
   const ol=document.getElementById('forgeOreList');
@@ -5902,6 +5933,31 @@ function renderForge(){
     btn.onclick=()=>{ forgePart=m; forgeActive=false; showView('forgeb'); };
     div.appendChild(btn);
     list.appendChild(div);
+  }
+  renderForgedShelf();
+}
+// The persistent shelf of forged parts: each shows a screenshot-icon of its actual 3D voxel
+// form, its stats and whether it's the one currently installed, with Install / Discard actions.
+function renderForgedShelf(){
+  const shelf=document.getElementById('forgedShelf'); if (!shelf) return;
+  document.getElementById('forgedNote').textContent = forgedParts.length?`— ${forgedParts.length}/${FORGED_MAX} kept`:'';
+  shelf.innerHTML='';
+  if (!forgedParts.length){ shelf.innerHTML='<span class="sub">Nothing forged yet — pick a template above and pour a part.</span>'; return; }
+  for (const part of forgedParts){
+    const installed = part.part==='suitFrame' ? suitFrames[part.system]===part : drill[part.part]===part;
+    const card=document.createElement('div'); card.className='card t'+Math.min(3,part.tier)+(installed?' active':'');
+    card.style.cssText='display:flex;gap:8px;align-items:center;min-width:230px';
+    card.appendChild(forgePartIcon(part,72));
+    const info=document.createElement('div'); info.style.flex='1';
+    const seatNote = part.alloySeat>0.02?` · <span style="color:var(--amber)">alloy seat ${Math.round(part.alloySeat*100)}%</span>`:'';
+    info.innerHTML=`<div class="info">${part.name} <span class="badge">T${'I'.repeat(part.tier)}</span>
+      <div class="sub">${Math.round((part.q||0)*100)}% quality${seatNote} · <span style="color:var(--dim)">${installed?'installed':'on the shelf'}</span></div></div>`;
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;margin-top:4px';
+    if (!installed){ const ib=document.createElement('button'); ib.className='act'; ib.textContent='Install';
+      ib.onclick=()=>installForged(part,false); row.appendChild(ib); }
+    const db=document.createElement('button'); db.className='chip'; db.textContent='discard';
+    db.onclick=()=>discardForged(part.id); row.appendChild(db);
+    info.appendChild(row); card.appendChild(info); shelf.appendChild(card);
   }
 }
 /* ============================================================
@@ -7240,23 +7296,37 @@ function finishForge(){
   const mat=deriveForgeMaterial();                       // tier + material come from the ORES cast
   const q=Math.min(0.99, forgeQualityNow()+anvilB+(mat.alloy?mat.bonus:0));
   const made={name:`${mat.matName} ${m.label}`, tier:mat.tier, q};
+  made.id=nextId++;                                      // a handle for the shelf
+  made.part=m.part; if (m.system) made.system=m.system;  // remember which slot it fills
   made.material=mat.matName; if (mat.alloy) made.alloyPart=true;
   made.alloySeat=forgeAlloySeatFrac();                   // resonance potential: alloy lining the seat
   made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
-  made.forge=forgeSnapshot();                            // the persistent 3D voxel frame
+  made.forge=forgeSnapshot();                            // the persistent 3D voxel frame (drives the icon)
   if (mat.tin!==undefined) made.tin=mat.tin;             // bronze carries its hardness into mining
+  // The forged part PERSISTS — it lands on the Forged-parts shelf (with a screenshot icon
+  // rendered from its 3D data) where you can see it and install it, rather than being silently
+  // consumed. It also auto-installs if it beats what's fitted, so progression still just works.
+  forgedParts.unshift(made); if (forgedParts.length>FORGED_MAX) forgedParts.length=FORGED_MAX;
   const isSuit=m.part==='suitFrame';
   const cur=isSuit?suitFrames[m.system]:drill[m.part];
-  if (partScore(made)>partScore(cur)){
-    if (isSuit) suitFrames[m.system]=made; else drill[m.part]=made;
-    floatText('★ '+Math.round(q*100)+'%','var(--amber)');
-    const alloyNote = made.alloySeat>0.02 ? ` Alloy lines ${Math.round(made.alloySeat*100)}% of the core seat — it resonates with a matching core.` : '';
-    say(`${made.name} forged at ${Math.round(q*100)}% (T${mat.tier}) — fitted.`+alloyNote,'good');
-  } else {
-    dust+=Math.floor(20*mat.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
-    say(`${made.name} forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
-  }
+  const better=partScore(made)>partScore(cur);
+  if (better) installForged(made,true);
+  floatText('★ '+Math.round(q*100)+'%','var(--amber)');
+  const alloyNote = made.alloySeat>0.02 ? ` Alloy lines ${Math.round(made.alloySeat*100)}% of the seat — it resonates with a matching core.` : '';
+  say(`${made.name} forged at ${Math.round(q*100)}% (T${mat.tier}). ${better?'Fitted — and on':'On'} the Forged-parts shelf to install.`+alloyNote,'good');
   updateMeters(); showView('forge');
+}
+const FORGED_MAX=8;                                       // how many forged parts the shelf keeps
+// Install a forged part into its slot (drill frame/bit or a suit-system frame). The shelf entry
+// IS the installed object, so re-installing another and back is lossless.
+function installForged(part, silent){
+  if (part.part==='suitFrame') suitFrames[part.system]=part; else drill[part.part]=part;
+  if (!silent){ say(`${part.name} installed.`,'good'); updateMeters();
+    if (view==='forge') renderForge(); if (typeof renderLab==='function') renderLab(); }
+}
+function discardForged(id){
+  forgedParts=forgedParts.filter(p=>p.id!==id);
+  say('Forged part discarded.','warn'); if (view==='forge') renderForge();
 }
 
 function updateForgeHud(){
@@ -8508,7 +8578,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=12;  // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=13;  // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -8556,6 +8626,7 @@ function saveGame(){
       drill:{frame:drill.frame,bit:drill.bit,core:drill.core,power:drill.power},
       equip:{coil:equip.coil,forgePrism:equip.forgePrism,alembic:equip.alembic},
       powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
+      forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
       inv:inventory.map(packCore),
       active:activeCore?activeCore.id:null,
@@ -8600,6 +8671,11 @@ function loadGame(){
     if (d.tank){ tank.jet=d.tank.jet||0; tank.brine=d.tank.brine||0; tank.sand=d.tank.sand||0; }
     if (d.lab){ lab.placed=!!d.lab.placed; lab.x=d.lab.x||0; lab.y=d.lab.y||0; lab.drop=0; }
     if (d.suitFrames) for (const k in suitFrames) suitFrames[k]=d.suitFrames[k]||null;
+    forgedParts=d.forgedParts||[];
+    // relink installed frames/bits to their shelf entry so ref-identity (installed detection) holds
+    { const byId=id=>forgedParts.find(p=>p.id===id);
+      for (const k of ['frame','bit']){ if (drill[k]&&drill[k].id!=null){ const f=byId(drill[k].id); if (f) drill[k]=f; } }
+      for (const k in suitFrames){ if (suitFrames[k]&&suitFrames[k].id!=null){ const f=byId(suitFrames[k].id); if (f) suitFrames[k]=f; } } }
     seenTiles.clear();
     if (d.seenTiles) for (const t of d.seenTiles) seenTiles.add(t);
     for (const k in d.machines) if (MACHINES[k]) MACHINES[k].unlocked=d.machines[k];
