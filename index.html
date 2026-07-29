@@ -1099,7 +1099,7 @@ function boxStack(slabs,scale){
 }
 const COMPONENTS={
   drill:{label:'Drill Core', inside:(x,y,z)=>Math.max(Math.abs(x),Math.abs(y),Math.abs(z))<=1.05,
-    ghost:()=>new THREE.BoxGeometry(2.1,2.1,2.1), hotDist:1.05,
+    ghost:()=>new THREE.BoxGeometry(2.1,2.1,2.1), hotDist:1.05, flatFaces:true,
     blurb:'glow on a face — that face bites the rock'},
   cell:{label:'Power Cell', inside:(x,y,z)=>Math.hypot(x,y,z)<=1.2,
     ghost:()=>new THREE.SphereGeometry(1.2,32,24), hotDist:0,
@@ -1560,10 +1560,14 @@ function drillPower(){
    frame+core slots ARE that pairing. */
 const RESONANCE_MAX=0.35;   // a perfect alloy housing pushes surplus-power mining ~35%+ further
 function frameResonance(){
-  const f=drill.frame; if (!f||!f.alloySeat) return 0;
-  const aff=affinityFactor(drill.core,'drill');           // >1 favoured hue, 1 neutral, <1 clash
-  const hueMatch=Math.max(0,(aff-1)/AFFINITY_BONUS);      // 1 at full match, 0 at neutral/clash
-  return f.alloySeat*hueMatch;                            // 0..1
+  const f=drill.frame; if (!f||!f.alloySeat||!drill.core) return 0;
+  // The orientation the core was SEATED at drives resonance now — line the hot spot up with the
+  // alloy at the seat bench and it pays here. Falls back to a neutral estimate for a core seated
+  // via the lab picker (no bench orientation captured).
+  const seated = drill.core.seatReso!==undefined ? drill.core.seatReso : f.alloySeat*0.5;
+  const aff=affinityFactor(drill.core,'drill');           // hue still lifts/drags it a little
+  const hueMatch=0.6+0.4*Math.max(0,Math.min(1,(aff-1)/AFFINITY_BONUS+0.5));
+  return Math.max(0,Math.min(1, seated*hueMatch));
 }
 /* THE REFINEMENT LADDER. A drill core and power core of the SAME tier form a
    set; their outputs ADD into the set's charge. Crossing each rung unlocks a
@@ -3804,10 +3808,10 @@ function seatBenchTick(dt){
     seatDropping=false;
     addShake(0.22);
     spark(0,0,socketDepthZ,6,0.18);
-    const r=seatResult;
     seatInto('drillCore');
-    say(`Seated — plate coverage ${Math.round(r.coverage*100)}%, bearing ${Math.round(r.bearing*100)}%. `+
-        `The housing draws ${Math.round(coreStats().output*100)}%.`,'good');
+    const reso=drill.core&&drill.core.seatReso!==undefined?drill.core.seatReso:0;
+    say(`Seated — charge ${Math.round(coreStats().output*100)}%`+
+        (drill.frame&&drill.frame.alloySeat?`, resonance ${Math.round(reso*100)}%`:'')+'.','good');
     updateSeatHud();
     renderLab();
   }
@@ -3821,23 +3825,69 @@ function turnCore(axis){
   if (axis==='z') mineral.rotation.z=seatSnap(mineral.rotation.z)+Math.PI/2;
   updateSeatHud();
 }
+// The seat readout is now just the two numbers that matter: CHARGE (a needle gauge — the core's
+// tier output toward drilling, 100% = a flawless, fully-faceted core well seated) and RESONANCE
+// (a live line graph — how well the hot section is turned toward the frame's alloy). The old
+// surface / seat coverage / bearing percents are folded INTO charge, not shown.
+const RESO_HIST=110; let resoHistory=[];
 function updateSeatHud(){
   const el=document.getElementById('seatRead');
   if (!el||!seatBenchOn) return;
-  const r=resolveSocket();
-  // keep the offending cubes lit while you turn, so the fix is visible before
-  // you commit rather than only after a refused drop
+  if (!document.getElementById('chargeGauge')){
+    el.innerHTML=`<div style="display:flex;gap:18px;justify-content:center;align-items:center;flex-wrap:wrap">
+        <canvas id="chargeGauge" width="240" height="128" style="width:200px;height:107px"></canvas>
+        <canvas id="resoGraph" width="264" height="128" style="width:220px;height:107px"></canvas>
+      </div><div id="seatStatus" class="mono" style="text-align:center;margin-top:1px"></div>`;
+    resoHistory=[];
+  }
+  drawSeatGauges();
+}
+function _gaugeCol(v){ return v>=0.7?'#4fe3c1':v>=0.4?'#e8a33d':'#d64a3c'; }
+function drawNeedleGauge(ctx,W,H,val,label){
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2, cy=H*0.86, R=Math.min(W*0.40,H*0.66), col=_gaugeCol(val), v=Math.max(0,Math.min(1,val));
+  ctx.lineCap='round';
+  ctx.lineWidth=9; ctx.strokeStyle='rgba(180,200,230,0.14)';
+  ctx.beginPath(); ctx.arc(cx,cy,R,Math.PI,0); ctx.stroke();
+  ctx.strokeStyle=col; ctx.beginPath(); ctx.arc(cx,cy,R,Math.PI,Math.PI+Math.PI*v); ctx.stroke();
+  // minor ticks
+  ctx.strokeStyle='rgba(200,215,240,0.35)'; ctx.lineWidth=1.5;
+  for (let i=0;i<=10;i++){ const a=Math.PI+Math.PI*(i/10); const r0=R+7,r1=R+(i%5===0?13:10);
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r0,cy+Math.sin(a)*r0); ctx.lineTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.stroke(); }
+  const a=Math.PI+Math.PI*v;
+  ctx.strokeStyle='#ffe6b0'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(cx,cy);
+  ctx.lineTo(cx+Math.cos(a)*R*0.94,cy+Math.sin(a)*R*0.94); ctx.stroke();
+  ctx.fillStyle='#ffe6b0'; ctx.beginPath(); ctx.arc(cx,cy,4.5,0,7); ctx.fill();
+  ctx.textAlign='center'; ctx.fillStyle='#aeb8cc'; ctx.font='10px Georgia'; ctx.fillText(label,cx,14);
+  ctx.font='bold 22px Georgia'; ctx.fillStyle=col; ctx.fillText(Math.round(v*100)+'%',cx,cy-7);
+}
+function drawSparkline(ctx,W,H,hist,label){
+  ctx.clearRect(0,0,W,H);
+  const x0=10,x1=W-10, yTop=H*0.30, yBot=H*0.86;
+  ctx.strokeStyle='rgba(180,200,230,0.10)'; ctx.lineWidth=1;
+  for (let g=0;g<=4;g++){ const y=yTop+(yBot-yTop)*(g/4); ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke(); }
+  const cur=hist.length?hist[hist.length-1]:0, col='#c07cf0';
+  ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath();
+  for (let i=0;i<hist.length;i++){ const x=x0+(x1-x0)*(i/(RESO_HIST-1)); const y=yBot+(yTop-yBot)*Math.max(0,Math.min(1,hist[i]));
+    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.stroke();
+  if (hist.length){ const x=x0+(x1-x0)*((hist.length-1)/(RESO_HIST-1)), y=yBot+(yTop-yBot)*Math.max(0,Math.min(1,cur));
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,3.2,0,7); ctx.fill(); }
+  ctx.textAlign='left'; ctx.fillStyle='#aeb8cc'; ctx.font='10px Georgia'; ctx.fillText(label,10,15);
+  ctx.textAlign='right'; ctx.font='bold 16px Georgia'; ctx.fillStyle=col; ctx.fillText(Math.round(cur*100)+'%',W-10,16);
+}
+function drawSeatGauges(){
+  const cg=document.getElementById('chargeGauge'), rg=document.getElementById('resoGraph');
+  if (!cg||!rg||!seatBenchOn) return;
+  const r=resolveSocket(true);
   if (!seatDropping) setPreview(r.foulers,true);
-  const pc=v=>Math.round(v*100)+'%';
-  const col=v=>v>=0.7?'var(--crystal)':v>=0.4?'var(--amber)':'var(--danger)';
-  el.innerHTML=
-    (r.passes?'<b style="color:var(--crystal)">clears the opening</b>'
-             :`<b style="color:var(--danger)">fouls the opening (${r.blocked})</b>`)+
-    ` · surface <b style="color:${col(r.surface)}">${pc(r.surface)}</b>`+
-    ` · seat coverage <b style="color:${col(r.coverage)}">${pc(r.coverage)}</b>`+
-    ` · bearing <b style="color:${col(r.bearing)}">${pc(r.bearing)}</b>`+
-    ` · charge <b style="color:${col(r.charge)}">${pc(r.charge)}</b>`+
-    ` · <span style="color:var(--dim)">${r.landed} cubes on the plate</span>`;
+  const reso=seatResonance(true);
+  resoHistory.push(reso); if (resoHistory.length>RESO_HIST) resoHistory.shift();
+  drawNeedleGauge(cg.getContext('2d'),cg.width,cg.height,r.score,'CHARGE');
+  drawSparkline(rg.getContext('2d'),rg.width,rg.height,resoHistory,'RESONANCE');
+  const st=document.getElementById('seatStatus');
+  if (st) st.innerHTML=r.passes?'<b style="color:var(--crystal)">clears the opening — turn to raise the gauges, then Drop</b>'
+    :`<b style="color:var(--danger)">fouls the opening (${r.blocked}) — turn the core until a face clears</b>`;
 }
 function enterPolish(){ applyPolishLook(); updatePolishHud(); }
 function leavePolish(){
@@ -3902,11 +3952,18 @@ function packingOf(volIn){
 const SEAT_STEP=Math.PI/2;
 const seatSnap=v=>Math.round(v/SEAT_STEP)*SEAT_STEP;
 const _seatQ=new THREE.Quaternion(), _seatE=new THREE.Euler(), _seatV=new THREE.Vector3();
-// The rotation seating will actually be judged at, snapped from the live bench.
-function seatQuaternion(){
-  _seatE.set(seatSnap(mineral.rotation.x),seatSnap(mineral.rotation.y),seatSnap(mineral.rotation.z));
+// The rotation seating is judged at. Snapped for the COMMIT (a finite set of clean seatings);
+// LIVE (unsnapped) for the real-time gauges, so turning a free-form core (a sphere power cell)
+// shows the charge/resonance move continuously as you hunt the best face.
+function seatQuaternion(live){
+  if (live) _seatE.set(mineral.rotation.x,mineral.rotation.y,mineral.rotation.z);
+  else _seatE.set(seatSnap(mineral.rotation.x),seatSnap(mineral.rotation.y),seatSnap(mineral.rotation.z));
   return _seatQ.setFromEuler(_seatE);
 }
+// Cube cores (flat-faced templates like the drill core) have only six distinct seatings, so
+// free-drag rotation is meaningless noise — the Turn 90° buttons are the whole interaction.
+// Round cores (a sphere power cell, etc.) DO reward a hand-found angle, so they keep the drag.
+function coreCubic(){ return !!(COMPONENTS[comp] && COMPONENTS[comp].flatFaces); }
 // FACE CONTACT — how much crystal surface lies flush against the socket wall.
 // Surface is measured in exposed cube FACES (via faceMask), not true area: every
 // shard is a cube, so a face pointing at the wall is one unit of contact. A
@@ -4003,6 +4060,7 @@ function seatInto(slot){
   if (!s||!s.fits) return false;
   const rec={id:activeCore.id,tier:activeCore.tier,output:s.output,
     seat:s.seat,rot:[seatSnap(mineral.rotation.x),seatSnap(mineral.rotation.y),seatSnap(mineral.rotation.z)]};
+  if (slot==='drillCore') rec.seatReso=seatResonance(false);   // capture the orientation's alloy alignment
   if (slot==='drillCore') drill.core=rec; else forgeAnvil=rec;
   return true;
 }
@@ -4023,14 +4081,14 @@ function unseat(slot){
                 housing draws from it
    A face presented squarely covers the floor and lands flat. A corner touches
    at one point: high pressure, almost no coverage. */
-function resolveSocket(){
+function resolveSocket(live){
   const out={coverage:0,bearing:0,charge:0,surface:0,score:0,rest:0,landed:0,blocked:0,blockedVol:0,passes:true,foulers:new Set()};
   if (!activeCore) return out;
   // Iterate the live VOXELS rather than the cell list: the mesh is needed so the
   // offending cubes can be shown to the player, not just counted at them.
   const shards=voxels.filter(v=>isCrystal(v.cell));
   if (!shards.length) return out;
-  const q=seatQuaternion();
+  const q=seatQuaternion(live);
   const pts=[];
   let deepest=Infinity;
   for (const sh of shards){
@@ -4101,6 +4159,40 @@ function resolveSocket(){
   out.surfaceAbs=rs.surface;
   out.score=Math.max(0,Math.min(1,rs.relative*0.55+out.coverage*0.25+out.bearing*0.20));
   return out;
+}
+// RESONANCE — how well the core's CONCENTRATED (hot) section is turned toward the frame's ALLOY.
+// The forged housing's alloy usually lines only some walls (you poured it where it counts), so
+// which way you face the glowing part of the core matters: line the hot spot up with the alloy and
+// the housing "resonates", driving the drill past parity. Orientation-dependent, so it rewards the
+// turn the player makes. Cached alloy direction per frame (centroid of the alloy cells vs the whole
+// body, rotated into the same seat-bench frame the housing mesh uses).
+const _AXIS_X=new THREE.Vector3(1,0,0), _resoV=new THREE.Vector3();
+const _alloyVecCache=new Map();
+function frameAlloyVec(part){
+  if (_alloyVecCache.has(part.id)) return _alloyVecCache.get(part.id);
+  const f=part.forge, W=f.W,H=f.H;
+  let ax=0,ay=0,az=0,an=0, fx=0,fy=0,fz=0,fn=0;
+  for (let k=0;k<f.cells.length;k++){ const id=f.cells[k]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
+    fx+=ix; fy+=iy; fz+=iz; fn++;
+    if (f.metal[k]===FORGE_ALLOY_ID){ ax+=ix; ay+=iy; az+=iz; an++; } }
+  const v=new THREE.Vector3();
+  if (an){ v.set(ax/an-fx/fn, ay/an-fy/fn, az/an-fz/fn).applyAxisAngle(_AXIS_X,Math.PI/2);
+    if (v.lengthSq()>1e-4) v.normalize(); else v.set(0,0,0); }
+  _alloyVecCache.set(part.id,v); return v;
+}
+function seatResonance(live){
+  const fr=drill.frame; if (!fr||!fr.forge||!fr.alloySeat||!activeCore) return 0;
+  const av=frameAlloyVec(fr);
+  const cells=activeCore.cells.filter(isCrystal);
+  let hx=0,hy=0,hz=0,hm=0;
+  for (const c of cells){ const w=c.conc*c.size*c.size*c.size; hx+=c.px*w; hy+=c.py*w; hz+=c.pz*w; hm+=w; }
+  if (hm<=1e-6) return 0;
+  if (av.lengthSq()<1e-4) return Math.min(1, fr.alloySeat*0.6);       // symmetric alloy: orientation-neutral
+  _resoV.set(hx/hm,hy/hm,hz/hm);
+  if (_resoV.lengthSq()<1e-6) return Math.min(1, fr.alloySeat*0.5);   // hot spot dead-centre: no facing
+  _resoV.normalize().applyQuaternion(seatQuaternion(live));
+  const align=Math.max(0,_resoV.dot(av));                            // 0 (hot spot away) .. 1 (facing the alloy)
+  return Math.min(1, fr.alloySeat*(0.3+1.0*align));
 }
 /* ============================================================
    REFINEMENT & SURFACE — the two numbers that actually describe a
@@ -4508,8 +4600,12 @@ function benchMove(x,y,hover){
   }
   if (dragging){
     moved+=Math.abs(x-ppx)+Math.abs(y-ppy);
-    mineral.rotation.y+=(x-ppx)*0.008; mineral.rotation.x+=(y-ppy)*0.008;
-    if (tut.on) tutTurned+=Math.abs(x-ppx)*0.008+Math.abs(y-ppy)*0.008;
+    // A cube core in the seat bench has only six seatings — free drag-rotation is meaningless, so
+    // it's locked to the Turn 90° buttons. Round cores (a sphere power cell) keep the hand-turn.
+    if (!(seatBenchOn && coreCubic())){
+      mineral.rotation.y+=(x-ppx)*0.008; mineral.rotation.x+=(y-ppy)*0.008;
+      if (tut.on) tutTurned+=Math.abs(x-ppx)*0.008+Math.abs(y-ppy)*0.008;
+    }
     ppx=x; ppy=y;
     liveOutput();                       // seating score tracks the turn
     if (seatBenchOn) updateSeatHud();
@@ -8984,6 +9080,7 @@ let t=0, lastNow=0;
   // and a slow spin would quietly change the score you are reading.
   if (!dragging&&!grinding&&!seatBenchOn) mineral.rotation.y+=0.0012*benchSpeed();
   seatBenchTick(dt);
+  if (seatBenchOn) drawSeatGauges();     // live charge/resonance gauges (sparkline scrolls as you turn)
   if (gizmo.visible) placeGizmo();
   if (ghostFlash>0){
     ghostFlash=Math.max(0,ghostFlash-0.05);
