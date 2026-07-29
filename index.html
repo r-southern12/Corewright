@@ -7253,30 +7253,23 @@ function forgeFlowStep(){
       }
       continue;
     }
-    // gravity — molten metal drips down. THROTTLED while falling through open air so
-    // the slough is trackable by eye: one cell per step (~33ms) blurred down too fast
-    // to follow, which was the complaint. In the chamber (above the box rim) a drop
-    // only advances every FALL_EVERY steps, so it visibly arcs down the air gap; once
-    // it reaches the pool it settles promptly so filling doesn't feel sluggish. The
-    // crumb rule above is the safety net for the rare drip that cools mid-fall.
-    // ONE-WAY SEAT CHUTE: the core socket is a barrier on every side EXCEPT the top mouth —
-    // molten metal can fall DOWN into and straight through the seat void (filling the box under
-    // the seat), but nothing ever rises, spreads, or drips sideways INTO it, so once metal has
-    // passed through it can't go back. (Lateral moves use forgeAllowed, which forbids seat cells,
-    // so entry is top-only; there is no upward flow anywhere, so exit-back is impossible.)
+    // GRAVITY ONLY. Heated metal moves straight DOWN and nowhere else on its own — there is no
+    // passive sideways spread any more (that was the "bounciness" with the wrong feel). Molten
+    // metal settles where it lands; spreading and levelling it is the job of a TOOL (the level
+    // plane, the torch nudge). The fall is SLOW and trackable — one cell every FALL_EVERY steps,
+    // EVERYWHERE (gap and pool alike) — so you can watch the slough descend.
+    // ONE-WAY SEAT CHUTE: metal can fall DOWN into and through the seat void, but never rises,
+    // spreads or drips sideways INTO it, so once through it can't come back.
     const inSeat = fgSeat[id];
     if (iy>0){
       const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
       if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
-        // inside the chute (this cell or the one below is seat) fall promptly; only throttle a
-        // free mid-air drip in the open chamber so the slough is still trackable by eye.
-        if (iy>=forgeRim && !inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
+        if ((forgeSpin % FALL_EVERY)!==0) continue;           // slow, trackable descent everywhere
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
-    // Inside the seat but blocked below (the chute has filled): never REST or pool in the seat,
-    // and never spread within it — shed sideways OUT into the surrounding box so the void stays
-    // clean. Never move up. This is what keeps the seat a clean socket, one-way.
+    // Inside the seat but blocked below: shed sideways OUT into the box so the socket stays a clean
+    // void (this is a necessity of the one-way chute, not a passive spread). Never move up.
     if (inSeat){
       const order=(ix+iz+forgeSpin)&3;
       for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
@@ -7284,42 +7277,7 @@ function forgeFlowStep(){
         if (forgeAllowed(nx,iy,nz)   && !fgFill[fIdx(nx,iy,nz)]){   fMove(id,fIdx(nx,iy,nz),t);   moved=true; break; } }
       continue;
     }
-    // MALLEABLE FOR A SHORT TIME. Lateral spreading is throttled by temperature:
-    // freshly-heated metal creeps sideways briskly, cooling metal slows, and once
-    // it drops below FLOW_T it stops until you heat it again. Dripping straight
-    // down (gravity, above) stays prompt; only the spread is slowed, which is the
-    // part that used to feel like instant transmission.
-    // Over the OPEN SEAT MOUTH: the cell below is the socket void, so this molten
-    // metal has nowhere to drip. Force it to slide off sideways (bypass the throttle)
-    // so the mouth reliably clears — otherwise a drip settling over the seat could
-    // freeze into a skin across it. The seat void itself never takes metal (it's not
-    // an allowed destination); this only sheds what's perched on the rim above it.
-    const overSeat = iy>0 && fgSeat[fIdx(ix,iy-1,iz)];
-    // Lateral spread is deliberately SLOW/viscous — halved from before, because molten metal
-    // "flowed way too fast" across the pool. Gravity (straight down) stays prompt; only the
-    // sideways creep is throttled, so the pour reads as thick liquid finding its level, not water.
-    const p=0.05+0.20*((t-FLOW_T)/(1-FLOW_T));   // ~0.05 just-molten .. ~0.25 white-hot
-    if (!overSeat && Math.random()>=p) continue;
-    const order=(ix+iz+ (forgeSpin|0))&3;
-    let did=false;
-    // first choice: slump down-and-to-a-side
-    for (let s=0;s<4 && !did;s++){
-      const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-      if (!forgeAllowed(nx,iy-1,nz)) continue;
-      const nd=fIdx(nx,iy-1,nz);
-      if (!fgFill[nd]){ fMove(id,nd,latCool(t)); fMeltCreep(ix,iy,iz); moved=true; did=true; }
-    }
-    // otherwise LEVEL sideways — liquid finding its level. Sheds its heat SURPLUS fast on a
-    // sideways step (latCool), so a slough settles after only 1-2 cells instead of skating
-    // and bouncing across the pool (the "so annoying" bounce). Reaching the far corners is
-    // now the job of the LEVEL tool and the torch nudge, which deliberately re-heat and move metal —
-    // the passive flow just settles where it lands.
-    if (!did) for (let s=0;s<4 && !did;s++){
-      const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-      if (!forgeAllowed(nx,iy,nz)) continue;
-      const nd=fIdx(nx,iy,nz);
-      if (!fgFill[nd]){ fMove(id,nd,latCool(t)); fMeltCreep(ix,iy,iz); moved=true; did=true; }
-    }
+    // otherwise: it can't fall — it STAYS. Use a tool to move it laterally.
   }
   // (No spill/flash mechanic: metal that reaches an edge just stops there. Wastage as
   // a semi-random loss wasn't wanted — with a measured nugget feed you control how
@@ -7346,7 +7304,7 @@ function forgeFlowStep(){
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
 // how fast the pool levels (the temperature-throttled lateral spread).
-const FALL_EVERY=12;
+const FALL_EVERY=10;   // sim steps per cell of fall (~0.33s/cell at FSTEP) — slow, watchable everywhere
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
@@ -7387,6 +7345,7 @@ function forgeDropSmallClusters(){
   for (let iy=1;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
     const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
     const L=_fgLabel[id]; if (L===biggest || _fgSize[L]>=CLUSTER_MIN) continue;
+    if (fgTemp[id]>=FLOW_T) continue;        // molten cells fall via the slow gravity step, not here
     const bl=fIdx(ix,iy-1,iz);
     if (!fgFill[bl] && forgeAllowed(ix,iy-1,iz)){ fMove(id,bl,fgTemp[id]); moved=true; }
   }
@@ -7474,6 +7433,20 @@ function enterForge(){
 // body; cold stays put, molten re-flows to the new down. The hanging nugget and any
 // mid-air drips keep their grid position (they still feed from the top). The seat void
 // never takes metal, so nothing is re-placed into it.
+// Nearest free cell to (gx,gy,gz) that can legally hold metal (a mould or chamber cell, not the
+// seat void, not filled) — searched in expanding Chebyshev shells. Used to relocate metal that a
+// turn would otherwise push into the socket, so material is never lost.
+function forgeNearestFree(gx,gy,gz){
+  const RMAX=Math.max(FGW,FGH,FGD);
+  for (let r=0;r<RMAX;r++)
+    for (let dy=-r;dy<=r;dy++) for (let dx=-r;dx<=r;dx++) for (let dz=-r;dz<=r;dz++){
+      if (Math.max(Math.abs(dx),Math.abs(dy),Math.abs(dz))!==r) continue;   // current shell only
+      const nx=gx+dx, ny=gy+dy, nz=gz+dz;
+      if (!fIn(nx,ny,nz)) continue; const id=fIdx(nx,ny,nz);
+      if (!fgFill[id] && !fgSeat[id] && forgeAllowed(nx,ny,nz)) return id;
+    }
+  return -1;
+}
 // Reorient the part to a new rotation matrix (Turn = tip about X, Roll = roll about Z). Cast
 // metal (cells inside the box) is snapshotted in the part frame and re-laid rotated into the new
 // pose, so it RIDES the move as a rigid body; cold stays put, molten re-flows to the new down.
@@ -7492,10 +7465,20 @@ function forgeReorient(newRot, msg){
   forgeRot=newRot;
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0);
   forgeBuildMould(); forgePlaceGhosts();
+  const displaced=[];
   for (const c of cast){                               // re-lay cast metal, rotated (locked/alloy preserved)
     const g=fwdRot(forgeRot, c[0],c[1],c[2]);
     const gx=Math.round(g[0]+cx), gy=Math.round(g[1]+forgeCy), gz=Math.round(g[2]+cz);
-    if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; fgLocked[id]=c[4]; fgMetal[id]=c[5]; } }
+    const id=fIn(gx,gy,gz)?fIdx(gx,gy,gz):-1;
+    if (id>=0 && !fgSeat[id] && !fgFill[id]){ fgFill[id]=1; fgTemp[id]=c[3]; fgLocked[id]=c[4]; fgMetal[id]=c[5]; }
+    else displaced.push([gx,gy,gz,c[3],c[4],c[5]]);    // would land in the seat/off-grid/occupied
+  }
+  // CONSERVE MATERIAL: metal that rotated into the seat void (or off the grid) is RELOCATED to the
+  // nearest free cell, not deleted. The old code silently dropped it, so turning the template to
+  // clear metal out of the core area destroyed it and left you short to finish the part.
+  for (const c of displaced){
+    const spot=forgeNearestFree(c[0],c[1],c[2]);
+    if (spot>=0){ fgFill[spot]=1; fgTemp[spot]=c[3]; fgLocked[spot]=c[4]; fgMetal[spot]=c[5]; }
   }
   for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; fgLocked[a[0]]=a[2]; fgMetal[a[0]]=a[3]; }
   // animate: show the OLD pose relative to the new (delta = oldRot * newRot^-1) and slerp to
