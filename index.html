@@ -6718,11 +6718,10 @@ forgeSurfMat.onBeforeCompile=sh=>{
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
-// A SMALL bloom for isolated airborne droplets only — enough that a falling slough reads as a
-// little liquid bead instead of a sub-cell point, but nowhere near the fat clunky blob of the
-// first attempt (that was ~4x and fattened the cast surface too). Gated to the chamber + lone
-// cells, so the pool/cast is never touched.
-const FORGE_BLOB=1.1;
+// A bloom for isolated AIRBORNE droplets only, so a falling slough reads as a visible liquid bead
+// (a couple of cells) as it descends rather than a sub-cell point you can't see move. Gated to the
+// chamber + lone/near-lone cells, so the cast pool and mould fit are never touched.
+const FORGE_BLOB=2.4;
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
@@ -7296,7 +7295,10 @@ function forgeFlowStep(){
     // freeze into a skin across it. The seat void itself never takes metal (it's not
     // an allowed destination); this only sheds what's perched on the rim above it.
     const overSeat = iy>0 && fgSeat[fIdx(ix,iy-1,iz)];
-    const p=0.10+0.42*((t-FLOW_T)/(1-FLOW_T));   // ~0.10 just-molten .. ~0.52 white-hot
+    // Lateral spread is deliberately SLOW/viscous — halved from before, because molten metal
+    // "flowed way too fast" across the pool. Gravity (straight down) stays prompt; only the
+    // sideways creep is throttled, so the pour reads as thick liquid finding its level, not water.
+    const p=0.05+0.20*((t-FLOW_T)/(1-FLOW_T));   // ~0.05 just-molten .. ~0.25 white-hot
     if (!overSeat && Math.random()>=p) continue;
     const order=(ix+iz+ (forgeSpin|0))&3;
     let did=false;
@@ -7378,11 +7380,15 @@ function forgeDropSmallClusters(){
   }
   if (lab<=1) return;                       // one blob (or none): nothing stray
   let moved=false;
+  // Drop a stray cluster ONE cell per pass, not all the way to the floor. The old code teleported
+  // the whole slough to the bottom in a single step, which is exactly why the fall had no
+  // animation — the metal just appeared in the pool. Bottom-up so a column cascades down one cell
+  // as a unit, and only every 4th sim step, so a slough visibly DESCENDS through the air gap.
   for (let iy=1;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
     const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
     const L=_fgLabel[id]; if (L===biggest || _fgSize[L]>=CLUSTER_MIN) continue;
-    let fy=iy; while (fy>0 && !fgFill[fIdx(ix,fy-1,iz)] && forgeAllowed(ix,fy-1,iz)) fy--;
-    if (fy!==iy){ fMove(id,fIdx(ix,fy,iz),fgTemp[id]); moved=true; }
+    const bl=fIdx(ix,iy-1,iz);
+    if (!fgFill[bl] && forgeAllowed(ix,iy-1,iz)){ fMove(id,bl,fgTemp[id]); moved=true; }
   }
   if (moved) forgeDirty=true;
 }
