@@ -826,6 +826,7 @@
     <span id="fbBar"><span id="fbFill"></span></span>
     <button class="act" id="fbQuench">❄ Quench</button>
     <button class="act" id="fbTurn">⟳ Turn</button>
+    <button class="act" id="fbRoll">↻ Roll</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -1627,49 +1628,25 @@ const RECIPES={
    This is the pattern for ALL equipment going forward: metal makes the
    thing, the seated anvil sets how well it's made.
    ============================================================ */
+/* SIX functional templates — the PART you're making. The material and tier are NOT
+   baked into the template any more: they emerge from the ORES you feed the press. Forge
+   a drill frame from voidsteel and you get a tier-III voidsteel frame; feed copper and
+   tin together and you get a bronze one. deriveForgeMaterial reads the cast metal at
+   Finish and sets the part's tier, material name and any alloy premium. This is why the
+   old per-metal, per-tier matrix (copper frame / iron frame / bronze frame / …) collapsed
+   to one entry each. Suit frames carry the system they mount. */
 const FORGE_TEMPLATES=[
-  {id:'copperFrame', part:'frame', metal:'copper', cost:10, tier:1,
-   label:'Copper frame', desc:'stamps a drill frame from copper'},
-  {id:'copperBit',   part:'bit',   metal:'copper', cost:8,  tier:1,
-   label:'Copper bit',   desc:'draws a drill bit from copper'},
-  {id:'ironFrame',   part:'frame', metal:'iron',   cost:10, tier:2,
-   label:'Iron frame',   desc:'stamps a drill frame from iron'},
-  {id:'ironBit',     part:'bit',   metal:'iron',   cost:8,  tier:2,
-   label:'Iron bit',     desc:'draws a drill bit from iron'},
-  {id:'voidFrame',   part:'frame', metal:'vst',    cost:10, tier:3,
-   label:'Voidsteel frame', desc:'stamps a drill frame from voidsteel'},
-  {id:'voidBit',     part:'bit',   metal:'vst',    cost:8,  tier:3,
-   label:'Voidsteel bit',   desc:'draws a drill bit from voidsteel'},
-  /* ALLOYS. Two metals worked together give a part above the tier either could
-     reach alone — but the recipe costs BOTH, so an alloy is only worth it when
-     you have depth to spare. The quality bonus is what buys the extra ore: an
-     alloy frame stamps at a flat premium over a single-metal one, which is what
-     lets a tier-II assembly compete with tier-III stock. */
-  /* Real bronze: copper with a MINOR fraction of tin. The tin slider trades
-     hardness (bite) against toughness (yield) — a hard, high-tin bit bites deep
-     but recovers less usable ore; a soft, low-tin bit is gentler and wastes less.
-     `alloyBase`/`alloyAgent` mark the two metals; the cost is filled from the
-     chosen fraction at forge time. */
-  {id:'bronzeFrame', part:'frame', alloyBase:'copper', alloyAgent:'tin', tier:2, bonus:0.10,
-   label:'Bronze frame', desc:'copper hardened with tin'},
-  {id:'bronzeBit',   part:'bit',   alloyBase:'copper', alloyAgent:'tin', tier:2, bonus:0.10,
-   label:'Bronze bit',   desc:'copper hardened with tin — holds an edge'},
-  /* NOTE: darksteel and aegis are placeholder two-metal alloys — iron+voidsteel
-     is not a real pairing and these do not yet use the tin-fraction slider. They
-     are tier-III stand-ins until a proper high-tier alloy agent is designed. */
-  {id:'darksteelFrame', part:'frame', alloy:{iron:8,vst:6},  tier:3, bonus:0.14,
-   label:'Darksteel frame', desc:'iron folded into voidsteel; near-rigid'},
-  {id:'darksteelBit',   part:'bit',   alloy:{iron:6,vst:5},  tier:3, bonus:0.14,
-   label:'Darksteel bit',   desc:'bites strata that blunt plain voidsteel'},
-  {id:'aegisFrame',  part:'suitFrame', system:'alembic', alloy:{copper:6,vst:8}, tier:3, bonus:0.12,
-   label:'Aegis plate frame', desc:'a suit frame — copper laid over voidsteel'},
-  {id:'wardFrame',   part:'suitFrame', system:'forgePrism', alloyBase:'copper', alloyAgent:'tin', tier:2, bonus:0.10,
-   label:'Ward frame',  desc:'a bronze suit frame carrying the elemental ward'},
-  {id:'coilFrame',   part:'suitFrame', system:'coil', metal:'iron', cost:9, tier:2,
-   label:'Scanner frame', desc:'a suit frame to mount a scanning coil'},
-  {id:'lifeFrame',   part:'suitFrame', system:'life', metal:'copper', cost:9, tier:1,
-   label:'Life frame',  desc:'a suit frame for the air system'}
+  {id:'drillFrame', part:'frame',                          label:'Drill Frame',          desc:'the drill body — the core is housed inside it'},
+  {id:'drillBit',   part:'bit',                            label:'Drill Bit',            desc:'the cutting edge that bites the stone'},
+  {id:'wardFrame',  part:'suitFrame', system:'forgePrism', label:'Elemental Ward Frame', desc:'a suit frame carrying the elemental ward'},
+  {id:'aegisFrame', part:'suitFrame', system:'alembic',    label:'Aegis Plate Frame',    desc:'a suit frame — the armour plating'},
+  {id:'scanFrame',  part:'suitFrame', system:'coil',       label:'Scanner Frame',        desc:'a suit frame to mount the scanning coil'},
+  {id:'lifeFrame',  part:'suitFrame', system:'life',       label:'Life Frame',           desc:'a suit frame for the air system'}
 ];
+// Named alloys, keyed by the sorted pair of structural metals in the cast. An unlisted pair
+// falls back to "<primary>–<secondary>". Only the historically-real ones get proper names.
+const ALLOY_NAMES={ 'copper+tin':'Bronze', 'iron+vst':'Darksteel', 'copper+vst':'Aegissteel',
+  'copper+iron':'Gunmetal', 'iron+tin':'Bell-metal', 'tin+vst':'Voidpewter' };
 /* THE TIN FRACTION. Bronze-family recipes (alloyBase/alloyAgent) are forged at a
    chosen tin percentage. Historically bronze is ~12% tin; the player may run
    8-20%. The fraction drives three things at once:
@@ -5903,21 +5880,19 @@ function renderForge(){
   list.innerHTML='';
   for (const m of FORGE_TEMPLATES){
     const div=document.createElement('div');
-    div.className='card t'+Math.min(3,m.tier);
     const isSuit=m.part==='suitFrame';
     const fitted=isSuit?suitFrames[m.system]:drill[m.part];
-    const fitQ=fitted?Math.round((fitted.q||0)*100)+'% fitted':'slot empty';
-    div.innerHTML=`<div class="info">${m.label}<span class="badge">T${'I'.repeat(m.tier)}</span>
-      ${(m.alloyBase||m.alloy)?'<span class="badge" style="border-color:var(--amber);color:var(--amber)">ALLOY</span>':''}
-      <div class="sub">${m.desc} — ${costLabel(m)}
-      ${m.bonus?`<span style="color:var(--amber)"> · +${Math.round(m.bonus*100)} alloy premium</span>`:''}
+    div.className='card t'+Math.min(3,fitted?fitted.tier:1);
+    const fitQ=fitted?`${fitted.name||'fitted'} · ${Math.round((fitted.q||0)*100)}%`:'slot empty';
+    div.innerHTML=`<div class="info">${m.label}
+      <div class="sub">${m.desc}
+      · <span style="color:var(--amber)">material set by the ore you feed</span>
       · <span style="color:var(--dim)">${fitQ}</span></div></div>`;
     const btn=document.createElement('button');
     btn.className='act';
     btn.textContent='Forge at the press ⚒';
-    btn.disabled=!canAfford(m);
-    // Retired the instant stamp: every template now opens the flux press to forge by
-    // hand. The spend + fit happens in finishForge, so the pour quality is what counts.
+    // Every template opens the flux press to forge by hand. The material, tier and fit are
+    // decided in finishForge from the ores actually cast — the pour is what counts.
     btn.onclick=()=>{ forgePart=m; forgeActive=false; showView('forgeb'); };
     div.appendChild(btn);
     list.appendChild(div);
@@ -6087,13 +6062,27 @@ const FORGE_HX=(FGW-2*MOULD_INSET-1)/2;    // 4  -> 9 cells across
 const FORGE_HY=(MOULD_DEPTH-1)/2;          // 3  -> 7 cells tall (lying)
 const FORGE_HZ=(FGD-2*MOULD_INSET-1)/2;    // 4  -> 9 cells deep
 const FORGE_SEAT_PY=FORGE_HY-(SEAT_CELLS-1)/2;   // socket centre: its top sits flush with the box top
-const FORGE_ORIENTS=[
-  { id:'lying',    label:'lying',    cy:FORGE_HY, rx:0,          fwd:(x,y,z)=>[x, y,z], inv:(x,y,z)=>[x,y, z] },
-  // rx MUST equal the fwd map as a rotation: fwd=(x,-z,y) is rotX(+90°), so rx=+π/2.
-  // (It was -π/2, which rotated the ghost/animation opposite the data — the 180° flip.)
-  { id:'standing', label:'standing', cy:FORGE_HZ, rx:Math.PI/2,  fwd:(x,y,z)=>[x,-z,y], inv:(x,y,z)=>[x,z,-y] },
-];
-let forgeOrient=0;
+// ---- box orientation as an integer rotation (part -> grid) ----
+// The part can be TURNED (tip about grid X: lying <-> standing) and ROLLED (about grid Z in 90°
+// steps) so any of the four seat walls can be brought uppermost for controlled alloy casting.
+// Gravity stays grid -Y; it's the PART that rotates. Orientation is a 3x3 integer matrix so the
+// two motions compose into any box pose without enumerating them. (Replaced the fixed
+// lying/standing pair, which couldn't express a roll.)
+function _mMul(a,b){ const r=[0,0,0,0,0,0,0,0,0];
+  for (let i=0;i<3;i++) for (let j=0;j<3;j++){ let s=0; for (let k=0;k<3;k++) s+=a[i*3+k]*b[k*3+j]; r[i*3+j]=s; } return r; }
+function _mT(R){ return [R[0],R[3],R[6], R[1],R[4],R[7], R[2],R[5],R[8]]; }   // transpose = inverse for a rotation
+const MAT_I=[1,0,0, 0,1,0, 0,0,1];
+const ROT_X90=[1,0,0, 0,0,-1, 0,1,0];      // +90° about grid X (the Turn: lying <-> standing)
+const ROT_Z90=[0,-1,0, 1,0,0, 0,0,1];      // +90° about grid Z (the Roll: cycles the 4 walls)
+let forgeRot=MAT_I.slice();                // current part->grid rotation
+const fwdRot=(R,x,y,z)=>[R[0]*x+R[1]*y+R[2]*z, R[3]*x+R[4]*y+R[5]*z, R[6]*x+R[7]*y+R[8]*z];
+const invRot=(R,x,y,z)=>[R[0]*x+R[3]*y+R[6]*z, R[1]*x+R[4]*y+R[7]*z, R[2]*x+R[5]*y+R[8]*z];
+// floor-resting centre height: the box half-extent that maps onto grid +Y under R
+const forgeCyFor=R=>Math.abs(R[3]*FORGE_HX+R[4]*FORGE_HY+R[5]*FORGE_HZ);
+let forgeCy=FORGE_HY;
+const _fm4=new THREE.Matrix4(), _fmq=new THREE.Quaternion();
+function matQuat(R,out){ _fm4.set(R[0],R[1],R[2],0, R[3],R[4],R[5],0, R[6],R[7],R[8],0, 0,0,0,1);
+  return (out||_fmq).setFromRotationMatrix(_fm4); }
 let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
 // Socket test in the PART frame: the drill silhouette centred at (0,FORGE_SEAT_PY,0),
 // opening toward part +y (= up when lying). Sampled through the component's own
@@ -6109,10 +6098,10 @@ function forgeSeatInsideP(px,py,pz){
 // the box's highest cell in this pose (7 lying, 9 standing).
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgMouldTotal=0;
-  const O=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
+  const cx=(FGW-1)/2, cz=(FGD-1)/2; forgeCy=forgeCyFor(forgeRot);
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
-    const p=O.inv(gx-cx, gy-O.cy, gz-cz);
+    const p=invRot(forgeRot, gx-cx, gy-forgeCy, gz-cz);
     if (Math.abs(p[0])>FORGE_HX+0.01||Math.abs(p[1])>FORGE_HY+0.01||Math.abs(p[2])>FORGE_HZ+0.01) continue;
     const id=fIdx(gx,gy,gz);
     if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
@@ -6188,7 +6177,9 @@ const forgeGroup=new THREE.Group(); scene.add(forgeGroup); forgeGroup.visible=fa
 // -PIVOT_Y so their world positions are unchanged at rest (rotation 0).
 const PIVOT_Y=fWY((FORGE_HY+FORGE_HZ)/2);   // ~box centre; the axis the turn rotates about
 const forgePivot=new THREE.Group(); forgePivot.position.y=PIVOT_Y; forgeGroup.add(forgePivot);
-let forgeTurnFrom=0, forgeTurnT=1;          // turn animation: rotate pivot.x from forgeTurnFrom->0
+// turn/roll animation: slerp the pivot from the OLD pose (relative to the new one) back to
+// identity, so any 90° reorientation reads as a real ~0.3s rotation rather than an instant snap.
+let forgeTurnT=1; const forgeTurnFromQ=new THREE.Quaternion(), _forgeIdQ=new THREE.Quaternion();
 // anvil plate under the mould (local, not the forgeAnvil global) — stays with the bench
 const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
   new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
@@ -6219,14 +6210,14 @@ forgePivot.add(forgeSeatWire);
 // sits at the socket's grid centre, rotated the same way as the part.
 const _fbC=new THREE.Vector3();
 function forgePlaceGhosts(){
-  const O=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
-  const e=O.fwd(FORGE_HX,FORGE_HY,FORGE_HZ);
+  const cx=(FGW-1)/2, cz=(FGD-1)/2;
+  const e=fwdRot(forgeRot, FORGE_HX,FORGE_HY,FORGE_HZ);
   forgeGhostWire.scale.set((2*Math.abs(e[0])+1)*FVOX,(2*Math.abs(e[1])+1)*FVOX,(2*Math.abs(e[2])+1)*FVOX);
-  forgeGhostWire.position.set(0, fWY(O.cy)-PIVOT_Y, 0);
-  const s=O.fwd(0,FORGE_SEAT_PY,0);
-  _fbC.set(fWX(cx+s[0]), fWY(O.cy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
+  forgeGhostWire.position.set(0, fWY(forgeCy)-PIVOT_Y, 0);
+  const s=fwdRot(forgeRot, 0,FORGE_SEAT_PY,0);
+  _fbC.set(fWX(cx+s[0]), fWY(forgeCy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
-  forgeSeatFill.rotation.x=O.rx; forgeSeatWire.rotation.x=O.rx;
+  const q=matQuat(forgeRot); forgeSeatFill.quaternion.copy(q); forgeSeatWire.quaternion.copy(q);
 }
 // the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
@@ -6276,6 +6267,17 @@ function buildGrindModel(){
   const rim=_tm(new THREE.TorusGeometry(0.26,0.03,10,28),_fGlow(0xffb24a),0,0.02,0); rim.rotation.y=Math.PI/2; g.add(rim);
   return g;
 }
+// GATHER (lodestone) — a violet-glowing magnet on a brass fork. It draws already-molten metal
+// toward the cursor and holds it hot; its two crossed attract-rings read as "pulls things in".
+function buildGatherModel(){
+  const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.06,0.075,0.5,14),_brass,0,0.42,0));      // handle
+  const stone=new THREE.Mesh(new THREE.IcosahedronGeometry(0.16,0),
+    new THREE.MeshStandardMaterial({color:0x3a4a6a,metalness:0.9,roughness:0.3})); stone.position.y=0.08; g.add(stone);
+  const r1=_tm(new THREE.TorusGeometry(0.21,0.02,8,22),_fGlow(0x8f6bff),0,0.08,0); g.add(r1);        // attract rings
+  const r2=_tm(new THREE.TorusGeometry(0.27,0.014,8,22),_fGlow(0x8f6bff),0,0.08,0); r2.rotation.x=Math.PI/2; g.add(r2);
+  return g;
+}
 function buildCrucibleModel(){
   const g=new THREE.Group();
   g.add(_tm(new THREE.CylinderGeometry(0.22,0.15,0.3,18),_brass,0,0.16,0));       // pot
@@ -6299,6 +6301,7 @@ function buildRotateModel(){
 const FORGE_TOOL_DEFS=[
   {id:'torch',   build:buildTorchModel,    ry:-0.08, rs:0.44},   // torch is tall/nozzle-down — drop + shrink to centre
   {id:'level',   build:buildLevelModel},
+  {id:'gather',  build:buildGatherModel},
   {id:'grind',   build:buildGrindModel},
   {id:'crucible',build:buildCrucibleModel, rx:-0.08, ry:-0.06, rs:0.42},  // pull the side handle back to centre
 ];
@@ -6444,6 +6447,7 @@ const F_LOCK_ALLOY=new THREE.Color(0x5a3fae);
 const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3};
 const FORGE_ALLOY_ID=9;
 const forgeMetalId=k=>FORGE_METAL_ID[k]!==undefined?FORGE_METAL_ID[k]:0;
+const ID_TO_METAL={0:'copper',1:'tin',2:'iron',3:'vst'};   // reverse of FORGE_METAL_ID (for material derivation)
 const FORGE_METAL_SET={
   1:new THREE.Color(0xc2ccd6),        // tin  -> bright pewter
   2:new THREE.Color(0x59657a),        // iron -> dark steel
@@ -6628,8 +6632,8 @@ let fluxOn=false, fluxAim=null, fluxRadius=1.7;
 // The active tool. Torch melts, Level flattens (a heat-slab), Grind shaves metal off —
 // the grinder is the ONLY way to clean a lump off QUENCHED metal, which can't be re-melted.
 // (Quench and Turn are one-shot actions, not held tools.) The 3D tool palette selects this.
-let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible'
-let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false;
+let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible' | 'gather'
+let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false, forgeGathering=false;
 const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
 const LEVEL_BAND=1.3;                   // half-thickness of the heated slab, in cells
 const GRIND_RATE=3;                     // cells the grinder shaves per sim step
@@ -6773,6 +6777,38 @@ function forgeGrindStep(){
         fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; fgMetal[id]=0; removed++; forgeDirty=true;
       }
 }
+// GATHER (lodestone): draw ALREADY-MOLTEN metal toward the click-and-hold point and hold it hot.
+// It never heats cold ore (only cells already past ~0.6*FLOW_T are affected) and, while held, tops
+// their heat back up so they don't cool — so you can pull a molten pool into a corner or over a seat
+// wall for controlled casting without it freezing mid-move. Cells step one cell toward the cursor
+// along their largest remaining axis; farthest-first so they pack inward instead of colliding.
+const GATHER_R=2.6;
+function forgeGatherStep(){
+  if (!fluxAim) return;
+  const R=GATHER_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z, HOT=FLOW_T*0.6;
+  const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
+  const cells=[];
+  for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
+    if (!fIn(ix,iy,iz)) continue; const id=fIdx(ix,iy,iz);
+    if (!fgFill[id]||fgLocked[id]||fgTemp[id]<HOT) continue;    // only already-heated, workable metal
+    const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
+    fgTemp[id]=Math.max(fgTemp[id],FLOW_T+0.08);               // held hot: won't cool while gathered
+    cells.push([d2,ix,iy,iz,id]); forgeDirty=true;
+  }
+  cells.sort((a,b)=>b[0]-a[0]);                                 // farthest first -> migrate inward
+  for (const c of cells){
+    const ix=c[1],iy=c[2],iz=c[3],id=c[4];
+    const dx=cx-ix, dy=cy-iy, dz=cz-iz;
+    const cand=[[Math.sign(dx),0,0,Math.abs(dx)],[0,Math.sign(dy),0,Math.abs(dy)],[0,0,Math.sign(dz),Math.abs(dz)]]
+      .filter(a=>a[3]>0.4).sort((a,b)=>b[3]-a[3]);
+    for (const o of cand){
+      const nx=ix+o[0],ny=iy+o[1],nz=iz+o[2];
+      if (!forgeAllowed(nx,ny,nz)) continue;
+      const nd=fIdx(nx,ny,nz); if (fgFill[nd]) continue;
+      fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.08)); break;
+    }
+  }
+}
 // Crucible: the player chose two ores and LOADED them; this heats the pot to molten, then
 // pours. Until forgeCrucHeat reaches 1 the charge isn't molten — a hold just heats it (the
 // pot glows up). Once molten, a hold POURS molten ALLOY (fgMetal=FORGE_ALLOY_ID, its own
@@ -6814,6 +6850,7 @@ function forgeCrucLoadFromFeed(i){
   if (forgeCrucHeat>0 || forgeCrucLoad.length>=2){ say('Pot is charged — pour it before loading again.','warn'); return; }
   const f=forgeFeed[i]; if (!f||f.used){ return; }
   f.used=true; forgeCrucLoad.push(f.metal);
+  if (!adminOn){ metals[f.metal]=Math.max(0,(metals[f.metal]||0)-1); updateMeters(); }   // the loaded ore is consumed
   if (forgeCrucLoad.length===2){
     // commit: arm the molten budget at two nuggets' worth. (The part's metal cost is still
     // taken at Finish via templateCost; Stage D folds the crucible load into real cost.)
@@ -6823,6 +6860,11 @@ function forgeCrucLoadFromFeed(i){
   forgeCrucGlow(); renderForgeFeed(); updateForgeHud();
 }
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
+// A sideways move keeps only LAT_KEEP of the heat SURPLUS above FLOW_T, so molten metal settles
+// after ~1-2 lateral cells rather than skating around the pool (the "bouncy" feel). Deliberate
+// lateral transport to the corners is done by the LEVEL and GATHER tools, which re-heat as they go.
+const LAT_KEEP=0.30;
+const latCool=t=>FLOW_T + Math.max(0,(t-FLOW_T))*LAT_KEEP;
 const MELT_CREEP=0.09;
 // When molten metal drips out of a cell, nudge the cell directly above it toward
 // molten IF it is already warm — so the melt front climbs and the stone slumps
@@ -6915,20 +6957,18 @@ function forgeFlowStep(){
       const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
       if (!forgeAllowed(nx,iy-1,nz)) continue;
       const nd=fIdx(nx,iy-1,nz);
-      if (!fgFill[nd]){ fMove(id,nd,t*0.98); fMeltCreep(ix,iy,iz); moved=true; did=true; }
+      if (!fgFill[nd]){ fMove(id,nd,latCool(t)); fMeltCreep(ix,iy,iz); moved=true; did=true; }
     }
-    // otherwise LEVEL sideways — liquid finding its level, so a central pile spreads
-    // out to fill the box edges and reach the rim instead of doming. Retains most of
-    // its heat per sideways step (0.98): the pour lands in ONE spot (the nugget hangs
-    // centred over the seat), so molten metal must travel several cells AROUND the seat
-    // to reach the far corners of the deep box — at the old ~0.9 it cooled and locked
-    // after 2-3 cells, leaving the corners permanently unfillable. Higher retention lets
-    // a hot pool find its level across the whole cavity.
+    // otherwise LEVEL sideways — liquid finding its level. Sheds its heat SURPLUS fast on a
+    // sideways step (latCool), so a slough settles after only 1-2 cells instead of skating
+    // and bouncing across the pool (the "so annoying" bounce). Reaching the far corners is
+    // now the job of the LEVEL and GATHER tools, which deliberately re-heat and move metal —
+    // the passive flow just settles where it lands.
     if (!did) for (let s=0;s<4 && !did;s++){
       const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
       if (!forgeAllowed(nx,iy,nz)) continue;
       const nd=fIdx(nx,iy,nz);
-      if (!fgFill[nd]){ fMove(id,nd,t*0.98); fMeltCreep(ix,iy,iz); moved=true; did=true; }
+      if (!fgFill[nd]){ fMove(id,nd,latCool(t)); fMeltCreep(ix,iy,iz); moved=true; did=true; }
     }
   }
   // (No spill/flash mechanic: metal that reaches an edge just stops there. Wastage as
@@ -7014,11 +7054,12 @@ function forgeSimTick(){
   if (!forgeLastMs) forgeLastMs=now;
   let dt=(now-forgeLastMs)/1000; forgeLastMs=now;
   if (dt>0.25) dt=0.25;                  // clamp after a stall so we don't spiral
-  // turn animation: ease the pivot back to upright (cubic ease-out) over ~0.3s
+  // turn/roll animation: slerp the pivot from the old pose back to identity (cubic ease-out) ~0.3s
   if (forgeTurnT<1){ forgeTurnT=Math.min(1,forgeTurnT+dt/0.3);
-    forgePivot.rotation.x=forgeTurnFrom*Math.pow(1-forgeTurnT,3); }
+    const e=1-Math.pow(1-forgeTurnT,3);
+    forgePivot.quaternion.slerpQuaternions(forgeTurnFromQ,_forgeIdQ,e); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
-  if (fluxOn||forgeGrinding||forgeCrucPouring){
+  if (fluxOn||forgeGrinding||forgeCrucPouring||forgeGathering){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
     forgeBeam.visible=!!fluxAim;
   } else forgeBeam.visible=false;
@@ -7027,6 +7068,7 @@ function forgeSimTick(){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn) fluxHeat();
     if (forgeLevelHold){ forgeLevelHeat(); forgeLevelRelax(); }   // heat the slab AND push metal laterally to the low corners
+    if (forgeGathering) forgeGatherStep();                        // draw molten metal toward the cursor
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7054,7 +7096,7 @@ const FILL_DONE=0.6;
 
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
-  forgeOrient=0;                             // always start lying
+  forgeRot=MAT_I.slice();                     // always start lying, un-rolled
   forgeBuildMould(); forgePlaceGhosts();
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
   // recharge the crucible and clear any half-built load for a fresh part
@@ -7067,7 +7109,7 @@ function enterForge(){
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
   forgeSyncPalette();                        // rack highlight + cursor model to the torch
-  forgeTurnT=1; forgePivot.rotation.x=0;
+  forgeTurnT=1; forgePivot.quaternion.identity();
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
   syncForgeMesh(); updateForgeHud();
@@ -7078,33 +7120,41 @@ function enterForge(){
 // body; cold stays put, molten re-flows to the new down. The hanging nugget and any
 // mid-air drips keep their grid position (they still feed from the top). The seat void
 // never takes metal, so nothing is re-placed into it.
-function forgeToggleOrient(){
+// Reorient the part to a new rotation matrix (Turn = tip about X, Roll = roll about Z). Cast
+// metal (cells inside the box) is snapshotted in the part frame and re-laid rotated into the new
+// pose, so it RIDES the move as a rigid body; cold stays put, molten re-flows to the new down.
+// The hanging nugget and mid-air drips keep their grid position (they still feed from the top).
+function forgeReorient(newRot, msg){
   if (!forgeActive) return;
-  const oldO=FORGE_ORIENTS[forgeOrient], cx=(FGW-1)/2, cz=(FGD-1)/2;
-  const cast=[], air=[];                     // cast: [px,py,pz,temp]; air: [id,temp]
+  const oldRot=forgeRot, oldCy=forgeCy, cx=(FGW-1)/2, cz=(FGD-1)/2;
+  const cast=[], air=[];
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const id=fIdx(gx,gy,gz); if (!fgFill[id]) continue;
-    const p=oldO.inv(gx-cx, gy-oldO.cy, gz-cz);
+    const p=invRot(oldRot, gx-cx, gy-oldCy, gz-cz);
     if (Math.abs(p[0])<=FORGE_HX+0.01 && Math.abs(p[1])<=FORGE_HY+0.01 && Math.abs(p[2])<=FORGE_HZ+0.01)
       cast.push([p[0],p[1],p[2],fgTemp[id],fgLocked[id],fgMetal[id]]);   // inside the box -> rotate with the part
     else air.push([id,fgTemp[id],fgLocked[id],fgMetal[id]]);            // hanging nugget / falling drip -> keep put
   }
-  forgeOrient=(forgeOrient+1)%FORGE_ORIENTS.length;
-  const newO=FORGE_ORIENTS[forgeOrient];
+  forgeRot=newRot;
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0);
   forgeBuildMould(); forgePlaceGhosts();
   for (const c of cast){                               // re-lay cast metal, rotated (locked/alloy preserved)
-    const g=newO.fwd(c[0],c[1],c[2]);
-    const gx=Math.round(g[0]+cx), gy=Math.round(g[1]+newO.cy), gz=Math.round(g[2]+cz);
+    const g=fwdRot(forgeRot, c[0],c[1],c[2]);
+    const gx=Math.round(g[0]+cx), gy=Math.round(g[1]+forgeCy), gz=Math.round(g[2]+cz);
     if (fIn(gx,gy,gz)){ const id=fIdx(gx,gy,gz); if (!fgSeat[id]){ fgFill[id]=1; fgTemp[id]=c[3]; fgLocked[id]=c[4]; fgMetal[id]=c[5]; } }
   }
   for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; fgLocked[a[0]]=a[2]; fgMetal[a[0]]=a[3]; }
-  // animate: start the part looking like the OLD pose and ease to the new one, so the
-  // turn reads as a real ~0.3s rotation rather than an instant snap.
-  forgeTurnFrom=oldO.rx-newO.rx; forgeTurnT=0; forgePivot.rotation.x=forgeTurnFrom;
+  // animate: show the OLD pose relative to the new (delta = oldRot * newRot^-1) and slerp to
+  // identity, so the move reads as a real ~0.3s rotation rather than an instant snap.
+  matQuat(_mMul(oldRot,_mT(newRot)), forgeTurnFromQ); forgeTurnT=0; forgePivot.quaternion.copy(forgeTurnFromQ);
   forgeDirty=true; syncForgeMesh(); updateForgeHud();
-  if (typeof say==='function') say('Template turned '+newO.label+'.','good');
+  if (typeof say==='function' && msg) say(msg,'good');
 }
+// Turn: tip the box 90° about grid X (lying <-> standing, cycling through the four X-poses).
+function forgeToggleOrient(){ forgeReorient(_mMul(ROT_X90, forgeRot), 'Template turned.'); }
+// Roll: roll the box 90° about grid Z, bringing the next seat wall uppermost for controlled
+// casting — four rolls return to where you started, so every wall can be poured onto in turn.
+function forgeRollOrient(){ forgeReorient(_mMul(ROT_Z90, forgeRot), 'Template rolled 90° — next wall up.'); }
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
 // Finish the part forged at the PRESS. Generalised from the old instant-forge button so
@@ -7121,7 +7171,7 @@ function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false;
 function forgeSnapshot(){
   const cells=[], metal=[];
   for (let id=0; id<FG_N; id++) if (fgFill[id]){ cells.push(id); metal.push(fgMetal[id]); }
-  return { W:FGW, H:FGH, D:FGD, orient:forgeOrient, seat:SEAT_COMP, cells, metal };
+  return { W:FGW, H:FGH, D:FGD, rot:forgeRot.slice(), seat:SEAT_COMP, cells, metal };
 }
 // How much ALLOY lines the core seat: of the frame cells touching the seat void, the fraction
 // that are crucible alloy. This is the frame's RESONANCE potential — the alloy housing the core
@@ -7139,27 +7189,54 @@ function forgeAlloySeatFrac(){
   }
   return wall? alloy/wall : 0;
 }
+// Read the ORES actually cast into the part and derive its material, tier, alloy premium and
+// (for a copper+tin bronze) its tin fraction. This is what makes "the type is set by the ores
+// used" literally true: the template is only the PART, the cast metal is the material. Crucible
+// alloy cells (the housing) are excluded — they drive resonance, not the structural tier.
+function deriveForgeMaterial(){
+  const tally={}; let total=0;
+  for (let id=0;id<FG_N;id++){
+    if (!fgFill[id]||!fgMould[id]) continue;
+    const mm=fgMetal[id]; if (mm===FORGE_ALLOY_ID) continue;   // housing alloy isn't structure
+    const key=ID_TO_METAL[mm]||'copper'; tally[key]=(tally[key]||0)+1; total++;
+  }
+  if (!total) return {tier:1, matName:'Copper', alloy:false, bonus:0, tin:undefined};
+  const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
+  const primary=sorted[0][0];
+  // a second metal at >=12% of the cast makes it an alloy (a tier above, with a premium)
+  const secondary=(sorted[1] && sorted[1][1]/total>=0.12) ? sorted[1][0] : null;
+  if (secondary){
+    const pair=[primary,secondary].sort().join('+');
+    const matName=ALLOY_NAMES[pair] || (METALS[primary].name+'–'+METALS[secondary].name);
+    const tier=Math.min(5, Math.max(metalTier(primary),metalTier(secondary))+1);
+    // bronze (copper+tin) still carries its tin fraction into mining yield/bite
+    let tin;
+    if (pair==='copper+tin'){ const c=tally.copper||0, t=tally.tin||0; tin=t/Math.max(1,c+t); }
+    return {tier, matName, alloy:true, bonus:0.08+0.02*tier, tin};
+  }
+  return {tier:metalTier(primary), matName:METALS[primary].name, alloy:false, bonus:0, tin:undefined};
+}
 function finishForge(){
   const m=forgePart;
-  if (!canAfford(m)&&!adminOn){ say('Not enough metal to finish this part.','warn'); return; }
   const anvilB=forgeAnvil?forgeAnvil.output*(forgeAnvil.tier/3)*0.15:0;   // a seated anvil still helps a little
-  const q=Math.min(0.99, forgeQualityNow()+anvilB+alloyBonus(m));
-  if (!adminOn) spendCost(m);
-  const made={name:m.label,tier:m.tier,q};
+  const mat=deriveForgeMaterial();                       // tier + material come from the ORES cast
+  const q=Math.min(0.99, forgeQualityNow()+anvilB+(mat.alloy?mat.bonus:0));
+  const made={name:`${mat.matName} ${m.label}`, tier:mat.tier, q};
+  made.material=mat.matName; if (mat.alloy) made.alloyPart=true;
   made.alloySeat=forgeAlloySeatFrac();                   // resonance potential: alloy lining the seat
   made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
   made.forge=forgeSnapshot();                            // the persistent 3D voxel frame
-  if (m.alloyBase) made.tin=tinFraction;                 // carries its hardness into mining
+  if (mat.tin!==undefined) made.tin=mat.tin;             // bronze carries its hardness into mining
   const isSuit=m.part==='suitFrame';
   const cur=isSuit?suitFrames[m.system]:drill[m.part];
   if (partScore(made)>partScore(cur)){
     if (isSuit) suitFrames[m.system]=made; else drill[m.part]=made;
     floatText('★ '+Math.round(q*100)+'%','var(--amber)');
     const alloyNote = made.alloySeat>0.02 ? ` Alloy lines ${Math.round(made.alloySeat*100)}% of the core seat — it resonates with a matching core.` : '';
-    say(`${m.label} forged at ${Math.round(q*100)}% — fitted.`+alloyNote,'good');
+    say(`${made.name} forged at ${Math.round(q*100)}% (T${mat.tier}) — fitted.`+alloyNote,'good');
   } else {
-    dust+=Math.floor(20*m.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
-    say(`Forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
+    dust+=Math.floor(20*mat.tier*q); floatText(Math.round(q*100)+'% — scrapped','var(--dim)');
+    say(`${made.name} forged at ${Math.round(q*100)}% — weaker than what's fitted; melted for dust.`,'warn');
   }
   updateMeters(); showView('forge');
 }
@@ -7175,6 +7252,7 @@ function updateForgeHud(){
     : 'Crucible molten — hold on the frame to POUR ALLOY (its own colour) around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
     forgeTool==='level' ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to sweep it through the metal — it melts at the slab and finds its level, flattening the surface.'
+    : forgeTool==='gather' ? 'Gather (lodestone): hold on molten metal to draw it toward the cursor and keep it hot — pull a pool into a corner or over a seat wall. It only moves metal that is already molten; it never heats cold ore. Drag empty space to turn the bench.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
     : 'Click an ore in the top bar to DROP it into the chamber, then hold the flux torch on it to melt — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time. Drag empty space to turn the bench.';
@@ -7188,9 +7266,13 @@ function updateForgeHud(){
 // along the TOP of the screen, then clicks which ore to DROP into the chamber right now. The
 // ore feed replaces the old auto-advancing single-metal run: a mixed feed (some copper, some
 // tin) is how you try an alloy, and each dropped nugget carries its ore's colour. ----
+// ore of metal k already queued (unused) — reserved against stores so you can't queue more
+// than you own before any of it is actually melted (consumption happens at drop / crucible load)
+function forgeFeedReserved(k){ let n=0; for (const f of forgeFeed) if (!f.used&&f.metal===k) n++; return n; }
 function forgeAddFeed(metalKey){
   if (forgeFeed.length>=FORGE_NUGGETS){ say('The feed is full ('+FORGE_NUGGETS+' ore).','warn'); return; }
-  if (!adminOn && (metals[metalKey]||0)<=0){ say('No '+(ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey)+' in stores.','warn'); return; }
+  if (!adminOn && (metals[metalKey]||0)<=forgeFeedReserved(metalKey)){
+    say('No more '+(ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey)+' in stores.','warn'); return; }
   forgeFeed.push({metal:metalKey,used:false}); renderForgeFeed(); updateForgeHud();
 }
 function forgeDropFeed(i){
@@ -7198,7 +7280,11 @@ function forgeDropFeed(i){
   // one nugget hangs at a time — gate the drop until the last one has melted down, so two
   // don't overlap up top (the sim expects a single hanging lump to eat through).
   if (!forgeHangClear()){ say('Let the ore up top melt down before dropping the next.','warn'); return; }
-  if (forgeSeedNugget(f.metal)){ f.used=true; forgeFeedMetal=f.metal; forgeDirty=true; syncForgeMesh(); renderForgeFeed(); updateForgeHud(); }
+  if (forgeSeedNugget(f.metal)){
+    f.used=true;
+    if (!adminOn){ metals[f.metal]=Math.max(0,(metals[f.metal]||0)-1); updateMeters(); }   // the ore is now melted
+    forgeFeedMetal=f.metal; forgeDirty=true; syncForgeMesh(); renderForgeFeed(); updateForgeHud();
+  }
 }
 function forgeClearFeed(){ forgeFeed=forgeFeed.filter(f=>f.used); renderForgeFeed(); updateForgeHud(); }
 // Build the top strip. Two modes: the feed queue (default) or, when the crucible tool is
@@ -7280,6 +7366,11 @@ function forgeDown(x,y){
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
+  if (forgeTool==='gather'){
+    if (aim){ forgeGathering=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+    else { forgeRotating=true; forgePX=x; forgePY=y; }
+    return;
+  }
   if (forgeTool==='crucible'){
     if (forgeCrucLoad.length<2){                          // not charged yet
       if (aim) say('Load two ores into the crucible (top bar) first.','warn');
@@ -7306,15 +7397,15 @@ function forgeMove(x,y){
     forgeGroup.rotation.x=Math.max(-0.35,Math.min(1.0,forgeGroup.rotation.x+(y-forgePY)*0.006));
     forgePX=x; forgePY=y; return;
   }
-  if (!fluxOn && !forgeGrinding && !forgeCrucPouring) return;
+  if (!fluxOn && !forgeGrinding && !forgeCrucPouring && !forgeGathering) return;
   forgeSX=x; forgeSY=y;                        // the tick re-aims from here
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
-function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
+function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeGathering=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
 // Select the active held tool. Holsters the others; parks the level plane at the fill top
 // when Level is chosen; syncs the palette/button highlight.
 function forgeSetTool(name){
-  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeCrucPouring=false; forgeBeam.visible=false;
+  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeCrucPouring=false; forgeGathering=false; forgeBeam.visible=false;
   const lvl=name==='level';
   if (lvl){
     let top=1; for (let iy=forgeRim-1;iy>=0;iy--){ let any=false;
@@ -8109,6 +8200,7 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
+document.getElementById('fbRoll').onclick=forgeRollOrient;
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
