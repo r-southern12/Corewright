@@ -2473,6 +2473,29 @@ const SOCKET_WALL=0.22;                     // thickness of the socket's shell
 const SOCKET_DROP=2.6;                      // how far above the floor a core starts
 const SOCKET_SEAT_MS=520;                   // drop animation length
 const socketGroup=new THREE.Group(); scene.add(socketGroup);
+// ---- the seat bench shows the ACTUAL FORGED FRAME as the housing (seating-unification pass) ----
+// Instead of the procedural wall-tile socket, when the drill frame you're seating into was forged
+// by hand we render its real voxel body here, oriented so its cast core-seat opens toward the
+// player along the approach axis. The core then drops into the seat you actually cast. Built from
+// the frame's forge snapshot; scaled so one core-unit matches the seat bench (1/SEAT_PER per cell).
+const seatFrameGroup=new THREE.Group(); scene.add(seatFrameGroup); seatFrameGroup.visible=false;
+const _seatCubeGeo=new THREE.BoxGeometry(1,1,1);
+let _seatFrameMesh=null;
+function buildSeatFrame(part){
+  if (_seatFrameMesh){ seatFrameGroup.remove(_seatFrameMesh); _seatFrameMesh.material.dispose(); _seatFrameMesh=null; }
+  const f=part&&part.forge; if (!f||!f.cells||!f.cells.length) return false;
+  const W=f.W,H=f.H, cx=(W-1)/2, cz=(f.D-1)/2, s=1/SEAT_PER;
+  const inst=new THREE.InstancedMesh(_seatCubeGeo,
+    new THREE.MeshStandardMaterial({metalness:0.62,roughness:0.4}), f.cells.length);
+  const m4=new THREE.Matrix4(), col=new THREE.Color(), sv=new THREE.Vector3(s*1.02,s*1.02,s*1.02), pos=new THREE.Vector3();
+  for (let k=0;k<f.cells.length;k++){ const id=f.cells[k]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
+    pos.set((ix-cx)*s, (iy-FORGE_SEAT_PY)*s, (iz-cz)*s); m4.compose(pos,_thumbQI,sv); inst.setMatrixAt(k,m4);
+    col.setHex(MET_ICON[f.metal[k]]!==undefined?MET_ICON[f.metal[k]]:0x137a63); inst.setColorAt(k,col); }
+  inst.instanceMatrix.needsUpdate=true; if (inst.instanceColor) inst.instanceColor.needsUpdate=true;
+  inst.rotation.x=Math.PI/2;                 // forge seat opens +Y -> rotate so it opens +Z (toward the player)
+  _seatFrameMesh=inst; seatFrameGroup.add(inst);
+  return true;
+}
 const socketMat=new THREE.MeshPhysicalMaterial({color:0x2b3350,metalness:0.55,
   roughness:0.55,flatShading:true});
 const socketFloorMat=new THREE.MeshPhysicalMaterial({color:0x3a4570,metalness:0.6,
@@ -3727,7 +3750,12 @@ function applyPolishLook(){
 /* ---------- the seating bench ---------- */
 function enterSeatBench(){
   buildSocket();
-  socketGroup.visible=true;
+  // If the drill frame we're seating into was HAND-FORGED, show its real body as the housing and
+  // hide the procedural wall-tile socket; otherwise fall back to the old socket (factory frame).
+  const forgedHousing = drill.frame && drill.frame.forge && buildSeatFrame(drill.frame);
+  seatFrameGroup.visible=!!forgedHousing;
+  if (forgedHousing) seatFrameGroup.position.set(gx, gy, socketDepthZ+SEAT_HALF);
+  socketGroup.visible=!forgedHousing;
   seatBenchOn=true; seatDropping=false; seatDropT=0; seatResult=null;
   // the core waits in FRONT of the wall, between player and aperture
   mineral.position.set(0,0,SOCKET_DROP);
@@ -3737,6 +3765,7 @@ function enterSeatBench(){
 function leaveSeatBench(){
   seatBenchOn=false; seatDropping=false; seatResult=null;
   socketGroup.visible=false;
+  seatFrameGroup.visible=false;
   mineral.position.set(0,0,0);
   seatDropT=0;
   const showGhost=ghostOn && view!=='dig';
