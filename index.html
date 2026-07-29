@@ -6557,23 +6557,19 @@ function buildGrindModel(){
   const rim=_tm(new THREE.TorusGeometry(0.26,0.03,10,28),_fGlow(0xffb24a),0,0.02,0); rim.rotation.y=Math.PI/2; g.add(rim);
   return g;
 }
-// GATHER (lodestone) — a violet-glowing magnet on a brass fork. It draws already-molten metal
-// toward the cursor and holds it hot; its two crossed attract-rings read as "pulls things in".
-function buildGatherModel(){
-  const g=new THREE.Group();
-  g.add(_tm(new THREE.CylinderGeometry(0.06,0.075,0.5,14),_brass,0,0.42,0));      // handle
-  const stone=new THREE.Mesh(new THREE.IcosahedronGeometry(0.16,0),
-    new THREE.MeshStandardMaterial({color:0x3a4a6a,metalness:0.9,roughness:0.3})); stone.position.y=0.08; g.add(stone);
-  const r1=_tm(new THREE.TorusGeometry(0.21,0.02,8,22),_fGlow(0x8f6bff),0,0.08,0); g.add(r1);        // attract rings
-  const r2=_tm(new THREE.TorusGeometry(0.27,0.014,8,22),_fGlow(0x8f6bff),0,0.08,0); r2.rotation.x=Math.PI/2; g.add(r2);
-  return g;
-}
+// A foundry CRUCIBLE — a tapered bucket with a rim, a pour SPOUT lip on one side, and a bail
+// handle over the top. No stray bar, no glow disc (the molten glow is a separate lit child on the
+// stage). The spout marks which way it tips to pour.
 function buildCrucibleModel(){
   const g=new THREE.Group();
-  g.add(_tm(new THREE.CylinderGeometry(0.22,0.15,0.3,18),_brass,0,0.16,0));       // pot
-  g.add(_tm(new THREE.TorusGeometry(0.22,0.03,8,20),_brassD,0,0.3,0));            // rim
-  const pour=_tm(new THREE.CircleGeometry(0.19,18),_fGlow(0xff7a30),0,0.305,0); pour.rotation.x=-Math.PI/2; g.add(pour);
-  g.add(_tm(new THREE.CylinderGeometry(0.05,0.06,0.5,10),_brass,0.32,0.28,0));    // handle
+  g.add(_tm(new THREE.CylinderGeometry(0.24,0.16,0.36,22),_brass,0,0.18,0));        // bucket (wider at the top)
+  g.add(_tm(new THREE.TorusGeometry(0.24,0.028,10,24),_brassD,0,0.36,0));           // rim
+  // pour spout — a little triangular lip on the +x side of the rim
+  const spout=_tm(new THREE.ConeGeometry(0.09,0.14,4),_brass,0.24,0.37,0);
+  spout.rotation.set(Math.PI/2,0,-Math.PI/4); g.add(spout);
+  // bail handle — a curved bar arcing over the top
+  const bail=_tm(new THREE.TorusGeometry(0.2,0.018,8,20,Math.PI),_brassD,0,0.36,0);
+  g.add(bail);
   return g;
 }
 function buildRotateModel(){
@@ -6591,9 +6587,8 @@ function buildRotateModel(){
 const FORGE_TOOL_DEFS=[
   {id:'torch',   build:buildTorchModel,    ry:-0.08, rs:0.44},   // torch is tall/nozzle-down — drop + shrink to centre
   {id:'level',   build:buildLevelModel},
-  {id:'gather',  build:buildGatherModel},
   {id:'grind',   build:buildGrindModel},
-  {id:'crucible',build:buildCrucibleModel, rx:-0.08, ry:-0.06, rs:0.42},  // pull the side handle back to centre
+  {id:'crucible',build:buildCrucibleModel, ry:-0.04, rs:0.62},   // scaled up so it reads at a glance
 ];
 // The RACK: brass slots down the right, parented to the camera so it stays screen-fixed.
 scene.add(camera);                          // camera must be in the graph for its children to render
@@ -6613,17 +6608,20 @@ FORGE_TOOL_DEFS.forEach((d,i)=>{
 const forgeCursorTool=new THREE.Group(); forgeCursorTool.visible=false; scene.add(forgeCursorTool);
 forgeCursorTool.scale.setScalar(1.7); forgeCursorTool.rotation.set(0.22,0.35,-0.34);   // held-in-hand tilt
 const _cursorModels={}; FORGE_TOOL_DEFS.forEach(d=>{ const m=d.build(); m.visible=false; _cursorModels[d.id]=m; forgeCursorTool.add(m); });
-const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forgeRotateGlyph.scale.setScalar(0.9); scene.add(forgeRotateGlyph);
+const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forgeRotateGlyph.scale.setScalar(0.45); scene.add(forgeRotateGlyph);
 // The crucible STAGE — a pot that hangs over the chamber (where the ore nugget hangs) once the
 // crucible tool is active and loaded. Its molten glow ramps with forgeCrucHeat, so the player
 // SEES it charge from cold to white-hot before it can pour. Lives in forgeGroup (rides the
 // camera drag) but not forgePivot (it's a tool above the work; it doesn't turn with the part).
 const _crucCol=new THREE.Color();
-const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(1.35);
+const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(2.7);
 // hangs over the chamber but LOW enough to stay on-screen (it was up near the grid ceiling and
-// clipped off the top of the view); ~a nugget's height above the box, tipped to pour inward.
-forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-8), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=0.5; forgeGroup.add(forgeCrucStage);
-const _crucGlow=_tm(new THREE.SphereGeometry(0.17,14,12),_fGlow(0xff7a30),0,0.17,0); forgeCrucStage.add(_crucGlow);
+// clipped off the top of the view); ~a nugget's height above the box. Its z-tilt is animated when
+// it pours (forgeCrucTip). The upright rest angle is a slight lean.
+const CRUC_REST_TIP=0.28;    // resting lean (radians)
+const CRUC_POUR_TIP=1.15;    // full pour tip
+forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-8.5), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=CRUC_REST_TIP; forgeGroup.add(forgeCrucStage);
+const _crucGlow=_tm(new THREE.SphereGeometry(0.16,14,12),_fGlow(0xff7a30),0,0.3,0); forgeCrucStage.add(_crucGlow);
 function forgeCrucGlow(){
   const show=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
   forgeCrucStage.visible=show;
@@ -6631,6 +6629,15 @@ function forgeCrucGlow(){
   fHeatRamp(0.1+forgeCrucHeat*0.42,_crucCol);   // cold pot dull, molten near white-hot
   _crucGlow.material.color.copy(_crucCol);
   _crucGlow.scale.setScalar(0.6+forgeCrucHeat*0.9);
+}
+// Ease the pot's tip toward its target: resting lean normally, tipping over as the pour-hold
+// builds (and staying tipped while it pours), so the pour reads as a deliberate, weighty motion.
+function forgeCrucTipTick(dt){
+  if (!forgeCrucStage.visible) return;
+  let target=CRUC_REST_TIP;
+  if (forgeCrucPouring && forgeCrucHeat>=1)
+    target=CRUC_REST_TIP+(CRUC_POUR_TIP-CRUC_REST_TIP)*Math.min(1,forgeCrucPourHold/CRUC_POUR_DELAY);
+  forgeCrucStage.rotation.z += (target-forgeCrucStage.rotation.z)*Math.min(1,dt*8);
 }
 // Highlight the active rack slot and show the matching cursor model.
 function forgeSyncPalette(){
@@ -6950,8 +6957,8 @@ let fluxOn=false, fluxAim=null, fluxRadius=1.7;
 // The active tool. Torch melts, Level flattens (a heat-slab), Grind shaves metal off —
 // the grinder is the ONLY way to clean a lump off QUENCHED metal, which can't be re-melted.
 // (Quench and Turn are one-shot actions, not held tools.) The 3D tool palette selects this.
-let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible' | 'gather'
-let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false, forgeGathering=false;
+let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible'
+let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false;
 const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
 const LEVEL_BAND=1.3;                   // half-thickness of the heated slab, in cells
 const GRIND_RATE=3;                     // cells the grinder shaves per sim step
@@ -6965,6 +6972,8 @@ let forgeCrucibleMax=1;                 // crucible loads allowed per part (1; 2
 let forgeCrucChargesLeft=1;             // loads not yet spent this part
 const CRUCIBLE_RATE=2;                  // alloy cells poured per sim step while held
 const CRUC_HEAT_RATE=0.02;              // crucible heat gain/step: ~1.6s from cold to molten at 30Hz
+const CRUC_POUR_DELAY=1.0;              // hold this long (seconds), pot tipping, before alloy runs
+let forgeCrucPourHold=0;               // accumulated hold time while pouring-intent (drives the tip)
 let forgeCrucLoad=[];                   // the (up to) two ore keys the player has loaded
 let forgeCrucHeat=0;                    // 0..1 melt of the loaded charge; must reach 1 before it pours
 let forgeCrucBudget=0;                  // alloy cells left in the molten charge (2 nuggets' worth)
@@ -7095,41 +7104,33 @@ function forgeGrindStep(){
         fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; fgMetal[id]=0; removed++; forgeDirty=true;
       }
 }
-// GATHER (lodestone): draw ALREADY-MOLTEN metal toward the click-and-hold point and hold it hot.
-// It never heats cold ore (only cells already past ~0.6*FLOW_T are affected) and, while held, tops
-// their heat back up so they don't cool — so you can pull a molten pool into a corner or over a seat
-// wall for controlled casting without it freezing mid-move. Cells step one cell toward the cursor
-// along their largest remaining axis; farthest-first so they pack inward instead of colliding.
-const GATHER_R=3.0;
-function forgeGatherStep(){
+// The TORCH also NUDGES: while you hold it, molten metal near the beam is pushed one cell directly
+// AWAY from the cursor (in the pool plane), so you can corral a pool by sweeping the torch behind
+// it. Only already-molten (moving) metal is pushed; cold ore and quenched metal stay put. Nearest-
+// first so the near cells shove outward without piling into each other.
+const NUDGE_R=3.2;
+function forgeTorchNudge(){
   if (!fluxAim) return;
-  const R=GATHER_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
+  const R=NUDGE_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
   const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
   const cells=[];
   for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
     if (!fIn(ix,iy,iz)) continue; const id=fIdx(ix,iy,iz);
-    // ONLY molten, unquenched metal is pulled. Metal that has cooled/SET (t<FLOW_T) is left
-    // alone even though it's unquenched, and quenched (locked) metal is immovable — exactly the
-    // "only affect hot metal" rule. Pulled metal is kept molten while held so it flows all the
-    // way to the cursor; on release it cools and sets where it landed (no bouncing).
-    if (!fgFill[id]||fgLocked[id]||fgTemp[id]<FLOW_T) continue;
-    const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
-    fgTemp[id]=Math.max(fgTemp[id],FLOW_T+0.10);               // held hot: won't cool while gathered
-    cells.push([d2,ix,iy,iz,id]); forgeDirty=true;
+    if (!fgFill[id]||fgLocked[id]||fgTemp[id]<FLOW_T) continue;   // only hot, moving metal is pushed
+    const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2||d2<0.02) continue;
+    cells.push([d2,ix,iy,iz,id]);
   }
-  cells.sort((a,b)=>b[0]-a[0]);                                 // farthest first -> migrate inward, no self-collision
+  // FARTHEST first: the leading edge (away from the cursor) vacates into empty space, then the
+  // cells behind it slide up — so the whole pool shifts AWAY from the cursor rather than jamming.
+  cells.sort((a,b)=>b[0]-a[0]);
   for (const c of cells){
-    let ix=c[1],iy=c[2],iz=c[3], id=fIdx(ix,iy,iz);
-    // step toward the cursor along EVERY axis with meaningful distance (up to 3 cells/hold-step),
-    // so a molten pool is drawn in briskly rather than creeping one axis at a time.
-    const axes=[[Math.abs(cx-ix),0],[Math.abs(cy-iy),1],[Math.abs(cz-iz),2]].filter(a=>a[0]>0.4).sort((a,b)=>b[0]-a[0]);
-    for (const a of axes){
-      const dx=a[1]===0?Math.sign(cx-ix):0, dy=a[1]===1?Math.sign(cy-iy):0, dz=a[1]===2?Math.sign(cz-iz):0;
-      const nx=ix+dx,ny=iy+dy,nz=iz+dz;
-      if (!forgeAllowed(nx,ny,nz)) continue;
-      const nd=fIdx(nx,ny,nz); if (fgFill[nd]) continue;
-      fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.10)); ix=nx; iy=ny; iz=nz; id=nd;
-    }
+    const ix=c[1],iy=c[2],iz=c[3],id=c[4];
+    const dx=ix-cx, dz=iz-cz, ax=Math.abs(dx), az=Math.abs(dz);   // push in the horizontal plane, away
+    const ox=ax>=az?Math.sign(dx):0, oz=az>ax?Math.sign(dz):0;
+    const nx=ix+(ox||0), nz=iz+(oz||0);
+    if ((nx===ix&&nz===iz)||!forgeAllowed(nx,iy,nz)) continue;
+    const nd=fIdx(nx,iy,nz); if (fgFill[nd]) continue;
+    fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.04)); forgeDirty=true;
   }
 }
 // Crucible: the player chose two ores and LOADED them; this heats the pot to molten, then
@@ -7146,6 +7147,10 @@ function forgeCrucibleStep(){
     return;
   }
   if (!fluxAim || forgeCrucBudget<=0) return;
+  // TIP BEFORE POUR: molten metal doesn't run the instant you press — hold ~1s while the pot tips
+  // over (forgeCrucTipTick animates it), THEN alloy starts to pour. Instant use felt wrong.
+  forgeCrucPourHold += FSTEP;
+  if (forgeCrucPourHold < CRUC_POUR_DELAY) return;
   const cx=Math.round(fluxAim.x), cy=Math.round(fluxAim.y), cz=Math.round(fluxAim.z);
   let poured=0;
   const spots=[[0,0],[1,0],[-1,0],[0,1],[0,-1]];
@@ -7185,7 +7190,7 @@ function forgeCrucLoadFromFeed(i){
 const _lateral=[[1,0],[-1,0],[0,1],[0,-1]];
 // A sideways move keeps only LAT_KEEP of the heat SURPLUS above FLOW_T, so molten metal settles
 // after ~1-2 lateral cells rather than skating around the pool (the "bouncy" feel). Deliberate
-// lateral transport to the corners is done by the LEVEL and GATHER tools, which re-heat as they go.
+// lateral transport to the corners is done by the LEVEL tool and the torch NUDGE, which re-heat as they go.
 const LAT_KEEP=0.30;
 const latCool=t=>FLOW_T + Math.max(0,(t-FLOW_T))*LAT_KEEP;
 const MELT_CREEP=0.09;
@@ -7305,7 +7310,7 @@ function forgeFlowStep(){
     // otherwise LEVEL sideways — liquid finding its level. Sheds its heat SURPLUS fast on a
     // sideways step (latCool), so a slough settles after only 1-2 cells instead of skating
     // and bouncing across the pool (the "so annoying" bounce). Reaching the far corners is
-    // now the job of the LEVEL and GATHER tools, which deliberately re-heat and move metal —
+    // now the job of the LEVEL tool and the torch nudge, which deliberately re-heat and move metal —
     // the passive flow just settles where it lands.
     if (!did) for (let s=0;s<4 && !did;s++){
       const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
@@ -7402,16 +7407,16 @@ function forgeSimTick(){
     const e=1-Math.pow(1-forgeTurnT,3);
     forgePivot.quaternion.slerpQuaternions(forgeTurnFromQ,_forgeIdQ,e); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
-  if (fluxOn||forgeGrinding||forgeCrucPouring||forgeGathering){
+  if (fluxOn||forgeGrinding||forgeCrucPouring){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
     forgeBeam.visible=!!fluxAim;
   } else forgeBeam.visible=false;
+  forgeCrucTipTick(dt);                    // ease the pot's pour-tip every frame
   forgeAccum+=dt;
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
-    if (fluxOn) fluxHeat();
+    if (fluxOn){ fluxHeat(); forgeTorchNudge(); }                 // torch heats AND corrals molten metal away from the cursor
     if (forgeLevelHold){ forgeLevelHeat(); forgeLevelRelax(); }   // heat the slab AND push metal laterally to the low corners
-    if (forgeGathering) forgeGatherStep();                        // draw molten metal toward the cursor
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7605,13 +7610,12 @@ function updateForgeHud(){
   const nugLeft=forgeFeed.filter(f=>!f.used).length;   // queued ore not yet dropped
   const crucHint = forgeCrucLoad.length<2 ? 'Crucible: pick TWO ores in the top bar to load the pot.'
     : forgeCrucHeat<1 ? 'Crucible loaded — hold ANYWHERE to HEAT it ('+Math.round(forgeCrucHeat*100)+'%); at molten it can pour.'
-    : 'Crucible molten — hold on the frame to POUR ALLOY (its own colour) around the core seat. '+forgeCrucBudget+' left.';
+    : 'Crucible molten — hold on the frame; the pot TIPS for a moment, then pours ALLOY around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
-    forgeTool==='level' ? 'Leveling: press-and-hold to heat the glowing slab, drag up/down to sweep it through the metal — it melts at the slab and finds its level, flattening the surface.'
-    : forgeTool==='gather' ? 'Gather (lodestone): hold on molten metal to draw it toward the cursor and keep it hot — pull a pool into a corner or over a seat wall. It only moves metal that is already molten; it never heats cold ore. Drag empty space to turn the bench.'
+    forgeTool==='level' ? 'Leveling: press-and-hold ON the metal to heat the glowing slab, drag up/down to sweep it through — it melts at the slab and finds its level. Drag EMPTY space to turn the bench.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
-    : 'Click an ore in the top bar to DROP it into the chamber, then hold the flux torch on it to melt — molten metal sloughs off and slumps into the frame around the core seat. Take it a nugget at a time. Drag empty space to turn the bench.';
+    : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
   const crucNote = forgeCrucChargesLeft<forgeCrucibleMax || forgeCrucLoad.length ? '  ·  crucible '+forgeCrucChargesLeft+' left' : '';
   stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left'+crucNote;
   fill.style.width=fpc+'%';
@@ -7721,15 +7725,16 @@ function forgeSetBeam(){
 // Level press-holds and drags the slab up/down.
 function forgeDown(x,y){
   const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
-  if (forgeTool==='level'){ forgeLevelHold=true; forgePY=y; return; }
   const aim=forgeAimCell(x,y);
-  if (forgeTool==='grind'){
-    if (aim){ forgeGrinding=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+  if (forgeTool==='level'){
+    // press ON the metal to level (drag up/down); press on EMPTY space to rotate the view — so the
+    // bench can still be turned while the leveller is out (it couldn't before).
+    if (aim){ forgeLevelHold=true; forgePY=y; }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
-  if (forgeTool==='gather'){
-    if (aim){ forgeGathering=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+  if (forgeTool==='grind'){
+    if (aim){ forgeGrinding=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
@@ -7759,15 +7764,15 @@ function forgeMove(x,y){
     forgeGroup.rotation.x=Math.max(-0.35,Math.min(1.0,forgeGroup.rotation.x+(y-forgePY)*0.006));
     forgePX=x; forgePY=y; return;
   }
-  if (!fluxOn && !forgeGrinding && !forgeCrucPouring && !forgeGathering) return;
+  if (!fluxOn && !forgeGrinding && !forgeCrucPouring) return;
   forgeSX=x; forgeSY=y;                        // the tick re-aims from here
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
-function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeGathering=false; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
+function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
 // Select the active held tool. Holsters the others; parks the level plane at the fill top
 // when Level is chosen; syncs the palette/button highlight.
 function forgeSetTool(name){
-  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeCrucPouring=false; forgeGathering=false; forgeBeam.visible=false;
+  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeBeam.visible=false;
   const lvl=name==='level';
   if (lvl){
     let top=1; for (let iy=forgeRim-1;iy>=0;iy--){ let any=false;
@@ -8510,9 +8515,13 @@ function showView(name){
   document.getElementById('stationBar').classList.toggle('on',isShaping);
   document.getElementById('toolbar').classList.toggle('on',isMachine);
   document.getElementById('pad').classList.toggle('on',isExped);
-  // The shaping benches hide the reagent rail — glassware is no use mid-cut.
+  // The shaping benches AND the forge hide the reagent rail — glassware/ores are no use mid-cut,
+  // and the forge shows its ores in the top feed strip already, so the bulky rail is redundant there.
   // A class, not an inline display, so the stylesheet stays in control.
-  document.getElementById('instrumentRail').classList.toggle('hid',isMachine);
+  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb');
+  // The forge is its own workspace — the drill/air/dust meters aren't relevant while you pour, and
+  // the player questioned why they were there, so the top meter strip is hidden in the forge bench.
+  document.getElementById('meters').style.display=(name==='forgeb')?'none':'';
   document.getElementById('expedHud').classList.toggle('on',isExped);
   document.getElementById('nudge').classList.remove('on');
   document.getElementById('alignChip').classList.remove('lit');
