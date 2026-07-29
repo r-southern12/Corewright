@@ -335,7 +335,11 @@
     background:rgba(255,255,255,.02);border:1px solid #222a42}
   .dseat.empty{border-style:dashed;opacity:.8}
   .dseatArt{width:48px;height:48px;flex:0 0 48px;display:flex;align-items:center;justify-content:center;
-    background:#0b0e18;border:1px solid #2c3550;border-radius:6px}
+    background:#0b0e18;border:1px solid #2c3550;border-radius:6px;overflow:hidden}
+  canvas.thumb3d{display:block}
+  .dseatArt canvas.thumb3d{width:100%;height:100%}
+  .pickCard canvas.thumb3d{width:56px;height:56px;display:block;margin:0 auto}
+  canvas.thumb3d.thumbEmpty{opacity:0}
   .dseatBody{flex:1;min-width:0}
   .dseatName{font-size:11px;color:var(--dim);letter-spacing:.04em}
   .dseatVal{font-size:13px;color:#e8ecf8;margin:1px 0 3px}
@@ -587,7 +591,7 @@
   /* The FEED bar — the player-composed ore queue along the top of the screen. Stores on the
      left (click to add / load), the queued ore chunks on the right (click to drop & melt). */
   #fbFeed{position:fixed;left:50%;top:52px;transform:translateX(-50%);z-index:9;display:none;
-    align-items:center;gap:10px;width:840px;max-width:96vw;padding:6px 12px;
+    align-items:center;gap:8px;width:1060px;max-width:98vw;padding:6px 12px;
     background:linear-gradient(rgba(9,12,22,.96),rgba(9,12,22,.90));
     border:1px solid rgba(200,154,82,.24);border-top:none;
     clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,12px 100%)}
@@ -604,8 +608,9 @@
   #fbFeed .fbOre.brush{border-color:var(--crystal);box-shadow:0 0 0 1px var(--crystal) inset}
   #fbFeed .fbOre b{font-weight:700;color:var(--crystal);font-size:11px}
   #fbFeed .fbSw{width:11px;height:11px;border:1px solid rgba(0,0,0,.5);box-shadow:inset 0 1px 1px rgba(255,255,255,.35)}
-  #fbFeed .fbSlot{width:20px;height:20px;padding:0;border:1px solid var(--line);background:#0d1122;cursor:pointer;
-    display:inline-flex;align-items:center;justify-content:center}
+  #fbFeed .fbSlot{width:17px;height:17px;padding:0;border:1px solid var(--line);background:#0d1122;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+  #fbFeed .fbGrp{flex-wrap:nowrap}
   #fbFeed .fbSlot:hover{border-color:var(--amber)}
   #fbFeed .fbSlot.used{opacity:.3;cursor:default;filter:grayscale(.6)}
   #fbFeed .fbSlot.empty{border-style:dashed;opacity:.5}
@@ -5883,6 +5888,86 @@ function forgePartIcon(part,size){
     _isoCube(g,sx,sy,s*0.62,MET_ICON[c[3]]!==undefined?MET_ICON[c[3]]:0x137a63); }
   return cv;
 }
+// ---- LIVE 3D THUMBNAILS. A small shared offscreen renderer draws each registered item's ACTUAL
+// mesh (forged part voxels, or a carved core's shards), slowly rotating, and blits it into a 2D
+// canvas in the panel. One extra WebGL context, reused for every thumb; meshes are rebuilt only
+// when a panel re-renders. This is the "slowly rotating image of the actual item" ask. ----
+const THUMB_PX=140;
+let thumbRenderer=null, thumbScene=null, thumbCam=null, thumbHolder=null;
+const thumbRegistry=[];
+function _thumbInit(){
+  if (thumbRenderer) return;
+  thumbRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  thumbRenderer.setSize(THUMB_PX,THUMB_PX); thumbRenderer.setClearColor(0x000000,0);
+  thumbRenderer.outputEncoding=THREE.sRGBEncoding;
+  thumbScene=new THREE.Scene();
+  thumbCam=new THREE.PerspectiveCamera(32,1,0.1,100); thumbCam.position.set(0,0.4,6.4);
+  thumbScene.add(new THREE.AmbientLight(0xffffff,0.72));
+  const key=new THREE.DirectionalLight(0xfff0d8,1.15); key.position.set(3,5,4); thumbScene.add(key);
+  const rim=new THREE.DirectionalLight(0x6ea0ff,0.5); rim.position.set(-4,-2,-3); thumbScene.add(rim);
+  thumbHolder=new THREE.Group(); thumbScene.add(thumbHolder);
+}
+const _thumbCubeGeo=new THREE.BoxGeometry(1,1,1);
+function _voxThumb(list, mat){                 // list: [ [x,y,z,size,hex], ... ] in a centred frame
+  if (!list.length) return null;
+  const inst=new THREE.InstancedMesh(_thumbCubeGeo, mat, list.length);
+  const m4=new THREE.Matrix4(), col=new THREE.Color(), sv=new THREE.Vector3();
+  list.forEach((c,k)=>{ sv.set(c[3],c[3],c[3]); m4.compose(new THREE.Vector3(c[0],c[1],c[2]), _thumbQI, sv);
+    inst.setMatrixAt(k,m4); col.setHex(c[4]); inst.setColorAt(k,col); });
+  inst.instanceMatrix.needsUpdate=true; if (inst.instanceColor) inst.instanceColor.needsUpdate=true;
+  return inst;
+}
+const _thumbQI=new THREE.Quaternion();
+function forgeThumbMesh(part){
+  const f=part&&part.forge; if (!f||!f.cells||!f.cells.length) return null;
+  const W=f.W,H=f.H,D=f.D, cx=(W-1)/2, cy=(H-1)/2, cz=(D-1)/2, scl=3.4/Math.max(W,H,D);
+  const list=[];
+  for (let k=0;k<f.cells.length;k++){ const id=f.cells[k]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
+    list.push([(ix-cx)*scl,(iy-cy)*scl,(iz-cz)*scl,scl,MET_ICON[f.metal[k]]!==undefined?MET_ICON[f.metal[k]]:0x137a63]); }
+  return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.55,roughness:0.42}));
+}
+function coreThumbMesh(core){
+  if (!core||!core.cells) return null;
+  const cells=core.cells.filter(isCrystal); if (!cells.length) return null;
+  const H=coreHue(core), hot=new THREE.Color(0xffd070), c=new THREE.Color();
+  let mx=0.5; for (const s of cells) mx=Math.max(mx,Math.abs(s.px)+s.size,Math.abs(s.py)+s.size,Math.abs(s.pz)+s.size);
+  const scl=2.7/mx, list=[];
+  for (const s of cells){ c.setHex(H.base); if (s.conc>0.45) c.lerp(hot,Math.min(1,(s.conc-0.45)*1.6));
+    list.push([s.px*scl,s.py*scl,s.pz*scl,Math.max(0.12,s.size*scl),c.getHex()]); }
+  return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.25,roughness:0.35,emissive:0x120a04,emissiveIntensity:0.3}));
+}
+// register/clear the live thumbnails currently on screen
+function clearThumbs(){ for (const t of thumbRegistry){ if (t.mesh){ t.mesh.geometry===_thumbCubeGeo||t.mesh.geometry.dispose(); t.mesh.material.dispose&&t.mesh.material.dispose(); } } thumbRegistry.length=0; }
+function registerThumb(canvas, mesh){ if (!canvas||!mesh) return; _thumbInit(); thumbRegistry.push({canvas,mesh,ctx:canvas.getContext('2d')}); }
+function thumbTick(){
+  if (!thumbRegistry.length) return;
+  const rot=performance.now()*0.00055;
+  for (let i=thumbRegistry.length-1;i>=0;i--){ const t=thumbRegistry[i];
+    if (!t.canvas.isConnected){ thumbRegistry.splice(i,1); continue; }   // panel closed/rebuilt
+    thumbHolder.clear(); thumbHolder.add(t.mesh); t.mesh.rotation.set(0.42,rot,0);
+    thumbRenderer.render(thumbScene,thumbCam);
+    t.ctx.clearRect(0,0,t.canvas.width,t.canvas.height);
+    t.ctx.drawImage(thumbRenderer.domElement,0,0,t.canvas.width,t.canvas.height);
+  }
+}
+// After a panel's innerHTML is set, mount live thumbnails onto its <canvas class="thumb3d"
+// data-thumb="..."> placeholders. Spec forms: forge:<partId>, drill:frame|bit|core|power,
+// suit:<sysKey>, core:<coreId>.
+function mountThumbs(root){
+  if (!root) return;
+  root.querySelectorAll('canvas.thumb3d').forEach(cv=>{
+    const spec=(cv.dataset.thumb||'').split(':'), kind=spec[0], key=spec[1];
+    let mesh=null;
+    if (kind==='forge'){ const p=forgedParts.find(x=>String(x.id)===key); mesh=p&&forgeThumbMesh(p); }
+    else if (kind==='drill'){
+      if (key==='frame'||key==='bit'){ mesh=drill[key]&&drill[key].forge?forgeThumbMesh(drill[key]):null; }
+      else { const rec=key==='core'?drill.core:drill.power; const full=rec&&inventory.find(c=>c.id===rec.id); mesh=full?coreThumbMesh(full):null; }
+    }
+    else if (kind==='suit'){ const fr=suitFrames[key]; mesh=fr&&fr.forge?forgeThumbMesh(fr):null; }
+    else if (kind==='core'){ const cc=inventory.find(c=>String(c.id)===key); mesh=cc&&coreThumbMesh(cc); }
+    if (mesh) registerThumb(cv,mesh); else cv.classList.add('thumbEmpty');
+  });
+}
 function renderForge(){
   // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
   const ol=document.getElementById('forgeOreList');
@@ -5940,14 +6025,16 @@ function renderForge(){
 // form, its stats and whether it's the one currently installed, with Install / Discard actions.
 function renderForgedShelf(){
   const shelf=document.getElementById('forgedShelf'); if (!shelf) return;
-  document.getElementById('forgedNote').textContent = forgedParts.length?`— ${forgedParts.length}/${FORGED_MAX} kept`:'';
+  clearThumbs();
+  document.getElementById('forgedNote').textContent = forgedParts.length?`— ${forgedParts.length} kept`:'';
   shelf.innerHTML='';
   if (!forgedParts.length){ shelf.innerHTML='<span class="sub">Nothing forged yet — pick a template above and pour a part.</span>'; return; }
   for (const part of forgedParts){
     const installed = part.part==='suitFrame' ? suitFrames[part.system]===part : drill[part.part]===part;
     const card=document.createElement('div'); card.className='card t'+Math.min(3,part.tier)+(installed?' active':'');
     card.style.cssText='display:flex;gap:8px;align-items:center;min-width:230px';
-    card.appendChild(forgePartIcon(part,72));
+    const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=72; cv.style.cssText='width:72px;height:72px;flex:0 0 72px';
+    card.appendChild(cv); registerThumb(cv, forgeThumbMesh(part));
     const info=document.createElement('div'); info.style.flex='1';
     const seatNote = part.alloySeat>0.02?` · <span style="color:var(--amber)">alloy seat ${Math.round(part.alloySeat*100)}%</span>`:'';
     info.innerHTML=`<div class="info">${part.name} <span class="badge">T${'I'.repeat(part.tier)}</span>
@@ -6099,7 +6186,7 @@ const FLOW_T=0.45;                      // temperature at which metal turns molt
 // drip down AND level across the mould before it sets, and slow means
 // patient/forgiving, not twitchy. Too fast and drips freeze in mid-air in the
 // gap between the stone and the dish instead of pooling.
-const COOL=0.0016;                      // per-STEP temperature decay (~a few seconds of liquid life at FSTEP)
+const COOL=0.0034;                      // per-STEP temperature decay — metal sets in ~1-2s (was too slow to cool)
 
 // The core SOCKET. The finished part is a metal body with the drill-core seat cast
 // straight into it: instead of stamping a dimple after the fact, the seat is a VOID
@@ -6483,7 +6570,6 @@ forgeSurfMat.onBeforeCompile=sh=>{
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
-const FORGE_BLOB=4;   // how fat an isolated droplet's density is (renders a lone slough as a blob, not a point)
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
@@ -6503,6 +6589,16 @@ const F_ALLOY=new THREE.Color(0xb060e0);
 // Quenched ALLOY — a frozen deep-violet, distinct from both live alloy (bright violet)
 // and quenched copper (steel blue), so locking alloy doesn't read as plain quenched copper.
 const F_LOCK_ALLOY=new THREE.Color(0x5a3fae);
+// Quenched/locked colour PER METAL — a frozen, cold-hardened tint distinct for each metal, so
+// quenched iron / tin / voidsteel / alloy don't all read as one blue or as copper (the bug: they
+// looked identical). Keyed on the cell's fgMetal id; a frozen version of each metal's identity.
+const FORGE_LOCK_COL={
+  0:new THREE.Color(0x2f7f9c),   // copper -> frozen teal-steel
+  1:new THREE.Color(0x9fb2cc),   // tin -> frozen pewter
+  2:new THREE.Color(0x3a4a6a),   // iron -> frozen dark steel
+  3:new THREE.Color(0x6a4fb2),   // voidsteel -> frozen violet
+  9:F_LOCK_ALLOY,                // crucible alloy
+};
 // Metal render id stored per cell in fgMetal (0 = copper framework default). A fed ore
 // nugget carries its own id; the crucible blend uses FORGE_ALLOY_ID. Each id has a SET
 // colour — how the metal reads once cooled — so a mixed feed shows its constituents and
@@ -6602,7 +6698,7 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   if (!_lk && ((ix>0&&fgLocked[cid-1])||(ix<FGW-1&&fgLocked[cid+1])||
       (iy>0&&fgLocked[cid-FGW])||(iy<FGH-1&&fgLocked[cid+FGW])||
       (iz>0&&fgLocked[cid-FGW*FGH])||(iz<FGD-1&&fgLocked[cid+FGW*FGH]))) _lk=1;
-  if (_lk) _fcolor.copy(_al?F_LOCK_ALLOY:F_LOCK);   // quenched alloy keeps its own frozen tint
+  if (_lk) _fcolor.copy(FORGE_LOCK_COL[mid]||F_LOCK);   // quenched: a frozen tint per metal (not all one blue)
   forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
   // heat glow (0..1): ramps in from ~dull-red so ANY incandescence reads, hard by the
   // time it's near white. Set/verdigris metal (blended above, low t) emits nothing.
@@ -6637,22 +6733,11 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
 function syncForgeMesh(){
-  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1 —
-  //    BUT an isolated cell (a falling slough / a stranded droplet) is given a fatter density so
-  //    the isosurface blooms into a visible BLOB a couple of cells across, instead of a sub-cell
-  //    point you couldn't even see fall. Only cells with <=2 filled neighbours bloom; the pool
-  //    (nb>=3) stays exactly 1, so the cast surface and mould-edge fit are untouched.
+  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1.
   const D=forgeDens;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
-    if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]){
-      let nb=0;
-      if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
-      if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
-      if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
-      const sparse=nb<=2?(1-nb/3):0;                 // nb0->1, nb1->0.67, nb2->0.33, nb>=3->0
-      D[ci]=1 + FORGE_BLOB*sparse*sparse;             // lone droplet blooms; pool stays 1
-    } else D[ci]=0;
+    const ix=cx-1,iy=cy-1,iz=cz-1;
+    D[fcIdx(cx,cy,cz)]=(ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)])?1:0;
   }
   // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
   //    liquid while keeping lone cells above the iso so droplets survive
@@ -6856,30 +6941,35 @@ function forgeGrindStep(){
 // their heat back up so they don't cool — so you can pull a molten pool into a corner or over a seat
 // wall for controlled casting without it freezing mid-move. Cells step one cell toward the cursor
 // along their largest remaining axis; farthest-first so they pack inward instead of colliding.
-const GATHER_R=2.6;
+const GATHER_R=3.0;
 function forgeGatherStep(){
   if (!fluxAim) return;
-  const R=GATHER_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z, HOT=FLOW_T*0.6;
+  const R=GATHER_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
   const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
   const cells=[];
   for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
     if (!fIn(ix,iy,iz)) continue; const id=fIdx(ix,iy,iz);
-    if (!fgFill[id]||fgLocked[id]||fgTemp[id]<HOT) continue;    // only already-heated, workable metal
+    // ONLY molten, unquenched metal is pulled. Metal that has cooled/SET (t<FLOW_T) is left
+    // alone even though it's unquenched, and quenched (locked) metal is immovable — exactly the
+    // "only affect hot metal" rule. Pulled metal is kept molten while held so it flows all the
+    // way to the cursor; on release it cools and sets where it landed (no bouncing).
+    if (!fgFill[id]||fgLocked[id]||fgTemp[id]<FLOW_T) continue;
     const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
-    fgTemp[id]=Math.max(fgTemp[id],FLOW_T+0.08);               // held hot: won't cool while gathered
+    fgTemp[id]=Math.max(fgTemp[id],FLOW_T+0.10);               // held hot: won't cool while gathered
     cells.push([d2,ix,iy,iz,id]); forgeDirty=true;
   }
-  cells.sort((a,b)=>b[0]-a[0]);                                 // farthest first -> migrate inward
+  cells.sort((a,b)=>b[0]-a[0]);                                 // farthest first -> migrate inward, no self-collision
   for (const c of cells){
-    const ix=c[1],iy=c[2],iz=c[3],id=c[4];
-    const dx=cx-ix, dy=cy-iy, dz=cz-iz;
-    const cand=[[Math.sign(dx),0,0,Math.abs(dx)],[0,Math.sign(dy),0,Math.abs(dy)],[0,0,Math.sign(dz),Math.abs(dz)]]
-      .filter(a=>a[3]>0.4).sort((a,b)=>b[3]-a[3]);
-    for (const o of cand){
-      const nx=ix+o[0],ny=iy+o[1],nz=iz+o[2];
+    let ix=c[1],iy=c[2],iz=c[3], id=fIdx(ix,iy,iz);
+    // step toward the cursor along EVERY axis with meaningful distance (up to 3 cells/hold-step),
+    // so a molten pool is drawn in briskly rather than creeping one axis at a time.
+    const axes=[[Math.abs(cx-ix),0],[Math.abs(cy-iy),1],[Math.abs(cz-iz),2]].filter(a=>a[0]>0.4).sort((a,b)=>b[0]-a[0]);
+    for (const a of axes){
+      const dx=a[1]===0?Math.sign(cx-ix):0, dy=a[1]===1?Math.sign(cy-iy):0, dz=a[1]===2?Math.sign(cz-iz):0;
+      const nx=ix+dx,ny=iy+dy,nz=iz+dz;
       if (!forgeAllowed(nx,ny,nz)) continue;
       const nd=fIdx(nx,ny,nz); if (fgFill[nd]) continue;
-      fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.08)); break;
+      fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.10)); ix=nx; iy=ny; iz=nz; id=nd;
     }
   }
 }
@@ -7303,10 +7393,10 @@ function finishForge(){
   made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
   made.forge=forgeSnapshot();                            // the persistent 3D voxel frame (drives the icon)
   if (mat.tin!==undefined) made.tin=mat.tin;             // bronze carries its hardness into mining
-  // The forged part PERSISTS — it lands on the Forged-parts shelf (with a screenshot icon
-  // rendered from its 3D data) where you can see it and install it, rather than being silently
-  // consumed. It also auto-installs if it beats what's fitted, so progression still just works.
-  forgedParts.unshift(made); if (forgedParts.length>FORGED_MAX) forgedParts.length=FORGED_MAX;
+  // The forged part PERSISTS — it lands on the Forged-parts shelf (with a live 3D thumbnail of
+  // the item) where you can see it and install it, rather than being silently consumed. It also
+  // auto-installs if it beats what's fitted, so progression still just works. No cap: keep them all.
+  forgedParts.unshift(made);
   const isSuit=m.part==='suitFrame';
   const cur=isSuit?suitFrames[m.system]:drill[m.part];
   const better=partScore(made)>partScore(cur);
@@ -7316,7 +7406,6 @@ function finishForge(){
   say(`${made.name} forged at ${Math.round(q*100)}% (T${mat.tier}). ${better?'Fitted — and on':'On'} the Forged-parts shelf to install.`+alloyNote,'good');
   updateMeters(); showView('forge');
 }
-const FORGED_MAX=8;                                       // how many forged parts the shelf keeps
 // Install a forged part into its slot (drill frame/bit or a suit-system frame). The shelf entry
 // IS the installed object, so re-installing another and back is lossless.
 function installForged(part, silent){
@@ -7652,10 +7741,32 @@ function openSeatPicker(key){
   pickerFor=(pickerFor===key)?null:key;
   renderLab();
 }
+// Frame/Bit picker: choose which FORGED part fills the drill slot (or run the factory default).
+// Reuses the seat-picker strip; the shelf entries carry a live thumbnail so you pick by sight.
+function openPartPicker(partKey){
+  const spec='part:'+partKey;
+  pickerFor=(pickerFor===spec)?null:spec;
+  renderLab();
+}
+function renderPartPicker(el, partKey){
+  const opts=forgedParts.filter(p=>p.part===partKey);
+  const cur = drill[partKey];
+  el.innerHTML=`<div class="pickWrap"><div class="pickHead">Drill ${partKey} — pick a forged part</div>
+    <div class="pickGrid">
+      ${opts.length?opts.map(p=>`<button class="pickCard${cur===p?' on':''}" data-pinstall="${p.id}">
+        <canvas class="thumb3d" width="140" height="140" data-thumb="forge:${p.id}"></canvas>
+        <b>${p.material||''}</b><span>${Math.round((p.q||0)*100)}% · T${p.tier}</span></button>`).join('')
+        :`<div class="sub" style="padding:6px">No forged ${partKey}s yet. Forge one at the press.</div>`}
+    </div></div>`;
+  el.querySelectorAll('[data-pinstall]').forEach(b=>{ b.onclick=()=>{
+    const p=forgedParts.find(x=>String(x.id)===b.dataset.pinstall); if (p){ pickerFor=null; installForged(p,false); } }; });
+  mountThumbs(el);
+}
 function renderSeatPicker(){
   const el=document.getElementById('seatPicker');
   if (!el) return;
   if (!pickerFor){ el.innerHTML=''; return; }
+  if (pickerFor.startsWith('part:')){ renderPartPicker(el, pickerFor.slice(5)); return; }
   const isCore=pickerFor==='core';
   const fitted=isCore?drill.core:drill.power;
   /* Any CLEANED core is eligible; the one sitting in the other seat is not (a
@@ -7701,6 +7812,7 @@ function renderSeatPicker(){
   });
 }
 function renderLab(){
+  clearThumbs();
   const dp=drillPower();
   const parts=[
     ['Frame',drill.frame.name,drill.frame.q,drill.frame.tier],
@@ -7713,27 +7825,32 @@ function renderLab(){
      planned. An empty core seat runs on its factory shim, so the drill always
      works; the shim is simply the worst part in the game. */
   const seats=[
-    {key:'frame', name:'Frame',      rec:drill.frame, swap:false},
-    {key:'bit',   name:'Bit',        rec:drill.bit,   swap:false},
-    {key:'core',  name:'Drill core', rec:drill.core,  swap:true},
-    {key:'power', name:'Power core', rec:drill.power, swap:true}
+    {key:'frame', name:'Drill frame', rec:drill.frame, kind:'part'},
+    {key:'bit',   name:'Drill bit',   rec:drill.bit,   kind:'part'},
+    {key:'core',  name:'Drill core',  rec:drill.core,  kind:'core'},
+    {key:'power', name:'Power core',  rec:drill.power, kind:'core'}
   ];
   document.getElementById('drillPanel').innerHTML=
     `<div class="drillSeats">`+seats.map(st=>{
       const r=st.rec;
       const tier=r?(r.tier||0):0;
       const out=r?(r.q!==undefined?r.q:r.output):0;
-      const label=st.swap
+      const isCore=st.kind==='core';
+      const label=isCore
         ? (r?`${TIERS[tier].name} ${st.key==='core'?'carve':'cell'}`:'factory shim')
-        : r.name;
-      return `<div class="dseat${(st.swap&&!r)?' empty':''}">
-        <div class="dseatArt">${seatGlyph(st.key,tier,out)}</div>
+        : (r?r.name:'factory default');
+      // frame/bit have a live 3D thumb once forged; empty core seats show the placeholder glyph
+      const art=(!isCore&&r&&r.forge)?`<canvas class="thumb3d" width="140" height="140" data-thumb="drill:${st.key}"></canvas>`
+        : (isCore&&r)?`<canvas class="thumb3d" width="140" height="140" data-thumb="drill:${st.key}"></canvas>`
+        : seatGlyph(st.key,tier,out);
+      return `<div class="dseat${(isCore&&!r)?' empty':''}">
+        <div class="dseatArt">${art}</div>
         <div class="dseatBody">
           <div class="dseatName">${st.name}${tier?`<span class="badge">T${'I'.repeat(tier)}</span>`:''}</div>
           <div class="dseatVal">${label}</div>
           ${qbar(out)}
         </div>
-        ${st.swap?`<button class="dseatBtn" data-seat="${st.key}">${r?'change':'fit'}</button>`:''}
+        <button class="dseatBtn" data-seat="${st.key}" data-kind="${st.kind}">${r?'change':'fit'}</button>
       </div>`;
     }).join('')+`</div>
     <div id="seatPicker"></div>
@@ -7804,11 +7921,7 @@ function renderLab(){
           ${got.length?'— '+got.join(' · '):''}
           ${next?`<span style="color:var(--dim)"> (next at ${Math.round(next[0]*100)}%: ${next[1]})</span>`:''}</div>`;
       })()}
-    </div></div>`+
-    (drill.core?`<div class="card" style="margin-top:6px"><div class="info">Seated drill core
-      <div class="sub">housing contact <b style="color:var(--amber)">${Math.round((drill.core.seat||0)*100)}%</b>
-      — pull it out to re-seat at a different orientation</div></div>
-      <button class="act" id="unseatCore">Remove</button></div>`:'');
+    </div></div>`;
   /* Each system reads like the drill: a frame seat and a core seat side by side,
      with the system running at whichever half is weaker. */
   document.getElementById('suitPanel').innerHTML=
@@ -7826,7 +7939,7 @@ function renderLab(){
           <span class="sysEff">${eff}</span></div>
         <div class="sysSeats">
           <div class="dseat${f?'':' empty'}">
-            <div class="dseatArt">${seatGlyph('frame',f?f.tier:0,f?(f.q!==undefined?f.q:f.output):0)}</div>
+            <div class="dseatArt">${f&&f.forge?`<canvas class="thumb3d" width="140" height="140" data-thumb="suit:${sys.key}"></canvas>`:seatGlyph('frame',f?f.tier:0,f?(f.q!==undefined?f.q:f.output):0)}</div>
             <div class="dseatBody">
               <div class="dseatName">Frame${weak==='frame'?' <span class="weakTag">limiting</span>':''}</div>
               <div class="dseatVal">${f?f.name:'none forged'}</div>
@@ -7849,9 +7962,11 @@ function renderLab(){
      shortcut list that used to live here has gone: it duplicated navigation and
      contradicted the lab being a place you walk into. */
   document.querySelectorAll('.dseatBtn').forEach(b=>{
-    b.onclick=()=>openSeatPicker(b.dataset.seat);
+    b.onclick=()=> b.dataset.kind==='part' ? openPartPicker(b.dataset.seat) : openSeatPicker(b.dataset.seat);
   });
   renderSeatPicker();
+  mountThumbs(document.getElementById('drillPanel'));
+  mountThumbs(document.getElementById('suitPanel'));
   document.getElementById('builtCount').textContent=built;
   document.getElementById('builtSub').textContent=
     builtNames.length?builtNames.slice(-3).join(' · '):'none yet';
@@ -7904,10 +8019,18 @@ function removeCore(core){
 function coreCard(core,clean){
   const div=document.createElement('div');
   div.className='card t'+core.tier+(core===activeCore?' active':'');
+  div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
   const at=seatWhere(core);
-  div.innerHTML=`<div class="info">${core.name}`+
+  // a slowly-rotating 3D thumbnail of the ACTUAL carved core (once it has geometry)
+  if (core.cells&&core.cells.some(isCrystal)){
+    const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=64;
+    cv.style.cssText='width:64px;height:64px;flex:0 0 64px'; div.appendChild(cv); registerThumb(cv, coreThumbMesh(core));
+  }
+  const infoWrap=document.createElement('div'); infoWrap.style.flex='1';
+  infoWrap.innerHTML=`<div class="info">${core.name}`+
     (at?`<span class="badge" style="color:var(--crystal)">seated: ${at}</span>`:'')+
     `<div class="sub">${coreGlowText(core)}</div></div>`;
+  div.appendChild(infoWrap);
   const btns=document.createElement('div');
   btns.className='cardBtns';
   const clamp=document.createElement('button');
@@ -7933,6 +8056,7 @@ function coreCard(core,clean){
   return div;
 }
 function renderLapidary(){
+  clearThumbs();
   const raw=inventory.filter(c=>!coreIsClean(c));
   const clean=inventory.filter(c=>coreIsClean(c));
   const rawList=document.getElementById('rawList');
@@ -8805,6 +8929,7 @@ let t=0, lastNow=0;
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
   renderer.render(scene,camera);
+  if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   frameStats(now);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's
