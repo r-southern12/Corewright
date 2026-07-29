@@ -5918,8 +5918,11 @@ function _voxThumb(list, mat){                 // list: [ [x,y,z,size,hex], ... 
   return inst;
 }
 const _thumbQI=new THREE.Quaternion();
-const FRAME_THUMB_FILL=4.6;   // frame fills the view (zoomed IN)
-const CORE_THUMB_FILL=2.9;    // cores sit smaller with margin (zoomed OUT)
+// Fills are sized so the WHOLE item stays visible with only a thin border, even at the 45° point
+// of the rotation (a box's silhouette widens to ~1.4x turning, so we leave headroom under the
+// ~3.7-unit view height rather than filling it and clipping the corners).
+const FRAME_THUMB_FILL=2.6;
+const CORE_THUMB_FILL=2.6;
 // Both builders CENTRE on the actual filled-cell bounding box (not the grid centre), so a part
 // that occupies only part of its grid still sits dead-centre, and scale to a target fill.
 function forgeThumbMesh(part){
@@ -5934,16 +5937,20 @@ function forgeThumbMesh(part){
   return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.55,roughness:0.42}));
 }
 function coreThumbMesh(core){
-  if (!core||!core.cells) return null;
-  const cells=core.cells.filter(isCrystal); if (!cells.length) return null;
+  if (!core||!core.cells||!core.cells.length) return null;
+  const cells=core.cells;   // ALL cells — an uncleaned rough must show the DIRT/matrix still on it,
   const H=coreHue(core), hot=new THREE.Color(0xffd070), c=new THREE.Color();
   let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9], ssum=0;
   for (const s of cells){ const q=[s.px,s.py,s.pz]; for (let a=0;a<3;a++){ if(q[a]<mn[a])mn[a]=q[a]; if(q[a]>mx[a])mx[a]=q[a]; } ssum+=s.size; }
   const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
   const ext=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])+ssum/cells.length, scl=CORE_THUMB_FILL/(ext||1), list=[];
-  for (const s of cells){ c.setHex(H.base); if (s.conc>0.45) c.lerp(hot,Math.min(1,(s.conc-0.45)*1.6));
+  for (const s of cells){
+    // matrix cells are the rock/soil crust to be cleaned off — render them as rough dirt so a
+    // prospected-but-dirty rough reads as buried, not a clean crystal.
+    if (isMatrix(s)){ c.setHex(0x6a5a44).multiplyScalar(0.72+0.5*(s.shade||0.4)); }
+    else { c.setHex(H.base); if (s.conc>0.45) c.lerp(hot,Math.min(1,(s.conc-0.45)*1.6)); }
     list.push([(s.px-ctr[0])*scl,(s.py-ctr[1])*scl,(s.pz-ctr[2])*scl,Math.max(0.12,s.size*scl),c.getHex()]); }
-  return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.25,roughness:0.35,emissive:0x120a04,emissiveIntensity:0.3}));
+  return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.2,roughness:0.5,emissive:0x0a0704,emissiveIntensity:0.22}));
 }
 // register/clear the live thumbnails currently on screen
 function clearThumbs(){ for (const t of thumbRegistry){ if (t.mesh){ t.mesh.geometry===_thumbCubeGeo||t.mesh.geometry.dispose(); t.mesh.material.dispose&&t.mesh.material.dispose(); } } thumbRegistry.length=0; }
@@ -6579,6 +6586,11 @@ forgeSurfMat.onBeforeCompile=sh=>{
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
+// A SMALL bloom for isolated airborne droplets only — enough that a falling slough reads as a
+// little liquid bead instead of a sub-cell point, but nowhere near the fat clunky blob of the
+// first attempt (that was ~4x and fattened the cast surface too). Gated to the chamber + lone
+// cells, so the pool/cast is never touched.
+const FORGE_BLOB=1.1;
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
@@ -6742,11 +6754,24 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
 function syncForgeMesh(){
-  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1.
-  const D=forgeDens;
+  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1;
+  //    an ISOLATED cell high in the chamber (a free-falling slough) gets a SMALL bloom so it
+  //    renders as a little bead rather than a point. Only chamber cells with <=1 filled neighbour
+  //    bloom, and only gently, so the cast pool and mould fit are completely untouched.
+  const D=forgeDens, blobLo=forgeRim-1;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    const ix=cx-1,iy=cy-1,iz=cz-1;
-    D[fcIdx(cx,cy,cz)]=(ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)])?1:0;
+    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
+    if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]){
+      let v=1;
+      if (iy>=blobLo){
+        let nb=0;
+        if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
+        if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
+        if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
+        if (nb<=1) v=1+FORGE_BLOB*(nb===0?1:0.4);
+      }
+      D[ci]=v;
+    } else D[ci]=0;
   }
   // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
   //    liquid while keeping lone cells above the iso so droplets survive
@@ -8050,8 +8075,8 @@ function coreCard(core,clean){
   div.className='card t'+core.tier+(core===activeCore?' active':'');
   div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
   const at=seatWhere(core);
-  // a slowly-rotating 3D thumbnail of the ACTUAL carved core (once it has geometry)
-  if (core.cells&&core.cells.some(isCrystal)){
+  // a slowly-rotating 3D thumbnail of the ACTUAL core (crystal + any dirt/matrix still on it)
+  if (core.cells&&core.cells.length){
     const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=64;
     cv.style.cssText='width:64px;height:64px;flex:0 0 64px'; div.appendChild(cv); registerThumb(cv, coreThumbMesh(core));
   }
