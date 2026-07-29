@@ -587,7 +587,7 @@
   /* The FEED bar — the player-composed ore queue along the top of the screen. Stores on the
      left (click to add / load), the queued ore chunks on the right (click to drop & melt). */
   #fbFeed{position:fixed;left:50%;top:52px;transform:translateX(-50%);z-index:9;display:none;
-    align-items:center;gap:10px;max-width:96vw;padding:6px 12px;
+    align-items:center;gap:10px;width:840px;max-width:96vw;padding:6px 12px;
     background:linear-gradient(rgba(9,12,22,.96),rgba(9,12,22,.90));
     border:1px solid rgba(200,154,82,.24);border-top:none;
     clip-path:polygon(0 0,100% 0,calc(100% - 12px) 100%,12px 100%)}
@@ -1187,7 +1187,13 @@ function coreIsClean(core){
   return matrixResidueOk(core);
 }
 function markCleanIfDone(core){
-  if (core && !core.clean && core.cells && matrixResidueOk(core)) core.clean=true;
+  if (core && !core.clean && core.cells && matrixResidueOk(core)){
+    core.clean=true;
+    // record which component silhouette it was shaped toward, so a Drill Core can't later be
+    // seated as a Power Cell (different shape/hot-spot) and vice versa. Untagged legacy cores
+    // stay accepted anywhere.
+    if (core.comp===undefined) core.comp=comp;
+  }
 }
 /* CORE_HUES — the fixed palette a core's material can belong to. A core is
    assigned ONE hue at generation (deterministic from its seed), and that hue is
@@ -6421,6 +6427,7 @@ forgeSurfMat.onBeforeCompile=sh=>{
 const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
+const FORGE_BLOB=4;   // how fat an isolated droplet's density is (renders a lone slough as a blob, not a point)
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
@@ -6574,11 +6581,22 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
 function syncForgeMesh(){
-  // 1) cell-centred density with an empty border (corner c -> cell c-1)
+  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1 —
+  //    BUT an isolated cell (a falling slough / a stranded droplet) is given a fatter density so
+  //    the isosurface blooms into a visible BLOB a couple of cells across, instead of a sub-cell
+  //    point you couldn't even see fall. Only cells with <=2 filled neighbours bloom; the pool
+  //    (nb>=3) stays exactly 1, so the cast surface and mould-edge fit are untouched.
   const D=forgeDens;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    const ix=cx-1,iy=cy-1,iz=cz-1;
-    D[fcIdx(cx,cy,cz)]=(ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)])?1:0;
+    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
+    if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]){
+      let nb=0;
+      if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
+      if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
+      if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
+      const sparse=nb<=2?(1-nb/3):0;                 // nb0->1, nb1->0.67, nb2->0.33, nb>=3->0
+      D[ci]=1 + FORGE_BLOB*sparse*sparse;             // lone droplet blooms; pool stays 1
+    } else D[ci]=0;
   }
   // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
   //    liquid while keeping lone cells above the iso so droplets survive
@@ -7307,11 +7325,13 @@ function renderForgeFeed(){
     // The crucible melts its alloy down from TWO of the ten ores in the feed (not from stores):
     // pick two un-used feed chunks to load the pot.
     const canLoad = forgeCrucHeat<=0 && forgeCrucLoad.length<2 && forgeCrucChargesLeft>0;
-    const feedChips=forgeFeed.map((f,i)=>{ const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
+    const feedChips=Array.from({length:FORGE_NUGGETS},(_,i)=>{ const f=forgeFeed[i];
+      if (!f) return `<span class="fbSlot empty" title="empty"></span>`;
+      const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
       const loadable=canLoad && !f.used;
       return `<button class="fbSlot${f.used?' used':''}" ${loadable?`data-act="crucfeed" data-idx="${i}"`:''} `+
         `title="${info.label}${f.used?' — used':loadable?' — click to load the pot':''}"><span class="fbSw" style="background:${info.col}"></span></button>`;
-    }).join('') || '<span class="fbLbl" style="color:var(--dim)">feed is empty — add ore with the torch tool</span>';
+    }).join('');
     const slot=(i)=>{ const k=forgeCrucLoad[i];
       if (!k) return `<span class="fbSlot empty" title="empty crucible slot"></span>`;
       const info=ORE_INFO[k]||{col:'#999'}; return `<span class="fbSlot" title="${info.label}"><span class="fbSw" style="background:${info.col}"></span></span>`; };
@@ -7326,13 +7346,17 @@ function renderForgeFeed(){
       `<span class="fbLbl" style="color:var(--crystal)">${state}</span></div>`+
       `<span class="fbSep"></span><span class="fbLbl" style="color:var(--crystal)">${forgeCrucChargesLeft} charge${forgeCrucChargesLeft===1?'':'s'}</span>`;
   } else {
-    const slots=forgeFeed.map((f,i)=>{ const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
+    // always render all FORGE_NUGGETS slots (empty ones as placeholders) so the bar is a fixed
+    // full length from the start rather than growing as ore is queued.
+    const slots=Array.from({length:FORGE_NUGGETS},(_,i)=>{ const f=forgeFeed[i];
+      if (!f) return `<span class="fbSlot empty" title="empty — add ore from stores"></span>`;
+      const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
       return `<button class="fbSlot${f.used?' used':''}" data-act="drop" data-idx="${i}" title="${info.label}${f.used?' — melted':' — click to drop & melt'}">`+
         `<span class="fbSw" style="background:${info.col}"></span></button>`; }).join('');
     const pending=forgeFeed.filter(f=>!f.used).length;
     html = `<span class="fbLbl">Stores</span><div class="fbGrp">${storeChips('feed')}</div>`+
       `<span class="fbSep"></span><span class="fbLbl">Feed ${forgeFeed.length}/${FORGE_NUGGETS}</span>`+
-      `<div class="fbGrp">${slots||'<span class="fbLbl" style="color:var(--dim)">add ore →</span>'}</div>`+
+      `<div class="fbGrp">${slots}</div>`+
       (pending?`<button class="fbMini" data-act="clear" title="clear un-melted ore from the queue">clear</button>`:'');
   }
   el.innerHTML=html;
@@ -7569,7 +7593,10 @@ function renderSeatPicker(){
      from a field — stored cores only carry their geometry, and the score comes
      from that same geometry wherever it is asked for. */
   const otherId=isCore?(drill.power&&drill.power.id):(drill.core&&drill.core.id);
-  const opts=inventory.filter(c=>c.clean&&c.cells&&c.id!==otherId)
+  // the drill core seat wants a Drill Core (comp 'drill'); the power seat wants a Power Cell
+  // (comp 'cell'). A core carved to the other shape is NOT eligible. Untagged legacy cores pass.
+  const wantComp=isCore?'drill':'cell';
+  const opts=inventory.filter(c=>c.clean&&c.cells&&c.id!==otherId && (!c.comp||c.comp===wantComp))
     .map(c=>({c,out:forgeOutputOf(c)}))
     .sort((a,b)=>b.out-a.out);
   el.innerHTML=`<div class="pickWrap"><div class="pickHead">
@@ -8487,14 +8514,14 @@ let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
 function packCore(c){
   return {i:c.id,s:c.seed,t:c.tier,p:q3(c.polish),h:c.hots,cl:c.clean?1:0,
-    hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,
+    hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,cp:c.comp,
     hu:c.hueIdx===undefined?-2:c.hueIdx, h2:c.hueIdx2===undefined?-2:c.hueIdx2,
     c:c.cells?c.cells.map(x=>[q3(x.px),q3(x.py),q3(x.pz),q3(x.size),q3(x.conc),q3(x.shade),
       x.mat||0,x.bev||0,x.pol||0,x.scar?1:0,x.tier||0,x.frag?1:0]):null};
 }
 function unpackCore(o){
   return {id:o.i,seed:o.s,tier:o.t,polish:o.p||0,hots:o.h||0,clean:!!o.cl,
-    hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,
+    hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,comp:o.cp,
     hueIdx:(o.hu===undefined||o.hu===-2)?undefined:o.hu,
     hueIdx2:(o.h2===undefined||o.h2===-2)?undefined:o.h2,
     cells:o.c?o.c.map(a=>{
