@@ -6307,6 +6307,9 @@ const fgFill=new Uint8Array(FG_N);     // 1 = metal present
 const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
 const fgMould=new Uint8Array(FG_N);    // 1 = box interior that SHOULD fill with framework metal
 const fgSeat=new Uint8Array(FG_N);     // 1 = core socket void — metal never enters (see forgeAllowed)
+const fgFootprint=new Uint8Array(FGW*FGD); // 1 = a column that is part of the box (mould or seat) —
+                                       // the chamber above it accepts metal; the inset border does NOT,
+                                       // so metal can't perch on a lip outside the template's top edge.
 const fgLocked=new Uint8Array(FG_N);   // 1 = QUENCHED metal: frozen in place, immune to heat/level/flow
 const fgMetal=new Uint8Array(FG_N);    // metal TYPE per cell: 0 = copper framework, 1 = crucible ALLOY.
                                        // Travels with the cell through the flow (fMove) so the alloy
@@ -6387,7 +6390,7 @@ function forgeSeatInsideP(px,py,pz){
 // without a keep-out chimney. Also sets forgeRim: the open-chamber floor, one row above
 // the box's highest cell in this pose (7 lying, 9 standing).
 function forgeBuildMould(){
-  fgMould.fill(0); fgSeat.fill(0); fgMouldTotal=0;
+  fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; forgeCy=forgeCyFor(forgeRot);
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
@@ -6396,6 +6399,7 @@ function forgeBuildMould(){
     const id=fIdx(gx,gy,gz);
     if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
     else { fgMould[id]=1; fgMouldTotal++; }
+    fgFootprint[gx+gz*FGW]=1;                 // this column belongs to the box
     if (gy>topGy) topGy=gy;
   }
   forgeRim=topGy+1;
@@ -7020,6 +7024,22 @@ function forgeAimCell(sx,sy){
   }
   return null;
 }
+// Is the cursor pointing at the TEMPLATE box region (whether or not there's metal there yet)?
+// Used by the level tool so pressing anywhere over the template levels, even when the metal is
+// low and there's nothing to raycast — and pressing OUTSIDE it rotates the bench instead.
+function forgeOverTemplate(sx,sy){
+  ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
+  _fro.copy(ray.ray.origin); forgeGroup.worldToLocal(_fro);
+  _frp.copy(ray.ray.origin).add(ray.ray.direction); forgeGroup.worldToLocal(_frp);
+  _frd.subVectors(_frp,_fro).normalize();
+  const step=FVOX*0.4, maxT=(FGW+FGH+FGD)*FVOX*1.3;
+  for (let tt=0; tt<maxT; tt+=step){
+    _faim.copy(_fro).addScaledVector(_frd,tt);
+    const c=_l2g(_faim), ix=Math.round(c.x), iy=Math.round(c.y), iz=Math.round(c.z);
+    if (fIn(ix,iy,iz) && iy<forgeRim && fgFootprint[ix+iz*FGW]) return true;   // ray crosses the box footprint
+  }
+  return false;
+}
 // apply the torch: warm a 3D sphere of cells centred on the surface hit. Holding
 // on one spot drives that patch molten and it sloughs off; the sim re-aims at
 // the receding surface each tick, so the melt eats downward through the stone.
@@ -7073,11 +7093,13 @@ function forgeLevelRelax(){
   for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
     const h=COL_TOP(ix,iz); if (h<0) continue;
     const id=fIdx(ix,h,iz);
-    if (fgLocked[id] || fgTemp[id]<FLOW_T*0.5) continue;   // only push warm, workable metal
-    // steepest descent: the neighbouring column that is at least 2 cells shorter
-    let bestNd=-1, bestH=h-1;
+    if (fgLocked[id] || fgTemp[id]<FLOW_T*0.4) continue;   // only push warm, workable metal
+    // move the top cell onto ANY neighbouring column that is even one cell shorter — an aggressive
+    // relaxation so the surface visibly sloshes level under the plane (the "oscillation" that the
+    // old passive flow gave). Steepest descent (lowest neighbour wins) so it converges flat.
+    let bestNd=-1, bestH=h;
     for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-      if (!fIn(nx,0,nz) || !fgMould[fIdx(nx,0,nz)]) continue;   // neighbour must be a real box column
+      if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;   // neighbour must be a real box column
       const nh=COL_TOP(nx,nz);
       if (nh<bestH){ const tgt=fIdx(nx,nh+1,nz);
         if (forgeAllowed(nx,nh+1,nz) && !fgFill[tgt]){ bestH=nh; bestNd=tgt; } }
@@ -7105,15 +7127,17 @@ function forgeGrindStep(){
 }
 // The TORCH also NUDGES: while you hold it, molten metal near the beam is pushed one cell directly
 // AWAY from the cursor (in the pool plane), so you can corral a pool by sweeping the torch behind
-// it. Only already-molten (moving) metal is pushed; cold ore and quenched metal stay put. Nearest-
-// first so the near cells shove outward without piling into each other.
-const NUDGE_R=3.2;
+// it. Only molten metal INSIDE THE TEMPLATE (below the rim) is corralled — melting the raw ore up
+// in the chamber shouldn't fling it around. It's SLOW (throttled to 1/5 the sim rate in the tick)
+// and moves each cell only ONE space per application. Nearest cells shove outward first.
+const NUDGE_R=2.6;
 function forgeTorchNudge(){
   if (!fluxAim) return;
   const R=NUDGE_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
   const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
   const cells=[];
   for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
+    if (iy>=forgeRim) continue;                                  // corral only INSIDE the template, not the raw ore
     if (!fIn(ix,iy,iz)) continue; const id=fIdx(ix,iy,iz);
     if (!fgFill[id]||fgLocked[id]||fgTemp[id]<FLOW_T) continue;   // only hot, moving metal is pushed
     const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2||d2<0.02) continue;
@@ -7264,7 +7288,9 @@ function forgeFlowStep(){
     if (iy>0){
       const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
       if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
-        if ((forgeSpin % FALL_EVERY)!==0) continue;           // slow, trackable descent everywhere
+        // The seat CHUTE falls PROMPTLY (no throttle) so metal never catches on the socket's top
+        // face — it drops straight through. A free drip elsewhere is throttled so it's trackable.
+        if (!inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
@@ -7304,11 +7330,11 @@ function forgeFlowStep(){
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
 // how fast the pool levels (the temperature-throttled lateral spread).
-const FALL_EVERY=10;   // sim steps per cell of fall (~0.33s/cell at FSTEP) — slow, watchable everywhere
+const FALL_EVERY=5;    // sim steps per cell of fall (~0.17s/cell at FSTEP) — slow enough to watch
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
-  if (iy>=forgeRim) return true;            // open chamber above the box
+  if (iy>=forgeRim) return fgFootprint[ix+iz*FGW]===1;  // chamber: ONLY above the box footprint (no lip on the inset border)
   return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: box interior (socket already removed)
 }
 // Break-off cleanup. Melting a stone leaves small bits stranded in the air — not
@@ -7380,7 +7406,7 @@ function forgeSimTick(){
   forgeAccum+=dt;
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
-    if (fluxOn){ fluxHeat(); forgeTorchNudge(); }                 // torch heats AND corrals molten metal away from the cursor
+    if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
     if (forgeLevelHold){ forgeLevelHeat(); forgeLevelRelax(); }   // heat the slab AND push metal laterally to the low corners
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
@@ -7601,7 +7627,7 @@ function updateForgeHud(){
     : forgeCrucHeat<1 ? 'Crucible loaded — hold ANYWHERE to HEAT it ('+Math.round(forgeCrucHeat*100)+'%); at molten it can pour.'
     : 'Crucible molten — hold on the frame; the pot TIPS for a moment, then pours ALLOY around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
-    forgeTool==='level' ? 'Leveling: press-and-hold ON the metal to heat the glowing slab, drag up/down to sweep it through — it melts at the slab and finds its level. Drag EMPTY space to turn the bench.'
+    forgeTool==='level' ? 'Leveling: press-and-hold anywhere OVER the template and drag up/down to sweep the glowing slab through the metal — it melts at the slab and sloshes level. Press OUTSIDE the template to turn the bench.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
     : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
@@ -7716,9 +7742,10 @@ function forgeDown(x,y){
   const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
   const aim=forgeAimCell(x,y);
   if (forgeTool==='level'){
-    // press ON the metal to level (drag up/down); press on EMPTY space to rotate the view — so the
-    // bench can still be turned while the leveller is out (it couldn't before).
-    if (aim){ forgeLevelHold=true; forgePY=y; }
+    // press anywhere over the TEMPLATE to level (drag up/down) — even with no metal there yet;
+    // press OUTSIDE the template to rotate the view. (Before it needed a metal hit, which made the
+    // slab impossible to grab when the pour was low.)
+    if (forgeOverTemplate(x,y)){ forgeLevelHold=true; forgePY=y; }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
