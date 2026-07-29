@@ -587,6 +587,8 @@
   #fbBar{display:inline-block;width:180px;height:8px;border:1px solid var(--line);
     background:#0d1122;vertical-align:middle;margin:0 10px;overflow:hidden}
   #fbFill{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--amber),var(--crystal));transition:width .12s}
+  .fbViewCtl{display:inline-flex;gap:2px;margin:0 6px;vertical-align:middle}
+  .fbViewCtl .act{padding:4px 8px;min-width:0;font-size:15px;line-height:1}
 
   /* The FEED bar — the player-composed ore queue along the top of the screen. Stores on the
      left (click to add / load), the queued ore chunks on the right (click to drop & melt). */
@@ -830,8 +832,13 @@
     <span id="fbStat" class="mono"></span>
     <span id="fbBar"><span id="fbFill"></span></span>
     <button class="act" id="fbQuench">❄ Quench</button>
-    <button class="act" id="fbTurn">⟳ Turn</button>
-    <button class="act" id="fbRoll">↻ Roll</button>
+    <span class="fbViewCtl">
+      <button class="act" id="fbTurnBack" title="Turn back (X −90°)">⟲</button>
+      <button class="act" id="fbTurn" title="Turn (X +90°)">⟳</button>
+      <button class="act" id="fbRollBack" title="Roll back (Z −90°)">↺</button>
+      <button class="act" id="fbRoll" title="Roll (Z +90°)">↻</button>
+      <button class="act" id="fbReset" title="Reset to lying/upright">⌂</button>
+    </span>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -7294,16 +7301,20 @@ function forgeFlowStep(){
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
-    // Inside the seat but blocked below: shed sideways OUT into the box so the socket stays a clean
-    // void (this is a necessity of the one-way chute, not a passive spread). Never move up.
-    if (inSeat){
+    // A molten cell that can't fall and ISN'T resting in a proper box cell — it's STRANDED in the
+    // chamber or perched on the template edge — sheds sideways toward the box so it isn't stuck
+    // forever. This is what lets you MELT a piece caught above the template and have it flow in
+    // (before, a caught piece ignored every tool). A proper pool cell (below the rim, in the
+    // footprint) just STAYS when it can't fall — no bounce.
+    const restOK = !inSeat && iy<forgeRim && fgFootprint[ix+iz*FGW];
+    if (!restOK){
       const order=(ix+iz+forgeSpin)&3;
       for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
         if (forgeAllowed(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)]){ fMove(id,fIdx(nx,iy-1,nz),t); moved=true; break; }
         if (forgeAllowed(nx,iy,nz)   && !fgFill[fIdx(nx,iy,nz)]){   fMove(id,fIdx(nx,iy,nz),t);   moved=true; break; } }
       continue;
     }
-    // otherwise: it can't fall — it STAYS. Use a tool to move it laterally.
+    // otherwise: a proper pool cell that can't fall — it STAYS. Use a tool to move it laterally.
   }
   // (No spill/flash mechanic: metal that reaches an edge just stops there. Wastage as
   // a semi-random loss wasn't wanted — with a measured nugget feed you control how
@@ -7407,7 +7418,7 @@ function forgeSimTick(){
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
-    if (forgeLevelHold){ forgeLevelHeat(); forgeLevelRelax(); }   // heat the slab AND push metal laterally to the low corners
+    if (forgeLevelHold){ forgeLevelHeat(); if (forgeSpin%5===0) forgeLevelRelax(); }   // level at 1/5 rate (matches the torch corral) so it isn't a frantic oscillation
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7513,11 +7524,13 @@ function forgeReorient(newRot, msg){
   forgeDirty=true; syncForgeMesh(); updateForgeHud();
   if (typeof say==='function' && msg) say(msg,'good');
 }
-// Turn: tip the box 90° about grid X (lying <-> standing, cycling through the four X-poses).
+// Turn/Roll the box 90° about grid X / grid Z, forward or back. Reset returns it to lying and
+// re-centres the camera. (Transpose of a 90° rotation is its inverse = the "back" direction.)
 function forgeToggleOrient(){ forgeReorient(_mMul(ROT_X90, forgeRot), 'Template turned.'); }
-// Roll: roll the box 90° about grid Z, bringing the next seat wall uppermost for controlled
-// casting — four rolls return to where you started, so every wall can be poured onto in turn.
-function forgeRollOrient(){ forgeReorient(_mMul(ROT_Z90, forgeRot), 'Template rolled 90° — next wall up.'); }
+function forgeTurnBack(){     forgeReorient(_mMul(_mT(ROT_X90), forgeRot), 'Template turned back.'); }
+function forgeRollOrient(){   forgeReorient(_mMul(ROT_Z90, forgeRot), 'Template rolled — next wall up.'); }
+function forgeRollBack(){     forgeReorient(_mMul(_mT(ROT_Z90), forgeRot), 'Template rolled back.'); }
+function forgeResetOrient(){  forgeReorient(MAT_I.slice(), 'Template reset — lying, upright.'); forgeGroup.rotation.set(0.15,0,0); }
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
 // Finish the part forged at the PRESS. Generalised from the old instant-forge button so
@@ -8625,7 +8638,10 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
+document.getElementById('fbTurnBack').onclick=forgeTurnBack;
 document.getElementById('fbRoll').onclick=forgeRollOrient;
+document.getElementById('fbRollBack').onclick=forgeRollBack;
+document.getElementById('fbReset').onclick=forgeResetOrient;
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbLeave').onclick=()=>showView('forge');
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
