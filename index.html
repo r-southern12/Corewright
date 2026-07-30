@@ -7219,32 +7219,42 @@ function forgeLevelHeat(){
 // migrates toward the low corners and the surface flattens under the plane. Only workable
 // (not-quenched, warm) top cells move; the socket void and mould walls are respected.
 const COL_TOP=(ix,iz)=>{ for (let iy=forgeRim-1; iy>=0; iy--){ const id=fIdx(ix,iy,iz); if (fgFill[id]&&fgMould[id]) return iy; } return -1; };
-// Lowest empty allowed cell in a column, below `h` — where a perched top cell should drop to.
+// Lowest empty allowed cell in a column, below `h` — where a cell above a gap should drop to.
 const COL_GAP=(ix,iz,h)=>{ for (let ny=0; ny<h; ny++) if (!fgFill[fIdx(ix,ny,iz)] && forgeAllowed(ix,ny,iz)) return ny; return -1; };
+const LEVEL_ITERS=6;                    // settle sweeps per relax call — high, so a pile collapses to the lowest point fast, not a cell per frame
 function forgeLevelRelax(){
-  const order=forgeSpin&3;
-  for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-    if (!fgFootprint[ix+iz*FGW]) continue;
-    const h=COL_TOP(ix,iz); if (h<0) continue;
-    const id=fIdx(ix,h,iz); if (fgLocked[id]) continue;
-    // 1) BRING IT LOWER. If the column has an empty allowed cell BELOW its top — metal perched on a
-    //    thread ledge or bridging a gap — drop the top cell straight down to the LOWEST such cell.
-    //    The plane presses mechanically, so this works even on not-fully-molten metal: that is what
-    //    "bring materials lower" needs. The old tool only nudged the very top sideways and left piles
-    //    stranded up high. A single move can now cover many cells of drop, not one.
-    const low=COL_GAP(ix,iz,h);
-    if (low>=0){ fMove(id, fIdx(ix,low,iz), Math.max(fgTemp[id],FLOW_T+0.05)); forgeDirty=true; continue; }
-    // 2) LEVEL. Once the column is solid to its floor, a warm top cell slumps onto the LOWEST
-    //    shorter neighbour (steepest descent, so it converges flat rather than oscillating).
-    if (fgTemp[id]<FLOW_T*0.4) continue;
-    let bestNd=-1, bestH=h;
-    for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-      if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;   // neighbour must be a real box column
-      const nh=COL_TOP(nx,nz);
-      if (nh<bestH){ const tgt=fIdx(nx,nh+1,nz);
-        if (forgeAllowed(nx,nh+1,nz) && !fgFill[tgt]){ bestH=nh; bestNd=tgt; } }
+  // Run several sweeps per call so metal reaches the LOWEST possible point aggressively rather than
+  // creeping one cell per frame. Each sweep = full column compaction + one steepest-descent level.
+  for (let iter=0; iter<LEVEL_ITERS; iter++){
+    let moved=false; const order=(forgeSpin+iter)&3;
+    // 1) COMPACT every column: drop EVERY non-locked filled cell to the lowest open cell beneath it,
+    //    so a whole perched pile falls to the floor in one pass (not just its top cell). Mechanical —
+    //    the plane presses metal down, so it works even on metal that isn't fully molten. This is the
+    //    aggressive "bring it as low as it can go" the tool needs.
+    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+      if (!fgFootprint[ix+iz*FGW]) continue;
+      for (let iy=1; iy<forgeRim; iy++){
+        const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
+        const low=COL_GAP(ix,iz,iy);
+        if (low>=0){ fMove(id, fIdx(ix,low,iz), Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; }
+      }
     }
-    if (bestNd>=0){ fMove(id,bestNd,Math.max(fgTemp[id],FLOW_T+0.05)); forgeDirty=true; }   // keep it molten so it keeps flowing
+    // 2) LEVEL: each column's warm top slumps onto the LOWEST shorter neighbour (steepest descent,
+    //    converges flat) so the compacted metal also spreads sideways toward the low corners.
+    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+      if (!fgFootprint[ix+iz*FGW]) continue;
+      const h=COL_TOP(ix,iz); if (h<0) continue;
+      const id=fIdx(ix,h,iz); if (fgLocked[id] || fgTemp[id]<FLOW_T*0.4) continue;
+      let bestNd=-1, bestH=h;
+      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+        if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;
+        const nh=COL_TOP(nx,nz);
+        if (nh<bestH){ const tgt=fIdx(nx,nh+1,nz);
+          if (forgeAllowed(nx,nh+1,nz) && !fgFill[tgt]){ bestH=nh; bestNd=tgt; } }
+      }
+      if (bestNd>=0){ fMove(id,bestNd,Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; }
+    }
+    if (moved) forgeDirty=true; else break;   // settled — stop early
   }
 }
 // Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
