@@ -6385,6 +6385,7 @@ const _fm4=new THREE.Matrix4(), _fmq=new THREE.Quaternion();
 function matQuat(R,out){ _fm4.set(R[0],R[1],R[2],0, R[3],R[4],R[5],0, R[6],R[7],R[8],0, 0,0,0,1);
   return (out||_fmq).setFromRotationMatrix(_fm4); }
 let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
+let forgeRepel=false;                       // does the socket REPEL metal (bit sphere) or drain it (frame cube)?
 // ---- per-template BODY + SOCKET shapes ----
 // The mould body and the core socket are no longer hard-wired to a box+cube. Each part declares
 // a shape: hx/hy/hz are its bounding half-extents (drive floor-rest + turn/roll), bodyP(px,py,pz)
@@ -6394,21 +6395,36 @@ let forgeRim=MOULD_DEPTH;                   // grid row just above the box top i
 // up) — with a SPHERE power-core socket sunk flush into the top of the shank. The bit is TALLER
 // than a frame (hy 6 vs 3), and mostly a long point with a short shank, so at the shared 44-cell
 // nugget it holds the ~8 ore a bit costs without needing a wider grid.
-const FORGE_BIT_HY=6;                                // bit half-height in cells (~12 tall) — sized with the taper below so it holds ~8 nuggets
-const FORGE_BIT_RMAX=FORGE_HX;                       // shank radius = box half-width (4): shares the frame footprint, no wider grid
-const FORGE_BIT_TAPER=9.5;                           // cells of conical POINT at the bottom (a long drill point); the short remainder is the cylindrical shank
+const FORGE_BIT_HY=6.5;                              // bit half-height in cells (~13 tall) — sized with taper + flute so it holds ~8 nuggets
+const FORGE_BIT_RMAX=4.5;                            // shank radius in cells (a touch past the box half-width; still inside the grid) so the flute has metal to remove and still keep 8 ore
+const FORGE_BIT_TAPER=8;                             // cells of conical POINT at the bottom (a long drill point); the short remainder is the cylindrical shank
 const FORGE_BIT_SEAT_PER=SEAT_PER;                   // socket at the SAME cells/unit as the lapidary power core, so the recess matches it 1:1
 const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core is fully recessed into the base
+// The bit is a BITING SCREW, not a plain cone: an exaggerated helical flute is cut into the body
+// so it reads as an auger/drill point. The groove spirals up the shaft; DEPTH is deliberately deep
+// because the voxel radius (~4 cells) is coarse and a subtle thread wouldn't resolve.
+const BIT_THREAD_TWIST=1.25;                         // helix pitch: radians of spin per cell of height (~2.4 turns over the bit)
+const BIT_THREAD_DEPTH=2.3;                          // groove depth in cells — exaggerated so the flute bites at this scale
+const BIT_GHOST_M=0.55;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
 const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
+const _BIT_SOCK_R=1.2*SEAT_PER;                      // sphere socket radius in cells
 const _bitBodyP=(px,py,pz)=>{
   if (py<-FORGE_BIT_HY-0.01 || py>FORGE_BIT_HY+0.01) return false;
   const yUp=py+FORGE_BIT_HY;                             // 0 at the point (bottom), 2*hy at the shank top
-  const R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone below the taper, cylinder above
-  return Math.hypot(px,pz) <= R+0.5;
+  let R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone below the taper, cylinder above
+  const phase=Math.atan2(pz,px) - yUp*BIT_THREAD_TWIST;  // one revolution of the flute per 2*pi/TWIST of height
+  const g=0.5-0.5*Math.cos(phase);
+  R -= BIT_THREAD_DEPTH*g*g;                             // NARROW spiral groove (g^2): deep bite at the trough, but a broad ridge so the shaft keeps its mass (8 ore)
+  // don't let the flute bite THROUGH the core socket — keep a solid wall around the sphere, so the
+  // deep flutes live on the point (where a drill bit's flutes belong) and the shank around the
+  // recess stays intact. Below/around the socket, R is floored to the sphere cross-section + a wall.
+  const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;
+  if (s2>0) R=Math.max(R, Math.sqrt(s2)+0.8);
+  return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
 };
 const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
-  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
+  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', socketRepel:true},
 };
 function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAPES.bit : FORGE_SHAPES.box; }
 // Socket test in the PART frame, sampled through the shape's own component inside() so a
@@ -6426,6 +6442,7 @@ function forgeSeatInsideP(px,py,pz){
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; const shape=forgeShape(); forgeCy=forgeCyFor(forgeRot,shape);
+  forgeRepel=!!shape.socketRepel;
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const p=invRot(forgeRot, gx-cx, gy-forgeCy, gz-cz);
@@ -6550,9 +6567,11 @@ function forgeSyncGhostGeo(){
   forgeGhostCone = (s.ghost==='cone');
   forgeGhostWire.geometry.dispose();
   if (forgeGhostCone){
-    // A PENCIL silhouette revolved from its profile (tip -> shank top), so the wire matches the
-    // pencil bodyP exactly rather than a sharp cone. Profile radius: 0 at the tip, full at the top.
-    const hy=FORGE_BIT_HY*FVOX, r=FORGE_BIT_RMAX*FVOX, tp=FORGE_BIT_TAPER*FVOX;
+    // A PENCIL silhouette revolved from its profile (tip -> shank top). The wire is the OUTER
+    // envelope of the cast: the marching surface sits a fraction of a cell past the ridge cells, so
+    // the profile carries a small margin (BIT_GHOST_M) — the fluted thread then reads as cut INTO
+    // this blank, and nothing casts outside the template (the "blob outside the wire" the player saw).
+    const m=BIT_GHOST_M, hy=(FORGE_BIT_HY+m)*FVOX, r=(FORGE_BIT_RMAX+m)*FVOX, tp=FORGE_BIT_TAPER*FVOX;
     const prof=[ new THREE.Vector2(0.001,-hy), new THREE.Vector2(r,-hy+tp), new THREE.Vector2(r,hy) ];
     const g=new THREE.LatheGeometry(prof, 18);
     forgeGhostWire.geometry=new THREE.EdgesGeometry(g,18); g.dispose();
@@ -6960,12 +6979,12 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
 function syncForgeMesh(){
-  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1;
-  //    an ISOLATED cell (a falling slough, a scattered droplet on the floor, a bit inside the
-  //    socket) gets a bloom so it renders as a little bead rather than a sub-cell point — ANYWHERE,
-  //    not just the chamber, so metal doesn't revert to points as it enters/exits the template.
-  //    Only cells with <=1 filled neighbour bloom, so the dense cast pool and mould fit are
-  //    untouched (no clunky over-fattening of the surface).
+  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1. A
+  //    fully LONE cell (no filled neighbour — a falling slough or a scattered droplet) blooms so it
+  //    reads as a little bead rather than a sub-cell point. A near-lone cell (one neighbour) blooms
+  //    ONLY up in the chamber, where it's a drip trail: down in the cast BODY a one-neighbour cell is
+  //    the narrow TIP of the part, and blooming it turned the drill point into a fat blob and pushed
+  //    the surface outside the template. So body/tip cells stay at 1 and the surface hugs them tight.
   const D=forgeDens;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
     const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
@@ -6974,7 +6993,8 @@ function syncForgeMesh(){
       if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
       if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
       if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
-      D[ci]= nb<=1 ? 1+FORGE_BLOB*(nb===0?1:0.4) : 1;
+      const airborne = iy>=forgeRim;   // in the open chamber, not part of the cast body
+      D[ci]= (nb===0) ? 1+FORGE_BLOB : (nb===1 && airborne) ? 1+FORGE_BLOB*0.4 : 1;
     } else D[ci]=0;
   }
   // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
@@ -7358,19 +7378,22 @@ function forgeFlowStep(){
     const inSeat = fgSeat[id];
     if (iy>0){
       const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
-      if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
+      // A DRAIN socket (frame cube) lets metal fall down INTO and through the void; a REPEL socket
+      // (bit sphere) does not — metal can only fall onto real body cells, so it slides off the dome
+      // and flows AROUND the sphere rather than pooling on it.
+      const canDropSeat = belowSeat && !forgeRepel;
+      if (!fgFill[bid] && (canDropSeat || forgeAllowed(ix,iy-1,iz))){
         // The seat CHUTE falls PROMPTLY (no throttle) so metal never catches on the socket's top
         // face — it drops straight through. A free drip elsewhere is throttled so it's trackable.
-        if (!inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
+        if (!inSeat && !canDropSeat && (forgeSpin % FALL_EVERY)!==0) continue;
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
-    // SOCKET DRAIN — the one-way barrier made physical. Metal that fell into the seat void and can
-    // now go no lower drips out the open bottom of the socket and is LOST. Earlier it backed up and
-    // filled the seat solid, capping the socket with a plug the player read as a "face blocking the
-    // pour" and fouling the core's housing. It must never rest in the seat nor climb back out
-    // sideways, so we delete it outright rather than shed it — the socket is a hole, not a cup.
-    if (inSeat){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
+    // A cell that ended up IN a socket void: a DRAIN socket loses it (drips out the open bottom, so it
+    // never backs up and plugs the core housing); a REPEL socket never admits metal in the first place,
+    // but if a reorient ever rotates a cell into the sphere, fall through to the shed below so it is
+    // pushed back OUT sideways rather than deleted.
+    if (inSeat && !forgeRepel){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
     // A molten cell that can't fall and ISN'T resting in a proper box cell — it's STRANDED in the
     // chamber or perched on the template edge — sheds sideways toward the box so it isn't stuck
     // forever. This is what lets you MELT a piece caught above the template and have it flow in
