@@ -7238,12 +7238,15 @@ function forgeLevelRelax(){
         if (low>=0){ fMove(id, fIdx(ix,low,iz), Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; }
       }
     }
-    // 2) LEVEL: each column's warm top slumps onto the LOWEST shorter neighbour (steepest descent,
-    //    converges flat) so the compacted metal also spreads sideways toward the low corners.
+    // 2) LEVEL: each column's top cell slumps onto the LOWEST shorter neighbour (steepest descent,
+    //    converges flat) so the compacted metal also spreads sideways toward the low corners. This
+    //    is MECHANICAL — the plane pushes cold metal into an adjacent open space too, not only molten.
+    //    (Requiring warmth here was the bug: a cold blob the heat band didn't reach just sat, even
+    //    with an empty cell right beside it. Only locked/quenched metal is left alone.)
     for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
       if (!fgFootprint[ix+iz*FGW]) continue;
       const h=COL_TOP(ix,iz); if (h<0) continue;
-      const id=fIdx(ix,h,iz); if (fgLocked[id] || fgTemp[id]<FLOW_T*0.4) continue;
+      const id=fIdx(ix,h,iz); if (fgLocked[id]) continue;
       let bestNd=-1, bestH=h;
       for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
         if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;
