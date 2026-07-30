@@ -6394,29 +6394,29 @@ let forgeRim=MOULD_DEPTH;                   // grid row just above the box top i
 // up) — with a SPHERE power-core socket sunk flush into the top of the shank. The bit is TALLER
 // than a frame (hy 6 vs 3), and mostly a long point with a short shank, so at the shared 44-cell
 // nugget it holds the ~8 ore a bit costs without needing a wider grid.
-const FORGE_BIT_HY=6.5;                              // bit half-height in cells (~13 tall) — sized with taper + flute so it holds ~8 nuggets
-const FORGE_BIT_RMAX=4.5;                            // shank radius in cells (a touch past the box half-width; still inside the grid) so the flute has metal to remove and still keep 8 ore
-const FORGE_BIT_TAPER=8;                             // cells of conical POINT at the bottom (a long drill point); the short remainder is the cylindrical shank
+const FORGE_BIT_HY=6.5;                              // bit half-height in cells (~13 tall)
+const FORGE_BIT_RMAX=3.7;                            // shank radius in cells — a smooth cylinder cradling the sphere (r 2.83) with a thin wall
+const FORGE_BIT_TAPER=5.5;                           // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
 const FORGE_BIT_SEAT_PER=SEAT_PER;                   // socket at the SAME cells/unit as the lapidary power core, so the recess matches it 1:1
-const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core is fully recessed into the base
-// The bit is a BITING SCREW, not a plain cone: an exaggerated helical flute is cut into the body
-// so it reads as an auger/drill point. The groove spirals up the shaft; DEPTH is deliberately deep
-// because the voxel radius (~4 cells) is coarse and a subtle thread wouldn't resolve.
-const BIT_THREAD_TWIST=1.25;                         // helix pitch: radians of spin per cell of height (~2.4 turns over the bit)
-const BIT_THREAD_DEPTH=2.3;                          // groove depth in cells — exaggerated so the flute bites at this scale
+const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core recess opens at the top
+// The bit is a drill: a smooth CYLINDRICAL SHANK (holding the core recess) over a BITING SCREW
+// POINT. The helical flute is cut ONLY into the point (below the taper), so the "spinny bit" does
+// not run all the way up the shank — the shank stays a clean cylinder (matches the markup).
+const BIT_THREAD_TWIST=1.5;                          // helix pitch: radians of spin per cell of height (a few turns over the short point)
+const BIT_THREAD_DEPTH=2.3;                          // groove depth in cells — exaggerated so the flute bites at this coarse scale
 const BIT_GHOST_M=0.55;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
 const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
 const _BIT_SOCK_R=1.2*SEAT_PER;                      // sphere socket radius in cells
 const _bitBodyP=(px,py,pz)=>{
   if (py<-FORGE_BIT_HY-0.01 || py>FORGE_BIT_HY+0.01) return false;
   const yUp=py+FORGE_BIT_HY;                             // 0 at the point (bottom), 2*hy at the shank top
-  let R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone below the taper, cylinder above
-  const phase=Math.atan2(pz,px) - yUp*BIT_THREAD_TWIST;  // one revolution of the flute per 2*pi/TWIST of height
-  const g=0.5-0.5*Math.cos(phase);
-  R -= BIT_THREAD_DEPTH*g*g;                             // NARROW spiral groove (g^2): deep bite at the trough, but a broad ridge so the shaft keeps its mass (8 ore)
-  // don't let the flute bite THROUGH the core socket — keep a solid wall around the sphere, so the
-  // deep flutes live on the point (where a drill bit's flutes belong) and the shank around the
-  // recess stays intact. Below/around the socket, R is floored to the sphere cross-section + a wall.
+  let R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone point below the taper, cylinder shank above
+  if (yUp<FORGE_BIT_TAPER){                              // flutes on the POINT only — the shank above is a smooth cylinder
+    const phase=Math.atan2(pz,px) - yUp*BIT_THREAD_TWIST;
+    const g=0.5-0.5*Math.cos(phase);
+    R -= BIT_THREAD_DEPTH*g*g;                           // NARROW spiral groove (g^2): a deep bite at the trough, a broad ridge between
+  }
+  // safety wall around the core socket, in case a flute ever reaches its y-band
   const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;
   if (s2>0) R=Math.max(R, Math.sqrt(s2)+0.8);
   return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
@@ -6600,13 +6600,12 @@ function forgeSyncGhostGeo(){
     const prof=[ new THREE.Vector2(0.001,-hy), new THREE.Vector2(r,-hy+tp), new THREE.Vector2(r,hy) ];
     const g=new THREE.LatheGeometry(prof, 18);
     forgeGhostWire.geometry=new THREE.EdgesGeometry(g,18); g.dispose();
-    // The corkscrew: a helix tracing the thread RIDGE up the body, so the flute the player is
-    // casting is visible as a reference (the envelope alone was a plain cylinder). Sit it just
-    // proud of the ridge so it reads over the metal.
-    const pts=[], steps=110;
+    // The corkscrew: a helix tracing the thread RIDGE up the POINT only (the flute lives there, not
+    // on the smooth shank), so the spiral the player is casting is visible as a reference.
+    const pts=[], steps=70;
     for (let i=0;i<=steps;i++){
-      const yUp=(i/steps)*(2*FORGE_BIT_HY), py=yUp-FORGE_BIT_HY;
-      const Rc=(yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX)+0.4;
+      const yUp=(i/steps)*FORGE_BIT_TAPER, py=yUp-FORGE_BIT_HY;   // stop at the taper — no helix up the cylinder
+      const Rc=FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER)+0.4;
       const th=yUp*BIT_THREAD_TWIST;
       pts.push(new THREE.Vector3(Rc*Math.cos(th)*FVOX, py*FVOX, Rc*Math.sin(th)*FVOX));
     }
