@@ -6385,7 +6385,6 @@ const _fm4=new THREE.Matrix4(), _fmq=new THREE.Quaternion();
 function matQuat(R,out){ _fm4.set(R[0],R[1],R[2],0, R[3],R[4],R[5],0, R[6],R[7],R[8],0, 0,0,0,1);
   return (out||_fmq).setFromRotationMatrix(_fm4); }
 let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
-let forgeRepel=false;                       // does the socket REPEL metal (bit sphere) or drain it (frame cube)?
 // ---- per-template BODY + SOCKET shapes ----
 // The mould body and the core socket are no longer hard-wired to a box+cube. Each part declares
 // a shape: hx/hy/hz are its bounding half-extents (drive floor-rest + turn/roll), bodyP(px,py,pz)
@@ -6424,7 +6423,7 @@ const _bitBodyP=(px,py,pz)=>{
 };
 const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
-  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', socketRepel:true},
+  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
 };
 function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAPES.bit : FORGE_SHAPES.box; }
 // Socket test in the PART frame, sampled through the shape's own component inside() so a
@@ -6442,7 +6441,6 @@ function forgeSeatInsideP(px,py,pz){
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; const shape=forgeShape(); forgeCy=forgeCyFor(forgeRot,shape);
-  forgeRepel=!!shape.socketRepel;
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const p=invRot(forgeRot, gx-cx, gy-forgeCy, gz-cz);
@@ -6536,6 +6534,16 @@ let forgeTurnT=1; const forgeTurnFromQ=new THREE.Quaternion(), _forgeIdQ=new THR
 const forgeAnvilPlate=new THREE.Mesh(new THREE.BoxGeometry(FGW*FVOX+0.5,0.3,FGD*FVOX+0.5),
   new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}));
 forgeAnvilPlate.position.y=fWY(0)-FVOX*0.5-0.15; forgeGroup.add(forgeAnvilPlate);
+// Faint reference grid on the bench floor. The metal is voxelised on a SQUARE cell grid — the round
+// bit is a circle SAMPLED onto squares, not a polar grid — so showing the cell columns gives a
+// spatial reference to read the shape and aim the pour against ("can you make the grid visible").
+const _fgGrid=[], _fgGY=fWY(0)-FVOX*0.5, _fgX0=fWX(-0.5), _fgX1=fWX(FGW-0.5), _fgZ0=fWZ(-0.5), _fgZ1=fWZ(FGD-0.5);
+for (let i=0;i<=FGW;i++){ const x=fWX(i-0.5); _fgGrid.push(x,_fgGY,_fgZ0, x,_fgGY,_fgZ1); }
+for (let k=0;k<=FGD;k++){ const z=fWZ(k-0.5); _fgGrid.push(_fgX0,_fgGY,z, _fgX1,_fgGY,z); }
+const forgeFloorGrid=new THREE.LineSegments(
+  new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(_fgGrid,3)),
+  new THREE.LineBasicMaterial({color:0x5b6b82,transparent:true,opacity:0.26,depthWrite:false}));
+forgeFloorGrid.renderOrder=1; forgeGroup.add(forgeFloorGrid);
 // box ghost — the container's wire outline. A UNIT cube scaled/placed per orientation
 // (forgePlaceGhosts), since turning the template changes the box's proportions.
 const forgeGhostWire=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),ghostEdge);
@@ -6557,6 +6565,13 @@ const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(_seatGeo),
   new THREE.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:0.9,depthWrite:false}));
 forgeSeatWire.scale.setScalar(SEAT_PER*FVOX); forgeSeatWire.renderOrder=13;
 forgePivot.add(forgeSeatWire);
+// The CORKSCREW reference — a helical line tracing the drill bit's thread ridge, so the player can
+// SEE the spiral they're casting toward. The smooth pencil envelope showed nothing of the flute
+// ("I can't do this without a reference wireframe for the corkscrew"). Bit only; rebuilt in
+// forgeSyncGhostGeo, rotated with the part in forgePlaceGhosts.
+const forgeThreadWire=new THREE.Line(new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({color:0x7cf3ff,transparent:true,opacity:0.95,depthWrite:false}));
+forgeThreadWire.visible=false; forgeThreadWire.renderOrder=14; forgePivot.add(forgeThreadWire);
 // Swap the body + socket ghost GEOMETRY to the current template's shape. Called on template
 // change (enterForge), NOT on reorient — a turn/roll only re-places the existing ghosts. The
 // box body ghost stays a unit cube (scaled per-orientation below); the bit body ghost is a real
@@ -6575,8 +6590,22 @@ function forgeSyncGhostGeo(){
     const prof=[ new THREE.Vector2(0.001,-hy), new THREE.Vector2(r,-hy+tp), new THREE.Vector2(r,hy) ];
     const g=new THREE.LatheGeometry(prof, 18);
     forgeGhostWire.geometry=new THREE.EdgesGeometry(g,18); g.dispose();
+    // The corkscrew: a helix tracing the thread RIDGE up the body, so the flute the player is
+    // casting is visible as a reference (the envelope alone was a plain cylinder). Sit it just
+    // proud of the ridge so it reads over the metal.
+    const pts=[], steps=110;
+    for (let i=0;i<=steps;i++){
+      const yUp=(i/steps)*(2*FORGE_BIT_HY), py=yUp-FORGE_BIT_HY;
+      const Rc=(yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX)+0.4;
+      const th=yUp*BIT_THREAD_TWIST;
+      pts.push(new THREE.Vector3(Rc*Math.cos(th)*FVOX, py*FVOX, Rc*Math.sin(th)*FVOX));
+    }
+    forgeThreadWire.geometry.dispose();
+    forgeThreadWire.geometry=new THREE.BufferGeometry().setFromPoints(pts);
+    forgeThreadWire.visible=true;
   } else {
     forgeGhostWire.geometry=new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1));
+    forgeThreadWire.visible=false;
   }
   const sg=COMPONENTS[s.socketComp].ghost();
   forgeSeatFill.geometry.dispose(); forgeSeatWire.geometry.dispose();
@@ -6598,6 +6627,7 @@ function forgePlaceGhosts(){
     forgeGhostWire.quaternion.identity();
   }
   forgeGhostWire.position.set(0, fWY(forgeCy)-PIVOT_Y, 0);
+  if (forgeGhostCone){ forgeThreadWire.position.copy(forgeGhostWire.position); forgeThreadWire.quaternion.copy(q); }
   const s=fwdRot(forgeRot, 0,sh.socketPy,0);
   _fbC.set(fWX(cx+s[0]), fWY(forgeCy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
@@ -6813,9 +6843,10 @@ const forgeSurf=new THREE.Mesh(forgeSurfGeo,forgeSurfMat);
 forgeSurf.frustumCulled=false; forgeSurf.position.y=-PIVOT_Y; forgePivot.add(forgeSurf);
 
 // A bloom for isolated AIRBORNE droplets only, so a falling slough reads as a visible liquid bead
-// (a couple of cells) as it descends rather than a sub-cell point you can't see move. Gated to the
-// chamber + lone/near-lone cells, so the cast pool and mould fit are never touched.
-const FORGE_BLOB=2.4;
+// as it descends rather than a sub-cell point you can't see move. Gated to the chamber +
+// lone/near-lone cells, so the cast pool and mould fit are never touched. Kept SMALL — a fat bloom
+// (was 2.4) ballooned drips into big blobs that threw the read off; just enough to see a bead.
+const FORGE_BLOB=0.8;
 const FISO=0.38,
       // Settled mould metal reads as a verdigris patina — copper that has cooled
       // and set. It must be SATURATED, not a pale sage: the surface is metallic, so
@@ -7378,22 +7409,18 @@ function forgeFlowStep(){
     const inSeat = fgSeat[id];
     if (iy>0){
       const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
-      // A DRAIN socket (frame cube) lets metal fall down INTO and through the void; a REPEL socket
-      // (bit sphere) does not — metal can only fall onto real body cells, so it slides off the dome
-      // and flows AROUND the sphere rather than pooling on it.
-      const canDropSeat = belowSeat && !forgeRepel;
-      if (!fgFill[bid] && (canDropSeat || forgeAllowed(ix,iy-1,iz))){
+      if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
         // The seat CHUTE falls PROMPTLY (no throttle) so metal never catches on the socket's top
         // face — it drops straight through. A free drip elsewhere is throttled so it's trackable.
-        if (!inSeat && !canDropSeat && (forgeSpin % FALL_EVERY)!==0) continue;
+        if (!inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
-    // A cell that ended up IN a socket void: a DRAIN socket loses it (drips out the open bottom, so it
-    // never backs up and plugs the core housing); a REPEL socket never admits metal in the first place,
-    // but if a reorient ever rotates a cell into the sphere, fall through to the shed below so it is
-    // pushed back OUT sideways rather than deleted.
-    if (inSeat && !forgeRepel){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
+    // SOCKET DRAIN — metal that fell into the seat void and can go no lower drips out the open bottom
+    // and is LOST, so the recess stays OPEN TO THE TOP for the core to drop in. (A brief experiment
+    // made the bit's sphere REPEL instead; that let metal settle on top of the dome and BURY the
+    // recess, so it was reverted — the drain keeps the socket mouth clear.)
+    if (inSeat){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
     // A molten cell that can't fall and ISN'T resting in a proper box cell — it's STRANDED in the
     // chamber or perched on the template edge — sheds sideways toward the box so it isn't stuck
     // forever. This is what lets you MELT a piece caught above the template and have it flow in
