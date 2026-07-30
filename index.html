@@ -6384,11 +6384,32 @@ const _fm4=new THREE.Matrix4(), _fmq=new THREE.Quaternion();
 function matQuat(R,out){ _fm4.set(R[0],R[1],R[2],0, R[3],R[4],R[5],0, R[6],R[7],R[8],0, 0,0,0,1);
   return (out||_fmq).setFromRotationMatrix(_fm4); }
 let forgeRim=MOULD_DEPTH;                   // grid row just above the box top in the current pose
-// Socket test in the PART frame: the drill silhouette centred at (0,FORGE_SEAT_PY,0),
-// opening toward part +y (= up when lying). Sampled through the component's own
-// inside() so a future non-cube core is a data change, not an engine one.
+// ---- per-template BODY + SOCKET shapes ----
+// The mould body and the core socket are no longer hard-wired to a box+cube. Each part
+// declares a shape: bodyP(px,py,pz) is the solid the metal casts into, and the socket is a
+// COMPONENTS void placed at socketPy with socketPer cells/unit. Frames stay a rectangular
+// box with a cube drill socket; the DRILL BIT is a cone (point down, base up) with a SPHERE
+// power-core socket sunk flush into its base. Both keep the same HX/HY/HZ bounding box so
+// the orientation/floor-rest maths (forgeCyFor) are unchanged — only the carved solid differs.
+const FORGE_BIT_RMAX=Math.min(FORGE_HX,FORGE_HZ);   // cone base radius in cells (widest, at the top)
+const FORGE_BIT_SEAT_PER=1.7;                       // sphere socket: r = 1.2*1.7 ≈ 2 cells across the axis
+const FORGE_BIT_SEAT_PY=FORGE_HY-2;                 // centre it so the sphere's top sits flush with the base (recessed)
+const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
+const _bitBodyP=(px,py,pz)=>{
+  if (py<-FORGE_HY-0.01 || py>FORGE_HY+0.01) return false;
+  const R=FORGE_BIT_RMAX*(py+FORGE_HY)/(2*FORGE_HY);   // 0 at the point (bottom), full at the base (top)
+  return Math.hypot(px,pz) <= R+0.6;                   // +0.6 keeps the very tip a cell or two wide, not a zero-width spike
+};
+const FORGE_SHAPES={
+  box:{bodyP:_boxBodyP, socketComp:SEAT_COMP,  socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
+  bit:{bodyP:_bitBodyP, socketComp:'cell',     socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
+};
+function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAPES.bit : FORGE_SHAPES.box; }
+// Socket test in the PART frame, sampled through the shape's own component inside() so a
+// non-cube core (the bit's sphere) drops in as a data change, not an engine one.
 function forgeSeatInsideP(px,py,pz){
-  return COMPONENTS[SEAT_COMP].inside(px/SEAT_PER,(py-FORGE_SEAT_PY)/SEAT_PER,pz/SEAT_PER);
+  const s=forgeShape();
+  return COMPONENTS[s.socketComp].inside(px/s.socketPer,(py-s.socketPy)/s.socketPer,pz/s.socketPer);
 }
 // Build fgMould (box interior) + fgSeat (socket void) for the CURRENT orientation by
 // mapping every grid cell back into the part frame and testing the canonical box and
@@ -6399,10 +6420,11 @@ function forgeSeatInsideP(px,py,pz){
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; forgeCy=forgeCyFor(forgeRot);
+  const shape=forgeShape();
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const p=invRot(forgeRot, gx-cx, gy-forgeCy, gz-cz);
-    if (Math.abs(p[0])>FORGE_HX+0.01||Math.abs(p[1])>FORGE_HY+0.01||Math.abs(p[2])>FORGE_HZ+0.01) continue;
+    if (!shape.bodyP(p[0],p[1],p[2])) continue;
     const id=fIdx(gx,gy,gz);
     if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
     else { fgMould[id]=1; fgMouldTotal++; }
@@ -6506,19 +6528,46 @@ const forgeSeatWire=new THREE.LineSegments(new THREE.EdgesGeometry(_seatGeo),
   new THREE.LineBasicMaterial({color:0xffd27a,transparent:true,opacity:0.9,depthWrite:false}));
 forgeSeatWire.scale.setScalar(SEAT_PER*FVOX); forgeSeatWire.renderOrder=13;
 forgePivot.add(forgeSeatWire);
-// Position + rotate the box and seat ghosts to match the current orientation. The box
-// is a unit cube scaled to the box's grid dims (rotating the extent vector); the seat
-// sits at the socket's grid centre, rotated the same way as the part.
+// Swap the body + socket ghost GEOMETRY to the current template's shape. Called on template
+// change (enterForge), NOT on reorient — a turn/roll only re-places the existing ghosts. The
+// box body ghost stays a unit cube (scaled per-orientation below); the bit body ghost is a real
+// cone (apex down), and the socket ghost becomes whatever the shape's component draws.
+let forgeGhostCone=false;
+function forgeSyncGhostGeo(){
+  const s=forgeShape();
+  forgeGhostCone = (s.ghost==='cone');
+  forgeGhostWire.geometry.dispose();
+  if (forgeGhostCone){
+    const g=new THREE.ConeGeometry(FORGE_BIT_RMAX*FVOX, 2*FORGE_HY*FVOX, 20);
+    g.rotateX(Math.PI);                                   // ConeGeometry points +y; flip so the apex is DOWN (matches _bitBodyP)
+    forgeGhostWire.geometry=new THREE.EdgesGeometry(g); g.dispose();
+  } else {
+    forgeGhostWire.geometry=new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1));
+  }
+  const sg=COMPONENTS[s.socketComp].ghost();
+  forgeSeatFill.geometry.dispose(); forgeSeatWire.geometry.dispose();
+  forgeSeatFill.geometry=sg; forgeSeatWire.geometry=new THREE.EdgesGeometry(sg);
+  forgeSeatFill.scale.setScalar(s.socketPer*FVOX); forgeSeatWire.scale.setScalar(s.socketPer*FVOX);
+}
+// Position + rotate the body and seat ghosts to match the current orientation. The box body
+// is a unit cube scaled to the box's grid dims (rotating the extent vector); a cone body is
+// real geometry, so it takes the part quaternion at scale 1. The seat sits at the socket's
+// grid centre, rotated the same way as the part.
 const _fbC=new THREE.Vector3();
 function forgePlaceGhosts(){
-  const cx=(FGW-1)/2, cz=(FGD-1)/2;
-  const e=fwdRot(forgeRot, FORGE_HX,FORGE_HY,FORGE_HZ);
-  forgeGhostWire.scale.set((2*Math.abs(e[0])+1)*FVOX,(2*Math.abs(e[1])+1)*FVOX,(2*Math.abs(e[2])+1)*FVOX);
+  const cx=(FGW-1)/2, cz=(FGD-1)/2, q=matQuat(forgeRot), sh=forgeShape();
+  if (forgeGhostCone){
+    forgeGhostWire.scale.set(1,1,1); forgeGhostWire.quaternion.copy(q);
+  } else {
+    const e=fwdRot(forgeRot, FORGE_HX,FORGE_HY,FORGE_HZ);
+    forgeGhostWire.scale.set((2*Math.abs(e[0])+1)*FVOX,(2*Math.abs(e[1])+1)*FVOX,(2*Math.abs(e[2])+1)*FVOX);
+    forgeGhostWire.quaternion.identity();
+  }
   forgeGhostWire.position.set(0, fWY(forgeCy)-PIVOT_Y, 0);
-  const s=fwdRot(forgeRot, 0,FORGE_SEAT_PY,0);
+  const s=fwdRot(forgeRot, 0,sh.socketPy,0);
   _fbC.set(fWX(cx+s[0]), fWY(forgeCy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
-  const q=matQuat(forgeRot); forgeSeatFill.quaternion.copy(q); forgeSeatWire.quaternion.copy(q);
+  forgeSeatFill.quaternion.copy(q); forgeSeatWire.quaternion.copy(q);
 }
 // the flux beam marker
 const forgeBeam=new THREE.Mesh(new THREE.SphereGeometry(FVOX*1.7,16,12),
@@ -6897,22 +6946,20 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
 }
 function syncForgeMesh(){
   // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1;
-  //    an ISOLATED cell high in the chamber (a free-falling slough) gets a SMALL bloom so it
-  //    renders as a little bead rather than a point. Only chamber cells with <=1 filled neighbour
-  //    bloom, and only gently, so the cast pool and mould fit are completely untouched.
-  const D=forgeDens, blobLo=forgeRim-1;
+  //    an ISOLATED cell (a falling slough, a scattered droplet on the floor, a bit inside the
+  //    socket) gets a bloom so it renders as a little bead rather than a sub-cell point — ANYWHERE,
+  //    not just the chamber, so metal doesn't revert to points as it enters/exits the template.
+  //    Only cells with <=1 filled neighbour bloom, so the dense cast pool and mould fit are
+  //    untouched (no clunky over-fattening of the surface).
+  const D=forgeDens;
   for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
     const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
     if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]){
-      let v=1;
-      if (iy>=blobLo){
-        let nb=0;
-        if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
-        if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
-        if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
-        if (nb<=1) v=1+FORGE_BLOB*(nb===0?1:0.4);
-      }
-      D[ci]=v;
+      let nb=0;
+      if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
+      if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
+      if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
+      D[ci]= nb<=1 ? 1+FORGE_BLOB*(nb===0?1:0.4) : 1;
     } else D[ci]=0;
   }
   // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
@@ -6980,7 +7027,8 @@ const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // two once upgraded (forgeCrucibleMax).
 let forgeCrucibleMax=1;                 // crucible loads allowed per part (1; 2 once upgraded)
 let forgeCrucChargesLeft=1;             // loads not yet spent this part
-const CRUCIBLE_RATE=2;                  // alloy cells poured per sim step while held
+const CRUCIBLE_RATE=1;                  // alloy cells poured per pour-tick while held
+const CRUC_POUR_EVERY=3;                // pour a tick only every Nth sim step: ~10 cells/s, not 60 — a full charge (~96) took under 2s and dumped uncontrollably
 const CRUC_HEAT_RATE=0.02;              // crucible heat gain/step: ~1.6s from cold to molten at 30Hz
 const CRUC_POUR_DELAY=1.0;              // hold this long (seconds), pot tipping, before alloy runs
 let forgeCrucPourHold=0;               // accumulated hold time while pouring-intent (drives the tip)
@@ -7181,6 +7229,7 @@ function forgeCrucibleStep(){
   // over (forgeCrucTipTick animates it), THEN alloy starts to pour. Instant use felt wrong.
   forgeCrucPourHold += FSTEP;
   if (forgeCrucPourHold < CRUC_POUR_DELAY) return;
+  if ((forgeSpin % CRUC_POUR_EVERY)!==0) return;   // throttle the stream: a full charge should take several seconds, not dump at once
   const cx=Math.round(fluxAim.x), cy=Math.round(fluxAim.y), cz=Math.round(fluxAim.z);
   let poured=0;
   const spots=[[0,0],[1,0],[-1,0],[0,1],[0,-1]];
@@ -7301,12 +7350,18 @@ function forgeFlowStep(){
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
+    // SOCKET DRAIN — the one-way barrier made physical. Metal that fell into the seat void and can
+    // now go no lower drips out the open bottom of the socket and is LOST. Earlier it backed up and
+    // filled the seat solid, capping the socket with a plug the player read as a "face blocking the
+    // pour" and fouling the core's housing. It must never rest in the seat nor climb back out
+    // sideways, so we delete it outright rather than shed it — the socket is a hole, not a cup.
+    if (inSeat){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
     // A molten cell that can't fall and ISN'T resting in a proper box cell — it's STRANDED in the
     // chamber or perched on the template edge — sheds sideways toward the box so it isn't stuck
     // forever. This is what lets you MELT a piece caught above the template and have it flow in
     // (before, a caught piece ignored every tool). A proper pool cell (below the rim, in the
     // footprint) just STAYS when it can't fall — no bounce.
-    const restOK = !inSeat && iy<forgeRim && fgFootprint[ix+iz*FGW];
+    const restOK = !inSeat && iy<forgeRim && fgMould[id];   // a real body cell (not just a footprint column: a cone is narrow low down)
     if (!restOK){
       const order=(ix+iz+forgeSpin)&3;
       for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
@@ -7447,6 +7502,7 @@ const FILL_DONE=0.6;
 function enterForge(){
   if (!forgePart) forgePart=FORGE_TEMPLATES[0];
   forgeRot=MAT_I.slice();                     // always start lying, un-rolled
+  forgeSyncGhostGeo();                         // template may have changed shape (box vs bit cone) — swap ghost geometry
   forgeBuildMould(); forgePlaceGhosts();
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
   // recharge the crucible and clear any half-built load for a fresh part
@@ -7526,10 +7582,13 @@ function forgeReorient(newRot, msg){
 }
 // Turn/Roll the box 90° about grid X / grid Z, forward or back. Reset returns it to lying and
 // re-centres the camera. (Transpose of a 90° rotation is its inverse = the "back" direction.)
-function forgeToggleOrient(){ forgeReorient(_mMul(ROT_X90, forgeRot), 'Template turned.'); }
-function forgeTurnBack(){     forgeReorient(_mMul(_mT(ROT_X90), forgeRot), 'Template turned back.'); }
-function forgeRollOrient(){   forgeReorient(_mMul(ROT_Z90, forgeRot), 'Template rolled — next wall up.'); }
-function forgeRollBack(){     forgeReorient(_mMul(_mT(ROT_Z90), forgeRot), 'Template rolled back.'); }
+// The ⟳/↻ (forward) buttons must rotate the way their icon reads on screen. The +90° matrices
+// tumbled the opposite way to the icon, so forward uses the transpose (the visual-clockwise
+// direction) and back uses the plain matrix.
+function forgeToggleOrient(){ forgeReorient(_mMul(_mT(ROT_X90), forgeRot), 'Template turned.'); }
+function forgeTurnBack(){     forgeReorient(_mMul(ROT_X90, forgeRot), 'Template turned back.'); }
+function forgeRollOrient(){   forgeReorient(_mMul(_mT(ROT_Z90), forgeRot), 'Template rolled — next wall up.'); }
+function forgeRollBack(){     forgeReorient(_mMul(ROT_Z90, forgeRot), 'Template rolled back.'); }
 function forgeResetOrient(){  forgeReorient(MAT_I.slice(), 'Template reset — lying, upright.'); forgeGroup.rotation.set(0.15,0,0); }
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
@@ -7547,7 +7606,7 @@ function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false;
 function forgeSnapshot(){
   const cells=[], metal=[];
   for (let id=0; id<FG_N; id++) if (fgFill[id]){ cells.push(id); metal.push(fgMetal[id]); }
-  return { W:FGW, H:FGH, D:FGD, rot:forgeRot.slice(), seat:SEAT_COMP, cells, metal };
+  return { W:FGW, H:FGH, D:FGD, rot:forgeRot.slice(), seat:forgeShape().socketComp, cells, metal };
 }
 // How much ALLOY lines the core seat: of the frame cells touching the seat void, the fraction
 // that are crucible alloy. This is the frame's RESONANCE potential — the alloy housing the core
