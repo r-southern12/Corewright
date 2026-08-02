@@ -6291,7 +6291,10 @@ const SEED_UP={
      activeCore or the shard batches. (NB `forgeAnvil` is already the
      seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FGW=11, FGH=21, FGD=11;          // grid dims (footprint x height x depth). Taller than the
+const FGW=21, FGH=41, FGD=21;          // grid dims (footprint x height x depth). DOUBLED from 11/21/11
+                                       // for a finer, machined look — curved parts (bit cylinder/cone,
+                                       // the sphere socket) read smooth instead of blocky. FVOX halved
+                                       // to keep the same world size. Taller than the
                                        // original 15 on purpose: a DEEP core socket eats down into the
                                        // box, AND the billet hangs with a real air gap above it so a
                                        // sloughed drip visibly falls; both need chamber headroom while
@@ -6299,12 +6302,12 @@ const FGW=11, FGH=21, FGD=11;          // grid dims (footprint x height x depth)
 const FG_N=FGW*FGH*FGD;
 const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
 const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
-const FVOX=0.34;                       // cell edge, world units
+const FVOX=0.17;                       // cell edge, world units
 // FY0 = the grid row that sits at the world origin height. The mould is at the
 // bottom (iy 0..) and the copper stone hangs high above it, so the origin is set
 // low-ish to frame both. fPushVert's vertex Y and forgeAimCell's inverse both
 // derive from FY0 — change it here and they follow, so they never drift apart.
-const FY0=8;                           // origin row; raised with FGH so the deeper box + taller
+const FY0=16;                           // origin row; raised with FGH so the deeper box + taller
                                        // billet chamber still frame in the forge camera
 const fWX=ix=>(ix-(FGW-1)/2)*FVOX;
 const fWY=iy=>(iy-FY0)*FVOX;
@@ -6322,10 +6325,10 @@ const fgMetal=new Uint8Array(FG_N);    // metal TYPE per cell: 0 = copper framew
                                        // Travels with the cell through the flow (fMove) so the alloy
                                        // housing renders as its own colour — the two-colour build.
 let fgMouldTotal=0;
-const MOULD_DEPTH=7;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
+const MOULD_DEPTH=13;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
                                        // Deepened from 3 so a real core socket sinks into it and metal
                                        // wraps the seat's SIDES (that side contact is what a core needs).
-const MOULD_INSET=1;                    // cavity inset from the footprint edge
+const MOULD_INSET=2;                    // cavity inset from the footprint edge
 const FLOW_T=0.45;                      // temperature at which metal turns molten and flows. The
                                        // incandescence ramp (FHEAT_*) is compressed so WHITE-HOT lands right
                                        // here: a torched patch charges up dull red -> red -> orange -> yellow
@@ -6337,7 +6340,7 @@ const FLOW_T=0.45;                      // temperature at which metal turns molt
 // drip down AND level across the mould before it sets, and slow means
 // patient/forgiving, not twitchy. Too fast and drips freeze in mid-air in the
 // gap between the stone and the dish instead of pooling.
-const COOL=0.0034;                      // per-STEP temperature decay — metal sets in ~1-2s (was too slow to cool)
+const COOL=0.0017;                      // per-STEP temperature decay — metal sets in ~1-2s (was too slow to cool)
 
 // The core SOCKET. The finished part is a metal body with the drill-core seat cast
 // straight into it: instead of stamping a dimple after the fact, the seat is a VOID
@@ -6347,7 +6350,7 @@ const COOL=0.0034;                      // per-STEP temperature decay — metal 
 // today, but sampled through the component's own inside() so a future non-cube core
 // (sphere cell, cylinder coil…) drops in as a data change, not an engine one.
 const SEAT_COMP='drill';               // which component template the socket is cut for
-const SEAT_CELLS=5;                     // socket edge in cells (odd, so it centres on a grid column)
+const SEAT_CELLS=9;                     // socket edge in cells (odd, so it centres on a grid column)
 const SEAT_HALF=1.05;                   // core-local half-extent the templates are authored at
 const SEAT_PER=(SEAT_CELLS/2)/SEAT_HALF;// grid cells per core-unit
 
@@ -6394,19 +6397,19 @@ let forgeRim=MOULD_DEPTH;                   // grid row just above the box top i
 // up) — with a SPHERE power-core socket sunk flush into the top of the shank. The bit is TALLER
 // than a frame (hy 6 vs 3), and mostly a long point with a short shank, so at the shared 44-cell
 // nugget it holds the ~8 ore a bit costs without needing a wider grid.
-const FORGE_BIT_HY=6.5;                              // bit half-height in cells (~13 tall)
-const FORGE_BIT_RMAX=3.7;                            // shank radius in cells — a smooth cylinder cradling the sphere (r 2.83) with a thin wall
-const FORGE_BIT_TAPER=5.5;                           // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
+const FORGE_BIT_HY=13;                              // bit half-height in cells (~13 tall)
+const FORGE_BIT_RMAX=7;                            // shank radius in cells — a smooth cylinder cradling the sphere (r 2.83) with a thin wall
+const FORGE_BIT_TAPER=11;                           // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
 const FORGE_BIT_SEAT_PER=SEAT_PER;                   // socket at the SAME cells/unit as the lapidary power core, so the recess matches it 1:1
 const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core recess opens at the top
 // The bit is SIMPLE: one CONE point, one CYLINDER shank (holding the core recess), and ONE bold,
 // hard-edged spiral flute — a single helix cut from the point all the way to the top — so it reads
 // as a machined auger. No multi-groove fuzz (that voxelised into the "horrific" jagged mess); one
 // clean channel. Where the socket sits, the channel is floored to a wall so it can't breach it.
-const BIT_RIDGE_TWIST=0.92;                          // radians of spin per cell of height (~1.9 turns over the bit)
+const BIT_RIDGE_TWIST=0.46;                          // radians of spin per cell of height (~1.9 turns over the bit)
 const BIT_RIDGE_W=0.62;                              // half angular width of the flute channel (rad): ~1/5 of the circumference
-const BIT_RIDGE_DEPTH=1.7;                           // how deep the single channel cuts (cells) — bold, so the one thread is pronounced
-const BIT_GHOST_M=0.55;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
+const BIT_RIDGE_DEPTH=3.4;                           // how deep the single channel cuts (cells) — bold, so the one thread is pronounced
+const BIT_GHOST_M=1.1;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
 const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
 const _BIT_SOCK_R=1.2*SEAT_PER;                      // sphere socket radius in cells
 const _bitFlutePhase=(px,py,pz)=>{                    // signed angular distance to the single flute channel centre, wrapped to [-pi,pi]
@@ -6467,9 +6470,9 @@ function forgeBuildMould(){
 // so one nugget is ~44 cells. How many ore a part costs then falls out of its cavity: a frame
 // wants 10, the taller drill-bit pencil wants ~8. Earlier the mass was cavity/10, which shrank
 // each nugget to specks in the small bit and cast a grotesque scatter of tiny globs.
-const FORGE_NUG_MASS=46;                // cells per ore nugget — CONSTANT across all equipment; sized so the
-                                        // ore out-volumes each cavity a touch (frame 10x46=460>442, bit 8x46=368>367)
-                                        // so a careful pour can reach 100%, while round(mould/46) still gives 10 and 8
+const FORGE_NUG_MASS=310;               // cells per ore nugget — CONSTANT across all equipment; sized for the
+                                        // finer grid so the ore out-volumes each cavity a touch (frame
+                                        // 10x310=3100>3028, bit 8x310=2480>2432) and round(mould/310) gives 10 and 8
 function forgeOreCount(){ return Math.max(1, Math.round(fgMouldTotal / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
@@ -6480,7 +6483,7 @@ function forgeSeedNugget(metalKey){
   if (forgeNugUsed>=forgeOreCount()) return false;
   const mid=forgeMetalId(metalKey||'copper');
   forgeNugSize=FORGE_NUG_MASS;                    // fixed nugget mass — same dollop for every part
-  const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-5;    // hangs high, centred over the seat
+  const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-9;    // hangs high, centred over the seat
   // rank every empty cell by distance to the nugget centre (y squ/stretched a touch
   // so it reads as a lump, not a disc), then fill the nearest N — a compact blob.
   const cells=[];
@@ -6506,7 +6509,7 @@ function forgeSeedNugget(metalKey){
 // drop it; this only gates that click so two nuggets can't overlap in the hang zone.
 // Molten drips in transit and pooled metal below the rim don't count — only an actual
 // unmelted nugget still hanging up top blocks the next drop.
-const NUG_ZONE_LO=FGH-9;                 // the upper chamber where a nugget hangs + its first drips
+const NUG_ZONE_LO=FGH-18;                 // the upper chamber where a nugget hangs + its first drips
 function forgeHangClear(){
   let hanging=0;
   // Scan only ABOVE the part's top — a tall bit's shank rises past FGH-9, and its filling cast
@@ -6756,7 +6759,7 @@ const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCr
 // it pours (forgeCrucTip). The upright rest angle is a slight lean.
 const CRUC_REST_TIP=0.28;    // resting lean (radians)
 const CRUC_POUR_TIP=1.15;    // full pour tip
-forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-8.5), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=CRUC_REST_TIP; forgeGroup.add(forgeCrucStage);
+forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-16), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=CRUC_REST_TIP; forgeGroup.add(forgeCrucStage);
 const _crucGlow=_tm(new THREE.SphereGeometry(0.16,14,12),_fGlow(0xff7a30),0,0.3,0); forgeCrucStage.add(_crucGlow);
 function forgeCrucGlow(){
   const show=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
@@ -7110,7 +7113,7 @@ const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // two once upgraded (forgeCrucibleMax).
 let forgeCrucibleMax=1;                 // crucible loads allowed per part (1; 2 once upgraded)
 let forgeCrucChargesLeft=1;             // loads not yet spent this part
-const CRUCIBLE_RATE=1;                  // alloy cells poured per pour-tick while held
+const CRUCIBLE_RATE=6;                  // alloy cells poured per pour-tick while held
 const CRUC_POUR_EVERY=3;                // pour a tick only every Nth sim step: ~10 cells/s, not 60 — a full charge (~96) took under 2s and dumped uncontrollably
 const CRUC_HEAT_RATE=0.02;              // crucible heat gain/step: ~1.6s from cold to molten at 30Hz
 const CRUC_POUR_DELAY=1.0;              // hold this long (seconds), pot tipping, before alloy runs
@@ -7495,7 +7498,7 @@ function forgeFlowStep(){
 // per cell), so the slough falls slowly enough to track instead of blurring down.
 // Tune the fall SPEED here; it's separate from melt throughput (FLUX_ADD) and from
 // how fast the pool levels (the temperature-throttled lateral spread).
-const FALL_EVERY=5;    // sim steps per cell of fall (~0.17s/cell at FSTEP) — slow enough to watch
+const FALL_EVERY=3;    // sim steps per cell of fall (~0.17s/cell at FSTEP) — slow enough to watch
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
