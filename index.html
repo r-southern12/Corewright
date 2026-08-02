@@ -6399,25 +6399,26 @@ const FORGE_BIT_RMAX=3.7;                            // shank radius in cells �
 const FORGE_BIT_TAPER=5.5;                           // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
 const FORGE_BIT_SEAT_PER=SEAT_PER;                   // socket at the SAME cells/unit as the lapidary power core, so the recess matches it 1:1
 const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core recess opens at the top
-// The bit is a drill: a smooth CYLINDRICAL SHANK (holding the core recess) over a BITING SCREW
-// POINT. The helical flute is cut ONLY into the point (below the taper), so the "spinny bit" does
-// not run all the way up the shank — the shank stays a clean cylinder (matches the markup).
-const BIT_THREAD_TWIST=1.5;                          // helix pitch: radians of spin per cell of height (a few turns over the short point)
-const BIT_THREAD_DEPTH=2.3;                          // groove depth in cells — exaggerated so the flute bites at this coarse scale
+// The bit is SIMPLE: one CONE point, one CYLINDER shank (holding the core recess), and ONE bold,
+// hard-edged spiral flute — a single helix cut from the point all the way to the top — so it reads
+// as a machined auger. No multi-groove fuzz (that voxelised into the "horrific" jagged mess); one
+// clean channel. Where the socket sits, the channel is floored to a wall so it can't breach it.
+const BIT_RIDGE_TWIST=0.92;                          // radians of spin per cell of height (~1.9 turns over the bit)
+const BIT_RIDGE_W=0.62;                              // half angular width of the flute channel (rad): ~1/5 of the circumference
+const BIT_RIDGE_DEPTH=1.7;                           // how deep the single channel cuts (cells) — bold, so the one thread is pronounced
 const BIT_GHOST_M=0.55;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
 const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
 const _BIT_SOCK_R=1.2*SEAT_PER;                      // sphere socket radius in cells
+const _bitFlutePhase=(px,py,pz)=>{                    // signed angular distance to the single flute channel centre, wrapped to [-pi,pi]
+  const yUp=py+FORGE_BIT_HY;
+  return ((Math.atan2(pz,px) - yUp*BIT_RIDGE_TWIST) % (2*Math.PI) + 3*Math.PI) % (2*Math.PI) - Math.PI;
+};
 const _bitBodyP=(px,py,pz)=>{
   if (py<-FORGE_BIT_HY-0.01 || py>FORGE_BIT_HY+0.01) return false;
   const yUp=py+FORGE_BIT_HY;                             // 0 at the point (bottom), 2*hy at the shank top
   let R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone point below the taper, cylinder shank above
-  if (yUp<FORGE_BIT_TAPER){                              // flutes on the POINT only — the shank above is a smooth cylinder
-    const phase=Math.atan2(pz,px) - yUp*BIT_THREAD_TWIST;
-    const g=0.5-0.5*Math.cos(phase);
-    R -= BIT_THREAD_DEPTH*g*g;                           // NARROW spiral groove (g^2): a deep bite at the trough, a broad ridge between
-  }
-  // safety wall around the core socket, in case a flute ever reaches its y-band
-  const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;
+  if (Math.abs(_bitFlutePhase(px,py,pz))<BIT_RIDGE_W) R-=BIT_RIDGE_DEPTH;              // the ONE spiral channel, hard-edged
+  const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;                      // keep a wall around the core socket
   if (s2>0) R=Math.max(R, Math.sqrt(s2)+0.8);
   return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
 };
@@ -6466,7 +6467,9 @@ function forgeBuildMould(){
 // so one nugget is ~44 cells. How many ore a part costs then falls out of its cavity: a frame
 // wants 10, the taller drill-bit pencil wants ~8. Earlier the mass was cavity/10, which shrank
 // each nugget to specks in the small bit and cast a grotesque scatter of tiny globs.
-const FORGE_NUG_MASS=44;                // cells per ore nugget — CONSTANT across all equipment
+const FORGE_NUG_MASS=46;                // cells per ore nugget — CONSTANT across all equipment; sized so the
+                                        // ore out-volumes each cavity a touch (frame 10x46=460>442, bit 8x46=368>367)
+                                        // so a careful pour can reach 100%, while round(mould/46) still gives 10 and 8
 function forgeOreCount(){ return Math.max(1, Math.round(fgMouldTotal / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
@@ -6600,13 +6603,13 @@ function forgeSyncGhostGeo(){
     const prof=[ new THREE.Vector2(0.001,-hy), new THREE.Vector2(r,-hy+tp), new THREE.Vector2(r,hy) ];
     const g=new THREE.LatheGeometry(prof, 18);
     forgeGhostWire.geometry=new THREE.EdgesGeometry(g,18); g.dispose();
-    // The corkscrew: a helix tracing the thread RIDGE up the POINT only (the flute lives there, not
-    // on the smooth shank), so the spiral the player is casting is visible as a reference.
-    const pts=[], steps=70;
+    // The corkscrew: a helix tracing the single flute channel from the point to the top, just proud
+    // of the surface, so the one spiral the player is casting is visible as a reference.
+    const pts=[], steps=120;
     for (let i=0;i<=steps;i++){
-      const yUp=(i/steps)*FORGE_BIT_TAPER, py=yUp-FORGE_BIT_HY;   // stop at the taper — no helix up the cylinder
-      const Rc=FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER)+0.4;
-      const th=yUp*BIT_THREAD_TWIST;
+      const yUp=(i/steps)*(2*FORGE_BIT_HY), py=yUp-FORGE_BIT_HY;
+      const base=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;
+      const Rc=base+0.4, th=yUp*BIT_RIDGE_TWIST;
       pts.push(new THREE.Vector3(Rc*Math.cos(th)*FVOX, py*FVOX, Rc*Math.sin(th)*FVOX));
     }
     forgeThreadWire.geometry.dispose();
@@ -7455,34 +7458,29 @@ function forgeFlowStep(){
     // metal settles where it lands; spreading and levelling it is the job of a TOOL (the level
     // plane, the torch nudge). The fall is SLOW and trackable — one cell every FALL_EVERY steps,
     // EVERYWHERE (gap and pool alike) — so you can watch the slough descend.
-    // ONE-WAY SEAT CHUTE: metal can fall DOWN into and through the seat void, but never rises,
-    // spreads or drips sideways INTO it, so once through it can't come back.
+    // Metal falls straight down onto a real BODY cell only — NEVER into the core socket (fgSeat).
     const inSeat = fgSeat[id];
-    if (iy>0){
-      const bid=fIdx(ix,iy-1,iz), belowSeat=fgSeat[bid];
-      if (!fgFill[bid] && (belowSeat || forgeAllowed(ix,iy-1,iz))){
-        // The seat CHUTE falls PROMPTLY (no throttle) so metal never catches on the socket's top
-        // face — it drops straight through. A free drip elsewhere is throttled so it's trackable.
-        if (!inSeat && !belowSeat && (forgeSpin % FALL_EVERY)!==0) continue;
+    if (!inSeat && iy>0){
+      const bid=fIdx(ix,iy-1,iz);
+      if (!fgFill[bid] && forgeAllowed(ix,iy-1,iz)){
+        if ((forgeSpin % FALL_EVERY)!==0) continue;   // throttle the drip so it's trackable
         fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
       }
     }
-    // SOCKET DRAIN — metal that fell into the seat void and can go no lower drips out the open bottom
-    // and is LOST, so the recess stays OPEN TO THE TOP for the core to drop in. (A brief experiment
-    // made the bit's sphere REPEL instead; that let metal settle on top of the dome and BURY the
-    // recess, so it was reverted — the drain keeps the socket mouth clear.)
-    if (inSeat){ fgFill[id]=0; fgTemp[id]=0; fgMetal[id]=0; moved=true; continue; }
-    // A molten cell that can't fall and ISN'T resting in a proper box cell — it's STRANDED in the
-    // chamber or perched on the template edge — sheds sideways toward the box so it isn't stuck
-    // forever. This is what lets you MELT a piece caught above the template and have it flow in
-    // (before, a caught piece ignored every tool). A proper pool cell (below the rim, in the
-    // footprint) just STAYS when it can't fall — no bounce.
-    const restOK = !inSeat && iy<forgeRim && fgMould[id];   // a real body cell (not just a footprint column: a cone is narrow low down)
+    // DEFLECT off the socket — NEVER drain. Metal on top of, over, or (from a reorient) inside the
+    // seat void sheds sideways into the surrounding mould so it runs OFF the socket and fills the
+    // cavity. It used to be DELETED here ("socket drain"); with the ore ration ≈ the cavity volume,
+    // that lost mass and made the part impossible to complete — the real bug. It is never allowed to
+    // REST in the seat either (that buried the recess). Down-and-out first (flow into the cavity),
+    // then level-out; if nothing is open it stays put as harmless overfill, still not lost.
+    const overSeat = inSeat || (iy>0 && fgSeat[fIdx(ix,iy-1,iz)]);
+    const restOK = !overSeat && iy<forgeRim && fgMould[id];   // a real pool cell (a cone/point is narrow low down)
     if (!restOK){
-      const order=(ix+iz+forgeSpin)&3;
-      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-        if (forgeAllowed(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)]){ fMove(id,fIdx(nx,iy-1,nz),t); moved=true; break; }
-        if (forgeAllowed(nx,iy,nz)   && !fgFill[fIdx(nx,iy,nz)]){   fMove(id,fIdx(nx,iy,nz),t);   moved=true; break; } }
+      const order=(ix+iz+forgeSpin)&3; let done=false;
+      for (let s=0;s<4 && !done;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;   // down-and-out into the cavity
+        if (forgeAllowed(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)]){ fMove(id,fIdx(nx,iy-1,nz),t); moved=true; done=true; } }
+      for (let s=0;s<4 && !done;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;   // then level-out
+        if (forgeAllowed(nx,iy,nz) && !fgFill[fIdx(nx,iy,nz)]){ fMove(id,fIdx(nx,iy,nz),t); moved=true; done=true; } }
       continue;
     }
     // otherwise: a proper pool cell that can't fall — it STAYS. Use a tool to move it laterally.
