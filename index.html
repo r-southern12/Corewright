@@ -7024,72 +7024,57 @@ function fEdge(k,ci,cj){                          // isocrossing on the edge bet
   const vi=_fcv[ci], vj=_fcv[cj], t=(FISO-vi)/(vj-vi), pi=_fcp[ci], pj=_fcp[cj], e=_fe[k];
   e[0]=pi[0]+(pj[0]-pi[0])*t; e[1]=pi[1]+(pj[1]-pi[1])*t; e[2]=pi[2]+(pj[2]-pi[2])*t; return e;
 }
+// ---- finished-product surface: the mesh IS the equipment, POCKED where metal is missing ----
+// The old marching isosurface built the part UP from lumpy liquid slough. The mesh is now the
+// finished part directly: every FILLED cell contributes the faces it exposes to a NON-filled
+// neighbour, so filled metal reads as clean machined cell-faces and any gap in the fill shows as a
+// POCK/hole that closes as the cavity fills. Metal in transit (a falling drip, overfill) is just
+// more filled cells and renders at grid scale the same way. Flat axis-aligned normals throughout =
+// the crisp machined read; the grid resolution sets how fine the faces are. (The density/marching
+// helpers above are now dead code, left in place to keep the diff surgical.)
+const _FACE=[
+  [ 1,0,0,   0.5,-0.5,-0.5,  0.5,0.5,-0.5,  0.5,0.5,0.5,   0.5,-0.5,0.5 ],
+  [-1,0,0,  -0.5,-0.5,0.5,  -0.5,0.5,0.5,  -0.5,0.5,-0.5, -0.5,-0.5,-0.5],
+  [0, 1,0,  -0.5,0.5,-0.5,  -0.5,0.5,0.5,   0.5,0.5,0.5,   0.5,0.5,-0.5 ],
+  [0,-1,0,  -0.5,-0.5,0.5,  -0.5,-0.5,-0.5, 0.5,-0.5,-0.5, 0.5,-0.5,0.5 ],
+  [0,0, 1,   0.5,-0.5,0.5,   0.5,0.5,0.5,  -0.5,0.5,0.5,  -0.5,-0.5,0.5 ],
+  [0,0,-1,  -0.5,-0.5,-0.5, -0.5,0.5,-0.5,  0.5,0.5,-0.5,  0.5,-0.5,-0.5],
+];
+const _FTRI=[0,1,2,0,2,3];
+// Colour + heat for one FILLED cell, read straight off the cell (it's filled, so its metal/temp/lock
+// are valid — no neighbour hunting like the old surface-vertex path needed).
+function fCellShade(ix,iy,iz){
+  const cid=fIdx(ix,iy,iz), t=fgTemp[cid]||0, mid=fgMetal[cid], inMould=fgMould[cid];
+  fHeatRamp(t,_fcolor);
+  const _al=mid===FORGE_ALLOY_ID;
+  const setCol=_al?F_ALLOY : (mid>0?(FORGE_METAL_SET[mid]||F_SET) : (inMould?F_SET:null));
+  if (setCol && t<0.22){ const f=Math.min(1,(0.22-t)/0.16); _fcolor.lerp(setCol,f); }
+  if (t<0.2 && !((inMould||mid>0)&&t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295; _fcolor.multiplyScalar(0.8+hsh*0.36); }
+  if (fgLocked[cid]) _fcolor.copy(FORGE_LOCK_COL[mid]||F_LOCK);
+  return (inMould && t<0.16) ? 0 : Math.max(0,Math.min(1,(t-0.08)/0.34));
+}
+function fPushFace(cx0,cy0,cz0, F, heat){            // one cell face: 2 tris, flat outward normal
+  for (const k of _FTRI){
+    if (forgeVCount>=FORGE_MAXV) return;
+    const o=forgeVCount*3, b=3+k*3;
+    forgePos[o]=cx0+F[b]*FVOX; forgePos[o+1]=cy0+F[b+1]*FVOX; forgePos[o+2]=cz0+F[b+2]*FVOX;
+    forgeNor[o]=F[0]; forgeNor[o+1]=F[1]; forgeNor[o+2]=F[2];
+    forgeCol[o]=_fcolor.r; forgeCol[o+1]=_fcolor.g; forgeCol[o+2]=_fcolor.b;
+    forgeHeat[forgeVCount]=heat; forgeVCount++;
+  }
+}
 function syncForgeMesh(){
-  // 1) cell-centred density with an empty border (corner c -> cell c-1). A filled cell is 1, with a
-  //    SMALL boost for lone/near-lone cells (nb<=1) so a droplet or the drill tip still clears the
-  //    iso as a little bead. The iso (FISO) is set high so the surface hugs the cells tightly: a
-  //    single point of metal renders SMALL, not as the fat blob it used to. Denser cells stay at 1.
-  const D=forgeDens;
-  for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
-    if (ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)]){
-      let nb=0;
-      if(ix>0&&fgFill[fIdx(ix-1,iy,iz)])nb++; if(ix<FGW-1&&fgFill[fIdx(ix+1,iy,iz)])nb++;
-      if(iy>0&&fgFill[fIdx(ix,iy-1,iz)])nb++; if(iy<FGH-1&&fgFill[fIdx(ix,iy+1,iz)])nb++;
-      if(iz>0&&fgFill[fIdx(ix,iy,iz-1)])nb++; if(iz<FGD-1&&fgFill[fIdx(ix,iy,iz+1)])nb++;
-      // A lone/near-lone cell (a droplet, a stray chunk, the drill TIP) gets a SMALL boost so it
-      // still clears the higher iso as a little bead — but only just, so a single point of metal
-      // reads small, not as a fat blob. Denser cells stay at 1 and the raised iso hugs them tight.
-      D[ci]= (nb<=1) ? 1+FORGE_BLOB : 1;
-    } else D[ci]=0;
-  }
-  // 2) one centre-weighted smoothing pass — rounds the blocky surface toward
-  //    liquid while keeping lone cells above the iso so droplets survive
-  const D2=forgeDens2, row=FC_W, sl=FC_W*FC_H;
-  D2.set(D);
-  for (let cz=1;cz<FC_D-1;cz++) for (let cy=1;cy<FC_H-1;cy++) for (let cx=1;cx<FC_W-1;cx++){
-    const i=fcIdx(cx,cy,cz);
-    D2[i]=(D[i]*4 + D[i-1]+D[i+1]+D[i-row]+D[i+row]+D[i-sl]+D[i+sl])*0.1;
-  }
-  D.set(D2);
-  // 2b) SNAP TO FINISH. A cell that has settled in its TEMPLATE cell (fgMould) and COOLED (set)
-  //     stops being liquid slough and becomes the machined part: restore a HARD 1/0 density step
-  //     across its boundary so the marching surface sits FLAT on the cell face — crisp outer walls
-  //     and crisp faces against the core socket — instead of the rounded blob. Molten/loose metal is
-  //     untouched and keeps the liquid look. This is shape-agnostic ("set + in a mould cell"), so it
-  //     applies to the frame, the bit and every future equipment automatically.
-  const isSet=(ix,iy,iz)=> ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD &&
-    fgFill[fIdx(ix,iy,iz)] && fgMould[fIdx(ix,iy,iz)] && fgTemp[fIdx(ix,iy,iz)]<FORGE_SET_T;
-  for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
-    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
-    if (isSet(ix,iy,iz)){ D[ci]=1; continue; }                         // set cell: solid to its faces
-    const own = ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)];
-    // an EMPTY cell touching a set cell is forced hard-0 so the shared face is a clean flat cut
-    // (don't zero a FILLED molten neighbour — that would tear a gap between the set and molten metal)
-    if (!own && (isSet(ix-1,iy,iz)||isSet(ix+1,iy,iz)||isSet(ix,iy-1,iz)||isSet(ix,iy+1,iz)||isSet(ix,iy,iz-1)||isSet(ix,iy,iz+1)))
-      D[ci]=0;
-  }
-  // 3) march tetrahedra over every cube of the padded corner grid
   forgeVCount=0;
-  for (let cz=0;cz<FC_D-1;cz++) for (let cy=0;cy<FC_H-1;cy++) for (let cx=0;cx<FC_W-1;cx++){
-    for (let k=0;k<8;k++){ const o=_fcO[k], p=_fcp[k];
-      p[0]=cx+o[0]; p[1]=cy+o[1]; p[2]=cz+o[2]; _fcv[k]=D[fcIdx(p[0],p[1],p[2])]; }
-    for (let ti=0;ti<6;ti++){
-      const T=_ftet[ti], A=T[0],B=T[1],C=T[2],E=T[3];
-      let idx=0; if(_fcv[A]<FISO)idx|=1; if(_fcv[B]<FISO)idx|=2; if(_fcv[C]<FISO)idx|=4; if(_fcv[E]<FISO)idx|=8;
-      switch(idx){
-        case 0: case 15: break;
-        case 1: case 14: fEmit(fEdge(0,A,B),fEdge(1,A,C),fEdge(2,A,E)); break;
-        case 2: case 13: fEmit(fEdge(0,B,A),fEdge(1,B,E),fEdge(2,B,C)); break;
-        case 4: case 11: fEmit(fEdge(0,C,A),fEdge(1,C,B),fEdge(2,C,E)); break;
-        case 8: case 7:  fEmit(fEdge(0,E,A),fEdge(1,E,C),fEdge(2,E,B)); break;
-        case 3: case 12: fEmit(fEdge(0,A,E),fEdge(1,A,C),fEdge(2,B,E)); fEmit(fEdge(3,B,E),fEdge(4,A,C),fEdge(5,B,C)); break;
-        case 5: case 10: fEmit(fEdge(0,A,B),fEdge(1,C,E),fEdge(2,A,E)); fEmit(fEdge(3,A,B),fEdge(4,B,C),fEdge(5,C,E)); break;
-        case 6: case 9:  fEmit(fEdge(0,A,B),fEdge(1,A,C),fEdge(2,B,E)); fEmit(fEdge(3,A,C),fEdge(4,C,E),fEdge(5,B,E)); break;
-      }
+  for (let iz=0;iz<FGD;iz++) for (let iy=0;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++){
+    const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+    const heat=fCellShade(ix,iy,iz);                 // sets _fcolor, returns this cell's glow
+    const cx0=fWX(ix), cy0=fWY(iy), cz0=fWZ(iz);
+    for (let f=0;f<6;f++){ const F=_FACE[f], nx=ix+F[0], ny=iy+F[1], nz=iz+F[2];
+      // expose this face unless a FILLED neighbour hides it: an unfilled cell inside the part is not
+      // filled, so its shared face shows as a POCK; empty/socket/outside likewise read as clean walls.
+      if (!(fIn(nx,ny,nz) && fgFill[fIdx(nx,ny,nz)])) fPushFace(cx0,cy0,cz0, F, heat);
     }
   }
-  // 4) commit only the used range
   const n=forgeVCount*3;
   for (const a of [forgeSurfGeo.attributes.position,forgeSurfGeo.attributes.normal,forgeSurfGeo.attributes.color]){
     a.updateRange.offset=0; a.updateRange.count=n; a.needsUpdate=true;
