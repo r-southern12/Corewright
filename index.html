@@ -7228,44 +7228,23 @@ function forgeLevelHeat(){
 // physically MOVES a molten top cell from a taller column onto a shorter neighbour, so the pile
 // migrates toward the low corners and the surface flattens under the plane. Only workable
 // (not-quenched, warm) top cells move; the socket void and mould walls are respected.
-const COL_TOP=(ix,iz)=>{ for (let iy=forgeRim-1; iy>=0; iy--){ const id=fIdx(ix,iy,iz); if (fgFill[id]&&fgMould[id]) return iy; } return -1; };
-// Lowest empty allowed cell in a column, below `h` — where a cell above a gap should drop to.
-const COL_GAP=(ix,iz,h)=>{ for (let ny=0; ny<h; ny++) if (!fgFill[fIdx(ix,ny,iz)] && forgeAllowed(ix,ny,iz)) return ny; return -1; };
-const LEVEL_ITERS=6;                    // settle sweeps per relax call — high, so a pile collapses to the lowest point fast, not a cell per frame
+const LEVEL_ITERS=8;                    // settle sweeps per relax call — high, so a pile collapses to a flat pool in a moment
+// The leveller is a LIQUID SETTLE, same rule as the passive pour but aggressive and mechanical: every
+// non-locked filled cell seeks a LOWER cell — straight down, or DIAGONALLY down into a neighbour
+// column — so a pile spreads laterally AND down to fill the mould and flatten. Mechanical, so it also
+// settles COLD metal the passive flow leaves behind (the heat band re-melts it too). Strictly-lower =>
+// it converges to a level pool and stops; only quenched (locked) metal is held.
 function forgeLevelRelax(){
-  // Run several sweeps per call so metal reaches the LOWEST possible point aggressively rather than
-  // creeping one cell per frame. Each sweep = full column compaction + one steepest-descent level.
+  const yTop=Math.min(FGH-1, forgeRim+4);   // reach a few rows into the chamber so OVER-pour drains down into the mould too
   for (let iter=0; iter<LEVEL_ITERS; iter++){
     let moved=false; const order=(forgeSpin+iter)&3;
-    // 1) COMPACT every column: drop EVERY non-locked filled cell to the lowest open cell beneath it,
-    //    so a whole perched pile falls to the floor in one pass (not just its top cell). Mechanical —
-    //    the plane presses metal down, so it works even on metal that isn't fully molten. This is the
-    //    aggressive "bring it as low as it can go" the tool needs.
-    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-      if (!fgFootprint[ix+iz*FGW]) continue;
-      for (let iy=1; iy<forgeRim; iy++){
-        const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
-        const low=COL_GAP(ix,iz,iy);
-        if (low>=0){ fMove(id, fIdx(ix,low,iz), Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; }
-      }
-    }
-    // 2) LEVEL: each column's top cell slumps onto the LOWEST shorter neighbour (steepest descent,
-    //    converges flat) so the compacted metal also spreads sideways toward the low corners. This
-    //    is MECHANICAL — the plane pushes cold metal into an adjacent open space too, not only molten.
-    //    (Requiring warmth here was the bug: a cold blob the heat band didn't reach just sat, even
-    //    with an empty cell right beside it. Only locked/quenched metal is left alone.)
-    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-      if (!fgFootprint[ix+iz*FGW]) continue;
-      const h=COL_TOP(ix,iz); if (h<0) continue;
-      const id=fIdx(ix,h,iz); if (fgLocked[id]) continue;
-      let bestNd=-1, bestH=h;
-      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-        if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;
-        const nh=COL_TOP(nx,nz);
-        if (nh<bestH){ const tgt=fIdx(nx,nh+1,nz);
-          if (forgeAllowed(nx,nh+1,nz) && !fgFill[tgt]){ bestH=nh; bestNd=tgt; } }
-      }
-      if (bestNd>=0){ fMove(id,bestNd,Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; }
+    for (let iy=1; iy<yTop; iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+      const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
+      if (!fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){          // straight down
+        fMove(id,fIdx(ix,iy-1,iz),Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; continue; }
+      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;   // diagonally down
+        if (fIn(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)] && forgeAllowed(nx,iy-1,nz)){
+          fMove(id,fIdx(nx,iy-1,nz),Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; break; } }
     }
     if (moved) forgeDirty=true; else break;   // settled — stop early
   }
@@ -7448,21 +7427,29 @@ function forgeFlowStep(){
     // EVERYWHERE (gap and pool alike) — so you can watch the slough descend.
     // Metal falls straight down onto a real BODY cell only — NEVER into the core socket (fgSeat).
     const inSeat = fgSeat[id];
+    // SETTLE. Molten metal seeks the LOWEST open body cell — straight down, else DIAGONALLY down into
+    // a lower neighbour column — so it flows laterally AND down and fills the mould from the bottom,
+    // flattening the pool BY ITSELF. (Before, a cell that couldn't fall straight just STAYED, so metal
+    // piled into a tower you had to hand-level — the frustration.) Strictly-lower moves only, so it
+    // converges to a flat pool and stops; it never slides sideways at the same level, so no sloshing.
+    // It never enters the socket (forgeAllowed excludes it); a cell over the socket settles diagonally
+    // OFF it into the cavity.
     if (!inSeat && iy>0){
-      const bid=fIdx(ix,iy-1,iz);
-      if (!fgFill[bid] && forgeAllowed(ix,iy-1,iz)){
-        if ((forgeSpin % FALL_EVERY)!==0) continue;   // throttle the drip so it's trackable
-        fMove(id,bid,t); fMeltCreep(ix,iy,iz); moved=true; continue;
+      let tgt=-1;
+      if (!fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)) tgt=fIdx(ix,iy-1,iz);   // straight down
+      else { const order=(ix+iz+forgeSpin)&3;                                           // else diagonally down
+        for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+          if (fIn(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)] && forgeAllowed(nx,iy-1,nz)){ tgt=fIdx(nx,iy-1,nz); break; } } }
+      if (tgt>=0){
+        if ((forgeSpin % FALL_EVERY)===0){ fMove(id,tgt,t); fMeltCreep(ix,iy,iz); moved=true; }
+        continue;   // has a lower target: move on the cadence, else wait — either way don't shed
       }
     }
-    // DEFLECT off the socket — NEVER drain. Metal on top of, over, or (from a reorient) inside the
-    // seat void sheds sideways into the surrounding mould so it runs OFF the socket and fills the
-    // cavity. It used to be DELETED here ("socket drain"); with the ore ration ≈ the cavity volume,
-    // that lost mass and made the part impossible to complete — the real bug. It is never allowed to
-    // REST in the seat either (that buried the recess). Down-and-out first (flow into the cavity),
-    // then level-out; if nothing is open it stays put as harmless overfill, still not lost.
+    // Over/in the SOCKET, or a chamber-stranded cell that can't settle lower: shed it out so it isn't
+    // stuck. NEVER drained/deleted (that lost mass and made the part uncompletable) and never left to
+    // rest in the seat (that buried the recess) — down-out first, then level-out.
     const overSeat = inSeat || (iy>0 && fgSeat[fIdx(ix,iy-1,iz)]);
-    const restOK = !overSeat && iy<forgeRim && fgMould[id];   // a real pool cell (a cone/point is narrow low down)
+    const restOK = !overSeat && iy<forgeRim && fgMould[id];   // a settled pool cell (a cone/point is narrow low down)
     if (!restOK){
       const order=(ix+iz+forgeSpin)&3; let done=false;
       for (let s=0;s<4 && !done;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;   // down-and-out into the cavity
@@ -7471,7 +7458,7 @@ function forgeFlowStep(){
         if (forgeAllowed(nx,iy,nz) && !fgFill[fIdx(nx,iy,nz)]){ fMove(id,fIdx(nx,iy,nz),t); moved=true; done=true; } }
       continue;
     }
-    // otherwise: a proper pool cell that can't fall — it STAYS. Use a tool to move it laterally.
+    // otherwise: a settled pool cell at the lowest it can reach — STAYS (the pool is flat here).
   }
   // (No spill/flash mechanic: metal that reaches an edge just stops there. Wastage as
   // a semi-random loss wasn't wanted — with a measured nugget feed you control how
