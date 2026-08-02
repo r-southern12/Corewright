@@ -6992,6 +6992,9 @@ function fPushVert(g,fn){                        // g = [gx,gy,gz] in padded-cor
   forgeVCount++;
 }
 const FLAT_T=0.35;                               // below this a triangle is flat-shaded (angular ore)
+// Below this temperature a cell that has settled in its TEMPLATE position is "set" — it stops
+// reading as liquid slough and SNAPS to a clean machined face (see the snap pass in syncForgeMesh).
+const FORGE_SET_T=0.16;
 function fCellTempAt(g){                          // temperature of the cell a corner sits in
   const ix=Math.min(FGW-1,Math.max(0,Math.round(g[0])-1)), iy=Math.min(FGH-1,Math.max(0,Math.round(g[1])-1)),
         iz=Math.min(FGD-1,Math.max(0,Math.round(g[2])-1));
@@ -7046,6 +7049,23 @@ function syncForgeMesh(){
     D2[i]=(D[i]*4 + D[i-1]+D[i+1]+D[i-row]+D[i+row]+D[i-sl]+D[i+sl])*0.1;
   }
   D.set(D2);
+  // 2b) SNAP TO FINISH. A cell that has settled in its TEMPLATE cell (fgMould) and COOLED (set)
+  //     stops being liquid slough and becomes the machined part: restore a HARD 1/0 density step
+  //     across its boundary so the marching surface sits FLAT on the cell face — crisp outer walls
+  //     and crisp faces against the core socket — instead of the rounded blob. Molten/loose metal is
+  //     untouched and keeps the liquid look. This is shape-agnostic ("set + in a mould cell"), so it
+  //     applies to the frame, the bit and every future equipment automatically.
+  const isSet=(ix,iy,iz)=> ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD &&
+    fgFill[fIdx(ix,iy,iz)] && fgMould[fIdx(ix,iy,iz)] && fgTemp[fIdx(ix,iy,iz)]<FORGE_SET_T;
+  for (let cz=0;cz<FC_D;cz++) for (let cy=0;cy<FC_H;cy++) for (let cx=0;cx<FC_W;cx++){
+    const ix=cx-1,iy=cy-1,iz=cz-1, ci=fcIdx(cx,cy,cz);
+    if (isSet(ix,iy,iz)){ D[ci]=1; continue; }                         // set cell: solid to its faces
+    const own = ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD && fgFill[fIdx(ix,iy,iz)];
+    // an EMPTY cell touching a set cell is forced hard-0 so the shared face is a clean flat cut
+    // (don't zero a FILLED molten neighbour — that would tear a gap between the set and molten metal)
+    if (!own && (isSet(ix-1,iy,iz)||isSet(ix+1,iy,iz)||isSet(ix,iy-1,iz)||isSet(ix,iy+1,iz)||isSet(ix,iy,iz-1)||isSet(ix,iy,iz+1)))
+      D[ci]=0;
+  }
   // 3) march tetrahedra over every cube of the padded corner grid
   forgeVCount=0;
   for (let cz=0;cz<FC_D-1;cz++) for (let cy=0;cy<FC_H-1;cy++) for (let cx=0;cx<FC_W-1;cx++){
