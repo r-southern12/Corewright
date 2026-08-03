@@ -7202,23 +7202,18 @@ function fluxHeat(){
     forgeDirty=true;
   }
 }
-// Leveling plane: warm every filled cell in a horizontal slab at forgeLevelY across the
-// WHOLE footprint (falloff toward the band edge), so a held plane melts a layer and it
-// slumps flat. Same superlinear heat-resistance as the torch. Metal above the slab, once
-// molten, drains down past it and levels; sweep the plane down to flatten progressively.
+const LEVEL_R=3.6;                       // leveller heat + push radius (its "scale") — wider than the torch's corral so a hold shoves a real chunk
+// Leveller heat: warm the metal in a SPHERE around the cursor so it's molten enough to shove. Same
+// superlinear heat-resistance as the torch. Paired with forgePush(LEVEL_R) each tick, this is the
+// hand-forge-style move tool — point at a pile and it heats then slides away from the cursor.
 function forgeLevelHeat(){
-  const y=forgeLevelY;
-  const y0=Math.floor(y-LEVEL_BAND), y1=Math.ceil(y+LEVEL_BAND);
-  for (let iy=y0;iy<=y1;iy++){
-    if (iy<0||iy>=FGH) continue;
-    const w=Math.max(0,1-Math.abs(iy-y)/LEVEL_BAND);   // band falloff
-    if (w<=0) continue;
-    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-      const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;   // quenched metal won't reheat
-      const t=fgTemp[id];
-      fgTemp[id]=Math.min(1,t+LEVEL_ADD*w*(0.5+t*1.5));
-      forgeDirty=true;
-    }
+  if (!fluxAim) return;
+  const R=LEVEL_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
+  const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
+  for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
+    if (!fIn(ix,iy,iz)) continue; const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
+    const d2=(ix-cx)**2+(iy-cy)**2+(iz-cz)**2; if (d2>r2) continue;
+    const t=fgTemp[id]; fgTemp[id]=Math.min(1,t+LEVEL_ADD*(1-d2/r2*0.5)*(0.5+t*1.5)); forgeDirty=true;
   }
 }
 // ACTIVE lateral transport for the level tool. The passive slump in forgeFlowStep is local and
@@ -7283,9 +7278,14 @@ function forgeGrindStep(){
 // in the chamber shouldn't fling it around. It's SLOW (throttled to 1/5 the sim rate in the tick)
 // and moves each cell only ONE space per application. Nearest cells shove outward first.
 const NUDGE_R=2.6;
-function forgeTorchNudge(){
+function forgeTorchNudge(){ forgePush(NUDGE_R); }
+// Shove hot metal AWAY from the cursor, in a radius R. The torch uses a small R for a gentle corral;
+// the LEVELLER uses a bigger R as its main "move this stuff" action (like the hand forge — you aim
+// and the molten metal slides away from where you point), so you can push a pile where you want it
+// instead of fighting an auto-flatten that oscillates.
+function forgePush(R){
   if (!fluxAim) return;
-  const R=NUDGE_R, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
+  const r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
   const x0=Math.floor(cx-R),x1=Math.ceil(cx+R),y0=Math.floor(cy-R),y1=Math.ceil(cy+R),z0=Math.floor(cz-R),z1=Math.ceil(cz+R);
   const cells=[];
   for (let ix=x0;ix<=x1;ix++) for (let iy=y0;iy<=y1;iy++) for (let iz=z0;iz<=z1;iz++){
@@ -7563,7 +7563,7 @@ function forgeSimTick(){
     const e=1-Math.pow(1-forgeTurnT,3);
     forgePivot.quaternion.slerpQuaternions(forgeTurnFromQ,_forgeIdQ,e); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
-  if (fluxOn||forgeGrinding||forgeCrucPouring){
+  if (fluxOn||forgeGrinding||forgeCrucPouring||forgeLevelHold){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
     forgeBeam.visible=!!fluxAim;
   } else forgeBeam.visible=false;
@@ -7572,7 +7572,7 @@ function forgeSimTick(){
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
-    if (forgeLevelHold){ forgeLevelHeat(); if (forgeSpin%3===0) forgeLevelRelax(); }   // level at 1/3 rate — brisk enough to actually pull a pile down, not so fast it oscillates
+    if (forgeLevelHold){ forgeLevelHeat(); if (forgeSpin%2===0) forgePush(LEVEL_R); }   // heat the metal at the cursor and shove it AWAY — the hand-forge-style move tool
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7914,10 +7914,9 @@ function forgeDown(x,y){
   const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
   const aim=forgeAimCell(x,y);
   if (forgeTool==='level'){
-    // press anywhere over the TEMPLATE to level (drag up/down) — even with no metal there yet;
-    // press OUTSIDE the template to rotate the view. (Before it needed a metal hit, which made the
-    // slab impossible to grab when the pour was low.)
-    if (forgeOverTemplate(x,y)){ forgeLevelHold=true; forgePY=y; }
+    // aim at the metal and hold to shove it away from the cursor (like the torch); move the cursor
+    // to steer the pile. Miss the metal -> drag-rotate the bench.
+    if (aim){ forgeLevelHold=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
@@ -7943,17 +7942,13 @@ function forgeDown(x,y){
 }
 function forgeMove(x,y){
   forgeUpdateCursor(x,y);                       // the tool model tracks the pointer (hover + drag)
-  if (forgeLevelHold){                         // drag vertically to move the heat plane
-    forgeLevelY=Math.max(0,Math.min(forgeRim, forgeLevelY-(y-forgePY)*0.02));
-    forgePY=y; forgePlaceLevelPlane(); return;
-  }
   if (forgeRotating){
     forgeGroup.rotation.y+=(x-forgePX)*0.008;
     forgeGroup.rotation.x=Math.max(-0.35,Math.min(1.0,forgeGroup.rotation.x+(y-forgePY)*0.006));
     forgePX=x; forgePY=y; return;
   }
-  if (!fluxOn && !forgeGrinding && !forgeCrucPouring) return;
-  forgeSX=x; forgeSY=y;                        // the tick re-aims from here
+  if (!fluxOn && !forgeGrinding && !forgeCrucPouring && !forgeLevelHold) return;
+  forgeSX=x; forgeSY=y;                        // the tick re-aims from here (leveller steers by cursor now)
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
 function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false; forgeLevelHold=false; forgeSX=null; forgeSY=null; }
@@ -7961,14 +7956,7 @@ function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; f
 // when Level is chosen; syncs the palette/button highlight.
 function forgeSetTool(name){
   forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeBeam.visible=false;
-  const lvl=name==='level';
-  if (lvl){
-    let top=1; for (let iy=forgeRim-1;iy>=0;iy--){ let any=false;
-      for (let ix=0;ix<FGW&&!any;ix++) for (let iz=0;iz<FGD;iz++) if (fgFill[fIdx(ix,iy,iz)]&&fgMould[fIdx(ix,iy,iz)]){any=true;break;}
-      if (any){ top=iy; break; } }
-    forgeLevelY=top;
-  }
-  forgeLevelPlane.visible=lvl; forgePlaceLevelPlane();
+  forgeLevelPlane.visible=false;                 // the leveller aims at the cursor now (beam), not a horizontal plane
   for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
   if (typeof forgeSyncPalette==='function') forgeSyncPalette();
   if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the hanging pot
