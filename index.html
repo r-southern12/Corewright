@@ -1685,8 +1685,10 @@ const RECIPES={
    old per-metal, per-tier matrix (copper frame / iron frame / bronze frame / …) collapsed
    to one entry each. Suit frames carry the system they mount. */
 const FORGE_TEMPLATES=[
-  {id:'drillFrame', part:'frame',                          label:'Drill Frame',          desc:'the drill body — the core is housed inside it'},
-  {id:'drillBit',   part:'bit',                            label:'Drill Bit',            desc:'the cutting edge that bites the stone'},
+  {id:'drillFrame', part:'frame',    shape:'box',        label:'Drill Frame',          desc:'the drill body — the core is housed inside it'},
+  {id:'drillBit',   part:'bit',      shape:'bit',        label:'Drill Bit',            desc:'the cutting edge that bites the stone'},
+  {id:'mortar',     part:'brew',     shape:'mortar',     label:'Mortar & Pestle',      desc:'a brewing vessel — houses a power core in its bowl'},
+  {id:'calcinator', part:'brew',     shape:'calcinator', label:'Calcinator',           desc:'a brewing dish — houses a power core'},
   {id:'wardFrame',  part:'suitFrame', system:'forgePrism', label:'Elemental Ward Frame', desc:'a suit frame carrying the elemental ward'},
   {id:'aegisFrame', part:'suitFrame', system:'alembic',    label:'Aegis Plate Frame',    desc:'a suit frame — the armour plating'},
   {id:'scanFrame',  part:'suitFrame', system:'coil',       label:'Scanner Frame',        desc:'a suit frame to mount the scanning coil'},
@@ -6484,29 +6486,64 @@ const _bitBodyP=(px,py,pz)=>{
   if (s2>0) R=Math.max(R, _BIT_SOCK_R+1.5);
   return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
 };
+// ---------- BREWING VESSELS: chunky forged versions — a revolved body with an OPEN BOWL the core sits in ----------
+// Each vessel is a body of revolution: an OUTER profile (radius vs height) that the metal fills, minus a
+// CAVITY profile (the open bowl / well the power-core sphere drops into). Both are control-point lists
+// [y_cell, r_cell] linearly interpolated by _vprof, so the whole silhouette is a few numbers to tune.
+// A small non-revolved appendage (the mortar's pestle) is added straight into bodyP. Chunky by design —
+// thick walls, no thin necks or wire legs — so the melt can actually fill it (the agreed "forge-able"
+// fidelity). The core socket is the sphere power cell (socketComp 'cell'); the bowl is its seatExtra void.
+function _vprof(pts,py){
+  if (py<=pts[0][0]) return pts[0][1];
+  const n=pts.length; if (py>=pts[n-1][0]) return pts[n-1][1];
+  for (let i=1;i<n;i++){ if (py<=pts[i][0]){ const a=pts[i-1],b=pts[i]; const t=(py-a[0])/(b[0]-a[0]||1); return a[1]+(b[1]-a[1])*t; } }
+  return 0;
+}
+const VCORE_R=1.2*SEAT_PER;                        // sphere power-core radius in cells (~5.1)
+// MORTAR & PESTLE — a squat thick-walled cup; the core sits in the bowl, a chunky pestle leans on the rim.
+const MORT_HY=10;                                                    // = cup-bottom depth, so the cup rests on the floor
+const MORT_OUT=[[-10,4.6],[-9,6.9],[-7,8.5],[4,8.5],[5.5,7.6]];       // rounded base -> straight wall -> rim (~5.5)
+const MORT_CAV=[[-6.5,0],[-5,4.6],[-3,5.9],[5.7,5.9]];               // rounded bowl bottom -> open well to the rim
+const MORT_SOCK_PY=-1.4;                                              // core sphere centre (sits low in the bowl, below the rim)
+const _mortPestle=(px,py,pz)=>{                                       // a fat pestle leaning UP-and-OUT of the +x rim
+  const ax=6.4,ay=3.5,bx=8.2,by=9.6, dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy;
+  let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+dx*t),py-(ay+dy*t),pz)<=2.15;
+};
+const _mortBodyP=(px,py,pz)=>{
+  if (py>=-MORT_HY-0.01 && py<=5.5+0.01 && Math.hypot(px,pz)<=_vprof(MORT_OUT,py)+0.4) return true;   // the cup
+  if (py>=1 && py<=12 && _mortPestle(px,py,pz)) return true;                                           // the pestle (sticks up into the chamber)
+  return false;
+};
+const _mortSeat=(px,py,pz)=>{ if (py<-6.51||py>5.7) return false; return Math.hypot(px,pz)<=_vprof(MORT_CAV,py); };
+// CALCINATOR — a wide bowl on a chunky banded pedestal; the core sits in the bowl (a little proud, brazier-like).
+const CALC_HY=9;
+const CALC_OUT=[[-9,5.2],[-7.4,7.2],[-6.4,4.0],[-1,4.2],[-0.4,5.6],[0.6,7.0],[8,10.3],[8.6,9.2]];      // foot -> stem -> band -> bowl -> rim
+const CALC_CAV=[[-1,0],[1,5.0],[3,7.0],[8.7,7.0]];                                                     // bowl well, open top
+const CALC_SOCK_PY=5.0;
+const _calcBodyP=(px,py,pz)=> py>=-CALC_HY-0.01 && py<=8.6+0.01 && Math.hypot(px,pz)<=_vprof(CALC_OUT,py)+0.4;
+const _calcSeat=(px,py,pz)=>{ if (py<-1.01||py>8.7) return false; return Math.hypot(px,pz)<=_vprof(CALC_CAV,py); };
 // hx/hy/hz are the FLOOR-REST/turn bounds (the tight body). castHx/castHy/castHz are the REORIENT
 // bounds: the box a turn treats as "part of the cast that rides the rotation". For the bit these must
 // clear the PROUD spiral thread (which reaches RMAX+PROUD, past the shank hx) — otherwise the thread
 // cells fall outside the tight box, get classed as loose chamber drips, and are stranded/lost when the
-// part turns (the reported "material clipped off"). Default cast bound = the tight body.
+// part turns (the reported "material clipped off"). Default cast bound = the tight body. `seatExtra` is
+// an optional extra void unioned with the core socket (the bit's throat, a vessel's open bowl). `ghostP`
+// is a revolved outer profile [y,r] for the wireframe (vessels); box/cone build their own.
 const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
-  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
+  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone',
+    seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6},   // the drill-bit throat
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:10.8, castHy:12.5, castHz:9.5, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT},
+  calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT},
 };
-function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAPES.bit : FORGE_SHAPES.box; }
-// Socket test in the PART frame, sampled through the shape's own component inside() so a
-// non-cube core (the bit's sphere) drops in as a data change, not an engine one.
+function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
+// Socket test in the PART frame: the core's own component inside() (so a sphere/cube drops in as data),
+// unioned with the shape's optional seatExtra void (the bit throat, a vessel bowl).
 function forgeSeatInsideP(px,py,pz){
   const s=forgeShape();
   const inSocket=COMPONENTS[s.socketComp].inside(px/s.socketPer,(py-s.socketPy)/s.socketPer,pz/s.socketPer);
-  if (s===FORGE_SHAPES.bit){
-    // Cylindrical THROAT: a bore the core's own width, from the sphere seat up through the shank top,
-    // so the round power core drops straight in. The void is sphere-seat ∪ throat-cylinder; the wider
-    // shank walls it. Open at the top into the chamber (metal is force-slid off that mouth as usual).
-    const inThroat = Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6;
-    return inSocket || inThroat;
-  }
-  return inSocket;
+  return inSocket || (s.seatExtra ? s.seatExtra(px,py,pz) : false);
 }
 // Build fgMould (box interior) + fgSeat (socket void) for the CURRENT orientation by
 // mapping every grid cell back into the part frame and testing the canonical box and
@@ -6676,12 +6713,20 @@ forgeThreadWire.visible=false; forgeThreadWire.renderOrder=14; forgePivot.add(fo
 // change (enterForge), NOT on reorient — a turn/roll only re-places the existing ghosts. The
 // box body ghost stays a unit cube (scaled per-orientation below); the bit body ghost is a real
 // cone (apex down), and the socket ghost becomes whatever the shape's component draws.
-let forgeGhostCone=false;
+let forgeGhostCone=false, forgeGhostLathe=false;
 function forgeSyncGhostGeo(){
   const s=forgeShape();
   forgeGhostCone = (s.ghost==='cone');
+  forgeGhostLathe = (s.ghost==='lathe');
   forgeGhostWire.geometry.dispose();
-  if (forgeGhostCone){
+  if (forgeGhostLathe){
+    // A vessel silhouette revolved from its outer profile [y_cell, r_cell]. A hair of margin so the
+    // wire sits just outside the cast, like the cone envelope.
+    const prof=s.ghostP.map(p=>new THREE.Vector2(Math.max(0.001,(p[1]+0.4)*FVOX), p[0]*FVOX));
+    const g=new THREE.LatheGeometry(prof, 22);
+    forgeGhostWire.geometry=new THREE.EdgesGeometry(g,22); g.dispose();
+    forgeThreadWire.visible=false;
+  } else if (forgeGhostCone){
     // A PENCIL silhouette revolved from its profile (tip -> shank top). The wire is the OUTER
     // envelope of the cast: the marching surface sits a fraction of a cell past the ridge cells, so
     // the profile carries a small margin (BIT_GHOST_M) — the fluted thread then reads as cut INTO
@@ -6719,7 +6764,7 @@ function forgeSyncGhostGeo(){
 const _fbC=new THREE.Vector3();
 function forgePlaceGhosts(){
   const cx=(FGW-1)/2, cz=(FGD-1)/2, q=matQuat(forgeRot), sh=forgeShape();
-  if (forgeGhostCone){
+  if (forgeGhostCone||forgeGhostLathe){
     forgeGhostWire.scale.set(1,1,1); forgeGhostWire.quaternion.copy(q);
   } else {
     const e=fwdRot(forgeRot, FORGE_HX,FORGE_HY,FORGE_HZ);
