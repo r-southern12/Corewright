@@ -7228,25 +7228,35 @@ function forgeLevelHeat(){
 // physically MOVES a molten top cell from a taller column onto a shorter neighbour, so the pile
 // migrates toward the low corners and the surface flattens under the plane. Only workable
 // (not-quenched, warm) top cells move; the socket void and mould walls are respected.
-const LEVEL_ITERS=8;                    // settle sweeps per relax call — high, so a pile collapses to a flat pool in a moment
-// The leveller is a LIQUID SETTLE, same rule as the passive pour but aggressive and mechanical: every
-// non-locked filled cell seeks a LOWER cell — straight down, or DIAGONALLY down into a neighbour
-// column — so a pile spreads laterally AND down to fill the mould and flatten. Mechanical, so it also
-// settles COLD metal the passive flow leaves behind (the heat band re-melts it too). Strictly-lower =>
-// it converges to a level pool and stops; only quenched (locked) metal is held.
+const LEVEL_ITERS=12;                   // flatten sweeps per relax call — high, so a mound spreads flat in a moment
+// Highest filled mould cell in a column, and the lowest empty allowed cell below h.
+const COL_TOP=(ix,iz)=>{ for (let iy=forgeRim-1; iy>=0; iy--){ const id=fIdx(ix,iy,iz); if (fgFill[id]&&fgMould[id]) return iy; } return -1; };
+const COL_GAP=(ix,iz,h)=>{ for (let ny=0; ny<h; ny++) if (!fgFill[fIdx(ix,ny,iz)] && forgeAllowed(ix,ny,iz)) return ny; return -1; };
+// The leveller FLATTENS the surface by comparing COLUMN HEIGHTS: it moves a taller column's top cell
+// onto a SHORTER neighbour column, so a central MOUND spreads OUTWARD to the low corners and the top
+// goes flat (water finding its level). Comparing whole columns is the crux — a cell sitting on a mound
+// has solid metal directly below AND one step down-diagonal, so a "move only into a lower OPEN cell"
+// rule can never shift it (that was the bug: the tool only heated, nothing moved). It also fills any
+// gap within a column. Mechanical, so cold SET metal levels too; only quenched (locked) metal is held.
 function forgeLevelRelax(){
-  const yTop=Math.min(FGH-1, forgeRim+4);   // reach a few rows into the chamber so OVER-pour drains down into the mould too
   for (let iter=0; iter<LEVEL_ITERS; iter++){
     let moved=false; const order=(forgeSpin+iter)&3;
-    for (let iy=1; iy<yTop; iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-      const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
-      if (!fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)){          // straight down
-        fMove(id,fIdx(ix,iy-1,iz),Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; continue; }
-      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;   // diagonally down
-        if (fIn(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)] && forgeAllowed(nx,iy-1,nz)){
-          fMove(id,fIdx(nx,iy-1,nz),Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; break; } }
+    for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
+      if (!fgFootprint[ix+iz*FGW]) continue;
+      // COMPACT: pull filled cells down into any gap in this column.
+      for (let iy=1; iy<forgeRim; iy++){ const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgLocked[id]) continue;
+        const low=COL_GAP(ix,iz,iy); if (low>=0){ fMove(id,fIdx(ix,low,iz),Math.max(fgTemp[id],FLOW_T+0.05)); moved=true; } }
+      // LEVEL: move this column's TOP cell onto the LOWEST shorter neighbour column (steepest descent).
+      const h=COL_TOP(ix,iz); if (h<0) continue; const tid=fIdx(ix,h,iz); if (fgLocked[tid]) continue;
+      let bestNd=-1, bestH=h;
+      for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
+        if (!fIn(nx,0,nz) || !fgFootprint[nx+nz*FGW]) continue;
+        const nh=COL_TOP(nx,nz);
+        if (nh<bestH){ const t2=fIdx(nx,nh+1,nz); if (forgeAllowed(nx,nh+1,nz) && !fgFill[t2]){ bestH=nh; bestNd=t2; } }
+      }
+      if (bestNd>=0){ fMove(tid,bestNd,Math.max(fgTemp[tid],FLOW_T+0.05)); moved=true; }
     }
-    if (moved) forgeDirty=true; else break;   // settled — stop early
+    if (moved) forgeDirty=true; else break;
   }
 }
 // Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
