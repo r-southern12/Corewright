@@ -6359,7 +6359,7 @@ const SEED_UP={
      activeCore or the shard batches. (NB `forgeAnvil` is already the
      seated anvil-core global — this bench's plate mesh is a local.)
    ============================================================ */
-const FGW=21, FGH=41, FGD=21;          // grid dims (footprint x height x depth). DOUBLED from 11/21/11
+const FGW=23, FGH=41, FGD=23;          // grid dims (footprint x height x depth). DOUBLED from 11/21/11
                                        // for a finer, machined look — curved parts (bit cylinder/cone,
                                        // the sphere socket) read smooth instead of blocky. FVOX halved
                                        // to keep the same world size. Taller than the
@@ -6367,6 +6367,11 @@ const FGW=21, FGH=41, FGD=21;          // grid dims (footprint x height x depth)
                                        // box, AND the billet hangs with a real air gap above it so a
                                        // sloughed drip visibly falls; both need chamber headroom while
                                        // the billet still out-volumes the (now larger) cavity.
+                                       // W/D widened 21->23 so the tall drill BIT (2*HY=22 cells long)
+                                       // fits along a horizontal axis when it's turned on its side — at
+                                       // 21 its point + top fell off the grid and were shed on a turn
+                                       // ("lost the base"). MOULD_INSET grows to 3 to keep the frame box
+                                       // the same 16-cell width in the wider grid.
 const FG_N=FGW*FGH*FGD;
 const fIdx=(ix,iy,iz)=>ix+iy*FGW+iz*FGW*FGH;
 const fIn=(ix,iy,iz)=>ix>=0&&ix<FGW&&iy>=0&&iy<FGH&&iz>=0&&iz<FGD;
@@ -6396,7 +6401,7 @@ let fgMouldTotal=0;
 const MOULD_DEPTH=13;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
                                        // Deepened from 3 so a real core socket sinks into it and metal
                                        // wraps the seat's SIDES (that side contact is what a core needs).
-const MOULD_INSET=2;                    // cavity inset from the footprint edge
+const MOULD_INSET=3;                    // cavity inset from the footprint edge (3 in the 23-wide grid keeps the box 16 across)
 const FLOW_T=0.45;                      // temperature at which metal turns molten and flows. The
                                        // incandescence ramp (FHEAT_*) is compressed so WHITE-HOT lands right
                                        // here: a torched patch charges up dull red -> red -> orange -> yellow
