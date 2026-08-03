@@ -1810,8 +1810,9 @@ function loadCore(core){
   activeCore=core;
   VOX=TIERS[core.tier].vox; HALF=TIERS[core.tier].halfN;
   clearBench();
-  mineral.rotation.set(0,0,0);
+  mineral.rotation.set(0,0,0); mineral.position.set(0,0,0);
   gx=0; gy=0; gz=0;
+  restoreAlign();                          // bring back this core's saved offset + socket orientation
   for (const c of core.cells) addVoxelMesh(c,core.polish);
   voxelizeTemplate(); buildGhost(); buildOcc(); cullInterior(); setPreview(new Set());
   sawGap=3.0; positionSaw();
@@ -2268,10 +2269,23 @@ function nudge(dx,dy,dz){
   gx=Math.max(-L,Math.min(L,gx+dx*NUDGE_STEP));
   gy=Math.max(-L,Math.min(L,gy+dy*NUDGE_STEP));
   gz=Math.max(-L,Math.min(L,gz+dz*NUDGE_STEP));
-  positionGhost(); placeGizmo(); refreshTint(); liveOutput();
+  positionGhost(); placeGizmo(); applyCorePivot(); refreshTint(); liveOutput();
   document.getElementById('nreadout').textContent=
     `${gx.toFixed(2)}, ${gy.toFixed(2)}, ${gz.toFixed(2)}`;
+  saveAlign();                            // this core remembers its alignment for this template
   flashGhost();
+}
+// Alignment (offset gx,gy,gz + socket orientation) is remembered PER CORE, PER TEMPLATE, so you set it
+// once and it's there every time you come back — no re-nudging on every visit (the reported frustration).
+function saveAlign(){
+  if (!activeCore) return;
+  (activeCore.align||(activeCore.align={}))[comp]=[+gx.toFixed(3),+gy.toFixed(3),+gz.toFixed(3),orientIdx];
+}
+function restoreAlign(){
+  const a=activeCore&&activeCore.align&&activeCore.align[comp];
+  if (a){ gx=a[0]; gy=a[1]; gz=a[2]; orientIdx=a[3]|0; }
+  else { gx=0; gy=0; gz=0; orientIdx=0; }
+  const chip=document.querySelector('#orientChip b'); if (chip) chip.textContent=ORIENTS[orientIdx].label;
 }
 
 // ---------- RGB axis gizmo (locked to the template centre, turns with core) ----------
@@ -2301,6 +2315,21 @@ gizmo.renderOrder=20;
 mineral.add(gizmo);
 function placeGizmo(){
   gizmo.position.set(gx,gy,gz);         // ride the template
+}
+// Rotate the core AROUND the template centre, not the group origin. Alignment offsets the template to
+// (gx,gy,gz) in the core's local frame; if the core then just spun about the origin, the aligned
+// feature would orbit away from the socket (the reported problem). Instead we PIN the template centre
+// in world space and spin the core about it: mineral.position = g - R·g keeps the local point g fixed
+// under any rotation R, so the ghost/gizmo (children at local g) sit still while the stone turns
+// around them. The fit test works in local coords so it's unaffected; the saw reads world positions
+// and references gx as its centre, so it stays consistent with the pinned template. Seating drives
+// mineral.position itself, so we leave it alone there.
+const _pivG=new THREE.Vector3();
+function applyCorePivot(){
+  if (seatBenchOn) return;                 // seating drives mineral.position itself
+  if (view==='dig'){ mineral.position.set(0,0,0); return; }   // raw matrix clean: no template to pivot on
+  _pivG.set(gx,gy,gz).applyEuler(mineral.rotation);
+  mineral.position.set(gx-_pivG.x, gy-_pivG.y, gz-_pivG.z);
 }
 
 
@@ -3104,23 +3133,22 @@ function sawTick(dt,now){
   if (!sawClosing&&!stale) return;
   sawScanStamp=massVersion; sawScanGap=sawGap; sawScanRot=rotKey;
   const touching=sawContact();
-  if (!sawClosing){
-    /* Turning the core can shove crystal THROUGH an idle blade, and a blade
-       cannot occupy solid stone — so it gets pushed clear. But this used to run
-       on EVERY release, which undid the cut: close in, cut, let go, and the
-       blade retreated past the outermost shard. It could never rest inside the
-       core, so the template border felt impassable. Only a ROTATION triggers it
-       now; releasing the button leaves the blade exactly where you left it. */
-    if (touching.length && sawScanRot!==sawRestRot){
-      const maxProud=Math.max(...touching.map(v=>v.proud));
-      sawGap+=maxProud+0.02;
-      positionSaw();
-      const clear=sawContact();      // re-measure; nothing should be proud now
-      setPreview(new Set(clear.map(v=>v.mesh)));
-      sawRestRot=sawScanRot;
-      return;
-    }
+  /* Turning the core can shove crystal THROUGH the blade, and a blade cannot occupy solid stone —
+     so a ROTATION pushes it clear to the new surface. This runs whether the blade is IDLE or being
+     HELD: a held blade that isn't retreated clips straight through the stone as you turn it (the
+     reported bug). Holding STEADY (no rotation) leaves the blade where it is so it can grind in;
+     only a rotation retreats it, and releasing the button never does (that would undo the cut). */
+  if (touching.length && sawScanRot!==sawRestRot){
+    const maxProud=Math.max(...touching.map(v=>v.proud));
+    sawGap+=maxProud+0.02;
+    positionSaw();
+    const clear=sawContact();        // re-measure; nothing should be proud now
+    setPreview(new Set(clear.map(v=>v.mesh)));
     sawRestRot=sawScanRot;
+    return;
+  }
+  sawRestRot=sawScanRot;
+  if (!sawClosing){
     setPreview(new Set(touching.map(v=>v.mesh)));
     return;
   }
@@ -8985,10 +9013,9 @@ document.getElementById('cleaveBtn').onclick=()=>{
 };
 document.getElementById('compChip').onclick=()=>{
   comp=COMP_ORDER[(COMP_ORDER.indexOf(comp)+1)%COMP_ORDER.length];
-  orientIdx=0;                       // a new socket starts upright
-  document.querySelector('#orientChip b').textContent=ORIENTS[0].label;
+  restoreAlign();                    // this template's own saved offset + orientation (or centred, upright)
   document.querySelector('#compChip b').textContent=COMPONENTS[comp].label;
-  voxelizeTemplate(); buildGhost(); refreshTint(); liveOutput();
+  voxelizeTemplate(); buildGhost(); placeGizmo(); applyCorePivot(); refreshTint(); liveOutput();
   if (seatBenchOn){ buildSocket(); socketGroup.visible=true; updateSeatHud(); }
   say(`${COMPONENTS[comp].label}: ${COMPONENTS[comp].blurb}.`);
 };
@@ -9019,6 +9046,7 @@ document.getElementById('orientChip').onclick=()=>{
   orientIdx=(orientIdx+1)%ORIENTS.length;
   document.querySelector('#orientChip b').textContent=ORIENTS[orientIdx].label;
   voxelizeTemplate(); positionGhost(); refreshTint(); liveOutput();
+  saveAlign();                        // remember the socket orientation with the offset
   // the aperture is cut from the silhouette, so turning the socket recuts it
   if (seatBenchOn){ buildSocket(); socketGroup.visible=true; updateSeatHud(); }
   say(`Socket ${ORIENTS[orientIdx].label} — the template turns, not the stone.`);
@@ -9196,20 +9224,20 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=14;  // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=15;  // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
 function packCore(c){
   return {i:c.id,s:c.seed,t:c.tier,p:q3(c.polish),h:c.hots,cl:c.clean?1:0,
-    hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,cp:c.comp,
+    hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,cp:c.comp,al:c.align||undefined,
     hu:c.hueIdx===undefined?-2:c.hueIdx, h2:c.hueIdx2===undefined?-2:c.hueIdx2,
     c:c.cells?c.cells.map(x=>[q3(x.px),q3(x.py),q3(x.pz),q3(x.size),q3(x.conc),q3(x.shade),
       x.mat||0,x.bev||0,x.pol||0,x.scar?1:0,x.tier||0,x.frag?1:0]):null};
 }
 function unpackCore(o){
   return {id:o.i,seed:o.s,tier:o.t,polish:o.p||0,hots:o.h||0,clean:!!o.cl,
-    hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,comp:o.cp,
+    hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,comp:o.cp,align:o.al||undefined,
     hueIdx:(o.hu===undefined||o.hu===-2)?undefined:o.hu,
     hueIdx2:(o.h2===undefined||o.h2===-2)?undefined:o.h2,
     cells:o.c?o.c.map(a=>{
@@ -9395,6 +9423,7 @@ let t=0, lastNow=0;
   // no idle drift at the seating bench: the orientation you chose IS the input,
   // and a slow spin would quietly change the score you are reading.
   if (!dragging&&!grinding&&!seatBenchOn) mineral.rotation.y+=0.0012*benchSpeed();
+  if (activeCore) applyCorePivot();      // spin the core about the template centre (no-op while seating)
   seatBenchTick(dt);
   if (seatBenchOn) drawSeatGauges();     // live charge/resonance gauges (sparkline scrolls as you turn)
   if (gizmo.visible) placeGizmo();
