@@ -6465,19 +6465,22 @@ let forgeRim=MOULD_DEPTH;                   // grid row just above the box top i
 // up) — with a SPHERE power-core socket sunk flush into the top of the shank. The bit is TALLER
 // than a frame (hy 6 vs 3), and mostly a long point with a short shank, so at the shared 44-cell
 // nugget it holds the ~8 ore a bit costs without needing a wider grid.
-const FORGE_BIT_HY=13;                              // bit half-height in cells (~13 tall)
-const FORGE_BIT_RMAX=7;                            // shank radius in cells — a smooth cylinder cradling the sphere (r 2.83) with a thin wall
-const FORGE_BIT_TAPER=11;                           // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
+const FORGE_BIT_HY=11;                              // bit half-height in cells — a touch shorter so the WIDER shank keeps the ore cost near a frame's, not above it
+const FORGE_BIT_RMAX=8;                            // shank radius in cells — WIDER now so a cylindrical core bore fits with a real wall around it
+const FORGE_BIT_TAPER=9;                            // cells of conical fluted POINT at the bottom; the TALLER remainder above is the smooth cylindrical shank
 const FORGE_BIT_SEAT_PER=SEAT_PER;                   // socket at the SAME cells/unit as the lapidary power core, so the recess matches it 1:1
-const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-1.2*SEAT_PER;   // sphere top flush with the shank top: the power core recess opens at the top
-// The bit is SIMPLE: one CONE point, one CYLINDER shank (holding the core recess), and ONE bold,
-// hard-edged spiral flute — a single helix cut from the point all the way to the top — so it reads
-// as a machined auger. No multi-groove fuzz (that voxelised into the "horrific" jagged mess); one
-// clean channel. Where the socket sits, the channel is floored to a wall so it can't breach it.
+// Seat sits DEEPER now (was flush at the top): the sphere rests low and a cylindrical THROAT opens
+// above it to the shank top, so the round power core drops straight down the bore instead of into a
+// pin-hole. Roughly two core-radii down leaves a throat about as tall as the core is wide.
+const FORGE_BIT_SEAT_PY=FORGE_BIT_HY-2.1*SEAT_PER;
+// The bit is SIMPLE: one CONE point, one CYLINDER shank (holding the core bore), and ONE bold spiral
+// thread. The thread is a RAISED helix (an "outie") standing proud of the shank — a machined auger
+// flange, not a cut groove. One clean helix, from the point to the top. Where the core bore sits, the
+// shank thickens to a wall so the thread/body can't breach the cylindrical throat.
 const BIT_RIDGE_TWIST=0.46;                          // radians of spin per cell of height (~1.9 turns over the bit)
-const BIT_RIDGE_W=0.62;                              // half angular width of the flute channel (rad): ~1/5 of the circumference
-const BIT_RIDGE_DEPTH=3.4;                           // how deep the single channel cuts (cells) — bold, so the one thread is pronounced
-const BIT_GHOST_M=1.1;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the ridge cells, so the wire encloses the cast
+const BIT_RIDGE_W=0.62;                              // half angular width of the thread (rad): ~1/5 of the circumference
+const BIT_RIDGE_PROUD=1.5;                           // how far the thread stands PROUD of the shank (cells) — bold, so the one thread reads
+const BIT_GHOST_M=1.1;                              // ghost-envelope margin (cells): the marching surface sits ~this far past the thread crest, so the wire encloses the cast
 const _boxBodyP=(px,py,pz)=> Math.abs(px)<=FORGE_HX+0.01 && Math.abs(py)<=FORGE_HY+0.01 && Math.abs(pz)<=FORGE_HZ+0.01;
 const _BIT_SOCK_R=1.2*SEAT_PER;                      // sphere socket radius in cells
 const _bitFlutePhase=(px,py,pz)=>{                    // signed angular distance to the single flute channel centre, wrapped to [-pi,pi]
@@ -6488,9 +6491,9 @@ const _bitBodyP=(px,py,pz)=>{
   if (py<-FORGE_BIT_HY-0.01 || py>FORGE_BIT_HY+0.01) return false;
   const yUp=py+FORGE_BIT_HY;                             // 0 at the point (bottom), 2*hy at the shank top
   let R=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;   // cone point below the taper, cylinder shank above
-  if (Math.abs(_bitFlutePhase(px,py,pz))<BIT_RIDGE_W) R-=BIT_RIDGE_DEPTH;              // the ONE spiral channel, hard-edged
-  const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;                      // keep a wall around the core socket
-  if (s2>0) R=Math.max(R, Math.sqrt(s2)+0.8);
+  if (Math.abs(_bitFlutePhase(px,py,pz))<BIT_RIDGE_W) R+=BIT_RIDGE_PROUD;              // the ONE spiral thread, standing PROUD (outie)
+  const dy=py-FORGE_BIT_SEAT_PY, s2=_BIT_SOCK_R*_BIT_SOCK_R-dy*dy;                      // thicken the shank into a wall around the core bore
+  if (s2>0) R=Math.max(R, _BIT_SOCK_R+1.5);
   return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
 };
 const FORGE_SHAPES={
@@ -6502,7 +6505,15 @@ function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAP
 // non-cube core (the bit's sphere) drops in as a data change, not an engine one.
 function forgeSeatInsideP(px,py,pz){
   const s=forgeShape();
-  return COMPONENTS[s.socketComp].inside(px/s.socketPer,(py-s.socketPy)/s.socketPer,pz/s.socketPer);
+  const inSocket=COMPONENTS[s.socketComp].inside(px/s.socketPer,(py-s.socketPy)/s.socketPer,pz/s.socketPer);
+  if (s===FORGE_SHAPES.bit){
+    // Cylindrical THROAT: a bore the core's own width, from the sphere seat up through the shank top,
+    // so the round power core drops straight in. The void is sphere-seat ∪ throat-cylinder; the wider
+    // shank walls it. Open at the top into the chamber (metal is force-slid off that mouth as usual).
+    const inThroat = Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6;
+    return inSocket || inThroat;
+  }
+  return inSocket;
 }
 // Build fgMould (box interior) + fgSeat (socket void) for the CURRENT orientation by
 // mapping every grid cell back into the part frame and testing the canonical box and
@@ -6670,17 +6681,18 @@ function forgeSyncGhostGeo(){
     // envelope of the cast: the marching surface sits a fraction of a cell past the ridge cells, so
     // the profile carries a small margin (BIT_GHOST_M) — the fluted thread then reads as cut INTO
     // this blank, and nothing casts outside the template (the "blob outside the wire" the player saw).
-    const m=BIT_GHOST_M, hy=(FORGE_BIT_HY+m)*FVOX, r=(FORGE_BIT_RMAX+m)*FVOX, tp=FORGE_BIT_TAPER*FVOX;
+    // Envelope must clear the PROUD thread crest, so the profile radius is shank + ridge + margin.
+    const m=BIT_GHOST_M, hy=(FORGE_BIT_HY+m)*FVOX, r=(FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.5)*FVOX, tp=FORGE_BIT_TAPER*FVOX;
     const prof=[ new THREE.Vector2(0.001,-hy), new THREE.Vector2(r,-hy+tp), new THREE.Vector2(r,hy) ];
     const g=new THREE.LatheGeometry(prof, 18);
     forgeGhostWire.geometry=new THREE.EdgesGeometry(g,18); g.dispose();
-    // The corkscrew: a helix tracing the single flute channel from the point to the top, just proud
-    // of the surface, so the one spiral the player is casting is visible as a reference.
+    // The corkscrew: a helix tracing the single RAISED thread from the point to the top, riding its
+    // crest so the one spiral the player is casting is visible as a reference.
     const pts=[], steps=120;
     for (let i=0;i<=steps;i++){
       const yUp=(i/steps)*(2*FORGE_BIT_HY), py=yUp-FORGE_BIT_HY;
       const base=yUp<FORGE_BIT_TAPER ? FORGE_BIT_RMAX*(yUp/FORGE_BIT_TAPER) : FORGE_BIT_RMAX;
-      const Rc=base+0.4, th=yUp*BIT_RIDGE_TWIST;
+      const Rc=base+BIT_RIDGE_PROUD+0.3, th=yUp*BIT_RIDGE_TWIST;
       pts.push(new THREE.Vector3(Rc*Math.cos(th)*FVOX, py*FVOX, Rc*Math.sin(th)*FVOX));
     }
     forgeThreadWire.geometry.dispose();
