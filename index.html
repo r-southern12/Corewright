@@ -7380,7 +7380,8 @@ function forgeLevelSlide(dgx,dgz){
     const nx=ix+dgx, nz=iz+dgz;
     if (!forgeAllowed(nx,iy,nz)) continue; const nd=fIdx(nx,iy,nz);
     if (fgFill[nd]) continue;
-    fMove(id,nd,Math.max(fgTemp[id],FLOW_T+0.04)); forgeDirty=true;
+    fMove(id,nd,fgTemp[id]); forgeDirty=true;   // carry the CELL'S OWN temp — it keeps cooling as you push, so
+                                                 // held metal sets in place instead of staying molten until release
   }
 }
 // The heat-slab marker: cool blue while you raise/lower it to choose a layer, hot red while held.
@@ -7936,7 +7937,7 @@ function updateForgeHud(){
     : forgeCrucHeat<1 ? 'Crucible loaded — hold ANYWHERE to HEAT it ('+Math.round(forgeCrucHeat*100)+'%); at molten it can pour.'
     : 'Crucible molten — hold on the frame; the pot TIPS for a moment, then pours ALLOY around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
-    forgeTool==='level' ? 'Leveller (moves metal — it does NOT melt): torch a layer molten first, then move the mouse up/down to line the glowing slab up with it, PRESS AND HOLD, and drag left / right / forward / back to slide that molten metal — sweep a pile out to the corners. Use the turn buttons to spin the bench.'
+    forgeTool==='level' ? 'Leveller (moves metal — it does NOT melt): torch a layer molten first, then move the mouse up/down to line the glowing slab up with it, PRESS AND HOLD over the metal, and drag left / right / forward / back to slide that molten metal — sweep a pile out to the corners. Drag OUTSIDE the metal to turn the bench.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
     : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
@@ -8052,10 +8053,15 @@ function forgeDown(x,y){
   const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
   const aim=forgeAimCell(x,y);
   if (forgeTool==='level'){
-    // GRAB the slab at the height the hover already picked, then drag to sweep whatever is molten at
-    // that layer. The gesture is press-hold-drag, so there is no drag-to-rotate here — use turn buttons.
-    forgeLevelHold=true; forgeLevelDir=null; forgeSX=x; forgeSY=y;
-    forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(true); forgeDirty=true;   // ring brightens (grabbed)
+    // Over the template: GRAB the slab at the height the hover picked, then drag to sweep whatever is
+    // molten at that layer. Press OUTSIDE the template footprint (empty space) to drag-rotate the bench,
+    // same as the torch/grind — the rotate gesture had gone missing for the leveller.
+    if (forgeOverTemplate(x,y)){
+      forgeLevelHold=true; forgeLevelDir=null; forgeSX=x; forgeSY=y;
+      forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(true); forgeDirty=true;   // ring brightens (grabbed)
+    } else {
+      forgeRotating=true; forgePX=x; forgePY=y;
+    }
     return;
   }
   if (forgeTool==='grind'){
