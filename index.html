@@ -876,9 +876,6 @@
     <div class="sub" style="margin:2px 0 6px">Pick a template — it opens the flux press to forge by hand.</div>
     <div class="sub" style="margin:2px 0 4px">Seat a Forge Anvil core to assist press quality (durable — not consumed):</div>
     <div id="forgeInsertList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
-    <h2>Forge station</h2>
-    <div class="sub" style="margin:2px 0 6px">Upgrading the press widens how far the flux TORCH reaches in one melt. Reach also grows with the anvil core you seat — dial it up in the press with the flux tap beside the torch.</div>
-    <div id="forgeStationCard"></div>
     <div id="tinControl" style="display:none">
       <div class="tinHead">Tin fraction <b id="tinPct">12%</b>
         <span id="tinProps" class="sub"></span></div>
@@ -6200,20 +6197,6 @@ function renderForge(){
         'The press works without one.</span>';
     }
   }
-  // FORGE STATION — the persistent press upgrade. Reach = station tier + anvil-core power (see forgeMaxPower).
-  const sc=document.getElementById('forgeStationCard');
-  if (sc){
-    const anvilP=forgeAnvilPow(), reach=forgeMaxPower();
-    const div=document.createElement('div'); div.className='card t'+Math.min(3,forgeStationTier);
-    div.innerHTML=`<div class="info">Press station · tier ${forgeStationTier}/${FORGE_STATION_MAX}
-      <div class="sub">reach dial goes to ${reach} (station ${forgeStationTier} + anvil core ${anvilP})</div></div>`;
-    const btn=document.createElement('button');
-    if (forgeStationTier>=FORGE_STATION_MAX){ btn.className='act'; btn.textContent='Fully upgraded'; btn.disabled=true; }
-    else { const cost=FORGE_STATION_COST[forgeStationTier+1]||0;
-      btn.className='act'; btn.textContent='Upgrade ◈'+cost; btn.disabled=!adminOn&&dust<cost;
-      btn.onclick=forgeUpgradeStation; }
-    sc.innerHTML=''; div.appendChild(btn); sc.appendChild(div);
-  }
   const list=document.getElementById('forgeList');
   list.innerHTML='';
   for (const m of FORGE_TEMPLATES){
@@ -7203,26 +7186,13 @@ let forgeSX=null, forgeSY=null;        // last pointer position, for re-aiming e
 let forgeRotating=false, forgePX=0, forgePY=0;
 let fluxOn=false, fluxAim=null, fluxRadius=1.7;
 // ---- forge POWER: raises the TORCH's operating RANGE (bigger reach, NOT faster melting; torch-only) ----
-// Max power tier = a persistent forge-STATION upgrade + a bonus from the seated anvil core (its
-// tier x quality). The player picks the working level 1..max on the power DIAL (tap to cycle); a
-// higher level widens the torch/leveller/corral radius so you work over a larger area at once.
-let forgeStationTier=1;                  // persistent forge-station upgrade (1..FORGE_STATION_MAX), saved
-const FORGE_STATION_MAX=3;
-const FORGE_STATION_COST=[0,0,220,560];  // dust to reach tier [_,_,2,3]; costs step up like the shaping machines
-function forgeUpgradeStation(){
-  if (forgeStationTier>=FORGE_STATION_MAX) return;
-  const cost=FORGE_STATION_COST[forgeStationTier+1]||0;
-  if (!adminOn && dust<cost) return;
-  if (!adminOn) dust-=cost;
-  forgeStationTier++; updateMeters();
-  if (typeof renderForge==='function') renderForge();
-  renderForgePower();                    // a wider max is available now
-  if (typeof say==='function') say('Forge station upgraded to tier '+forgeStationTier+' — the flux torch reaches further.','good');
-}
-let forgePowerLevel=1;                   // current dial setting (session), clamped to forgeMaxPower()
-function forgeAnvilPow(){ return forgeAnvil?Math.round(forgeAnvil.tier*(forgeAnvil.output||0)):0; }   // 0..3
-function forgeMaxPower(){ return Math.max(1, Math.min(5, forgeStationTier + forgeAnvilPow())); }
-function forgeRangeMul(){ return 1 + (forgePowerLevel-1)*0.5; }   // level 1 = x1 ... level 5 = x3 radius
+// Three levels, ALWAYS available — a base mechanic, no unlock or upgrade. The player picks the working
+// level 1..3 on the power DIAL (tap to cycle); a higher level widens the torch radius so you work over
+// a larger area at once.
+const FORGE_MAX_POWER=3;
+let forgePowerLevel=1;                   // current dial setting (session), 1..FORGE_MAX_POWER
+function forgeMaxPower(){ return FORGE_MAX_POWER; }
+function forgeRangeMul(){ return 1 + (forgePowerLevel-1)*0.5; }   // level 1 = x1, level 2 = x1.5, level 3 = x2 radius
 function forgeR(base){ return base*forgeRangeMul(); }
 // The power DIAL: a column of pips on the right, current level lit, tap to step up (wraps at max).
 function renderForgePower(){
@@ -7803,8 +7773,8 @@ function enterForge(){
   forgeTurnT=1; forgePivot.quaternion.identity();
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
-  { const mx=forgeMaxPower(); if (forgePowerLevel>mx) forgePowerLevel=mx; if (forgePowerLevel<1) forgePowerLevel=1; }
-  renderForgePower();                          // dial reflects this station's max (anvil core + forge upgrade)
+  if (forgePowerLevel>FORGE_MAX_POWER) forgePowerLevel=FORGE_MAX_POWER; if (forgePowerLevel<1) forgePowerLevel=1;
+  renderForgePower();                          // the 3-level torch dial (base mechanic)
   syncForgeMesh(); updateForgeHud();
 }
 // Turn the template between poses (lying <-> standing) at ANY time. Gravity stays grid
@@ -9344,7 +9314,7 @@ function saveGame(){
       hardcore, metals:{...metals}, reagents:{...reagents}, potions:{...potions},
       drill:{frame:drill.frame,bit:drill.bit,core:drill.core,power:drill.power},
       equip:{coil:equip.coil,forgePrism:equip.forgePrism,alembic:equip.alembic},
-      powerBank:q3(powerBank), forgeAnvil, forgeStationTier, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
+      powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
       forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
       inv:inventory.map(packCore),
@@ -9387,7 +9357,6 @@ function loadGame(){
     equip.coil=d.equip.coil; equip.forgePrism=d.equip.forgePrism; equip.alembic=d.equip.alembic;
     powerBank=d.powerBank||0;
     forgeAnvil=d.forgeAnvil||null;
-    forgeStationTier=Math.max(1,Math.min(FORGE_STATION_MAX,d.forgeStationTier||1));
     if (d.tank){ tank.jet=d.tank.jet||0; tank.brine=d.tank.brine||0; tank.sand=d.tank.sand||0; }
     if (d.lab){ lab.placed=!!d.lab.placed; lab.x=d.lab.x||0; lab.y=d.lab.y||0; lab.drop=0; }
     if (d.suitFrames) for (const k in suitFrames) suitFrames[k]=d.suitFrames[k]||null;
