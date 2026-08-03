@@ -6560,29 +6560,41 @@ const FORGE_NUG_MASS=310;               // cells per ore nugget — CONSTANT acr
 function forgeOreCount(){ return Math.max(1, Math.round(fgMouldTotal / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
-// Drop one nugget of cold ore high in the chamber, grown outward from a centre point
-// so it's a compact rounded lump. The nugget carries a metal id (metalKey) so a mixed
-// feed shows its constituents. Returns false when the run is spent.
+// Drop one nugget of cold ore high in the chamber. Every nugget is the SAME MASS (FORGE_NUG_MASS
+// cells) but a WILDLY different SHAPE: we score each candidate cell by a per-nugget DISTORTED radius
+// — anisotropic stretch on each axis, one-to-three random lobes it bulges toward, a twisty surface
+// warp and a crag jitter — then keep the N lowest-scoring cells. Because we always take exactly N,
+// the volume is fixed while the silhouette lurches from stretched to lobed to lumpy, so no two ore
+// dollops look alike. Candidates are the chamber over the footprint (so a melt still drips into the
+// mould); mould cells are only used as a last resort if the chamber can't hold the whole dollop.
 function forgeSeedNugget(metalKey){
   if (forgeNugUsed>=forgeOreCount()) return false;
   const mid=forgeMetalId(metalKey||'copper');
   forgeNugSize=FORGE_NUG_MASS;                    // fixed nugget mass — same dollop for every part
   const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-9;    // hangs high, centred over the seat
-  // rank every empty cell by distance to the nugget centre (y squ/stretched a touch
-  // so it reads as a lump, not a disc), then fill the nearest N — a compact blob.
+  const rng=mulberry32(((Math.random()*2**31)|0) ^ (forgeNugUsed*2654435761|0));
+  const ax=0.55+rng()*1.5, ay=0.6+rng()*1.3, az=0.55+rng()*1.5;   // per-axis stretch -> elongated/squashed
+  const nLobes=1+((rng()*3)|0), lobes=[];                          // 1..3 arms it bulges toward
+  for (let i=0;i<nLobes;i++){ let lx=rng()*2-1,ly=rng()*2-1,lz=rng()*2-1; const ln=Math.hypot(lx,ly,lz)||1;
+    lobes.push([lx/ln,ly/ln,lz/ln, 0.4+rng()*1.0]); }
+  const warpPh=rng()*6.283, warpAmp=0.1+rng()*0.4, warpF=2+((rng()*3)|0);   // a wavy skin so it isn't a clean ellipsoid
   const cells=[];
   for (let iy=0;iy<FGH;iy++) for (let ix=0;ix<FGW;ix++) for (let iz=0;iz<FGD;iz++){
-    if (fgFill[fIdx(ix,iy,iz)]) continue;
-    cells.push([Math.hypot(ix-cx,(iy-cy)*0.9,iz-cz),ix,iy,iz]);
+    const id=fIdx(ix,iy,iz); if (fgFill[id]) continue;
+    const chamber = iy>=forgeRim && forgeAllowed(ix,iy,iz);        // over the footprint, meltable-into-the-mould
+    const dx=ix-cx, dy=iy-cy, dz=iz-cz, r=Math.hypot(dx,dy,dz)||1e-3;
+    let s=Math.sqrt((dx/ax)**2+(dy/ay)**2+(dz/az)**2);             // anisotropic core radius
+    for (const L of lobes){ const dot=(dx*L[0]+dy*L[1]+dz*L[2])/r; if (dot>0) s-=L[3]*dot*dot*Math.min(r,4.5); }  // pull a lobe outward
+    s += warpAmp*Math.sin(warpPh+Math.atan2(dz,dx)*warpF)*Math.min(r,4)*0.2;                                     // wave the skin
+    s += (((ix*73856093^iy*19349663^iz*83492791)>>>0)%1000/1000-0.5)*0.55;                                       // crag jitter
+    if (!chamber) s += 1000;                                       // mould cells: last resort only
+    cells.push([s,ix,iy,iz]);
   }
   cells.sort((a,b)=>a[0]-b[0]);
   let placed=0;
   for (const c of cells){
     if (placed>=forgeNugSize) break;
-    const d=c[0],ix=c[1],iy=c[2],iz=c[3];
-    // craggy skin: skip an occasional near-surface cell so it reads as rough ore
-    if (d>1.7 && ((ix*73856093^iy*19349663^iz*83492791)>>>0)%4===0) continue;
-    const id=fIdx(ix,iy,iz); fgFill[id]=1; fgTemp[id]=0.05; fgMetal[id]=mid; placed++;   // cold and solid, tagged
+    const id=fIdx(c[1],c[2],c[3]); fgFill[id]=1; fgTemp[id]=0.05; fgMetal[id]=mid; placed++;   // cold and solid, tagged
   }
   forgeNugUsed++;
   return true;
@@ -6970,7 +6982,7 @@ const F_LOCK_ALLOY=new THREE.Color(0x5a3fae);
 // quenched iron / tin / voidsteel / alloy don't all read as one blue or as copper (the bug: they
 // looked identical). Keyed on the cell's fgMetal id; a frozen version of each metal's identity.
 const FORGE_LOCK_COL={
-  0:new THREE.Color(0x2f7f9c),   // copper -> frozen teal-steel
+  0:new THREE.Color(0xb5713a),   // copper -> hardened COPPER BROWN (matches the finished-part icon; unquenched copper stays the verdigris F_SET green)
   1:new THREE.Color(0x9fb2cc),   // tin -> frozen pewter
   2:new THREE.Color(0x3a4a6a),   // iron -> frozen dark steel
   3:new THREE.Color(0x6a4fb2),   // voidsteel -> frozen violet
@@ -7477,6 +7489,12 @@ function forgePush(R){
 // colour) into the template at the aim, a couple of cells per step, drawn from the charge
 // budget (two nuggets' worth). It settles and levels like copper. Deposits at and just above
 // the aimed surface into empty, allowed cells so it lands and runs down into place.
+// The pot only makes an ALLOY when the two loaded ores DIFFER. Load two of the same metal and it's
+// just that metal, molten — so it pours in that metal's own id (and colour), not the alloy violet.
+function forgeCrucPourId(){
+  return (forgeCrucLoad.length===2 && forgeCrucLoad[0]===forgeCrucLoad[1])
+    ? forgeMetalId(forgeCrucLoad[0]) : FORGE_ALLOY_ID;
+}
 function forgeCrucibleStep(){
   if (forgeCrucLoad.length<2) return;                    // nothing loaded yet
   if (forgeCrucHeat<1){                                  // not molten: a hold heats the pot
@@ -7499,7 +7517,7 @@ function forgeCrucibleStep(){
       if (!fIn(ix,iy,iz)) continue;
       const id=fIdx(ix,iy,iz);
       if (fgFill[id] || !forgeAllowed(ix,iy,iz)) continue;
-      fgFill[id]=1; fgTemp[id]=0.9; fgMetal[id]=FORGE_ALLOY_ID; forgeCrucBudget--; poured++; forgeDirty=true;
+      fgFill[id]=1; fgTemp[id]=0.9; fgMetal[id]=forgeCrucPourId(); forgeCrucBudget--; poured++; forgeDirty=true;
       if (poured>=CRUCIBLE_RATE||forgeCrucBudget<=0) break;
     }
   if (forgeCrucBudget<=0){                                                 // charge emptied — spend it
