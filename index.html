@@ -6496,9 +6496,14 @@ const _bitBodyP=(px,py,pz)=>{
   if (s2>0) R=Math.max(R, _BIT_SOCK_R+1.5);
   return Math.hypot(px,pz) <= Math.max(0,R)+0.4;
 };
+// hx/hy/hz are the FLOOR-REST/turn bounds (the tight body). castHx/castHy/castHz are the REORIENT
+// bounds: the box a turn treats as "part of the cast that rides the rotation". For the bit these must
+// clear the PROUD spiral thread (which reaches RMAX+PROUD, past the shank hx) — otherwise the thread
+// cells fall outside the tight box, get classed as loose chamber drips, and are stranded/lost when the
+// part turns (the reported "material clipped off"). Default cast bound = the tight body.
 const FORGE_SHAPES={
-  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
-  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
+  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
+  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone'},
 };
 function forgeShape(){ return (forgePart && forgePart.part==='bit') ? FORGE_SHAPES.bit : FORGE_SHAPES.box; }
 // Socket test in the PART frame, sampled through the shape's own component inside() so a
@@ -7799,6 +7804,21 @@ function forgeNearestFree(gx,gy,gz){
     }
   return -1;
 }
+// Like forgeNearestFree but ONLY a real MOULD cell (not the open chamber). A turn re-buckets a few
+// boundary cells between seat and mould (the throat/point discretise a hair differently per pose), so
+// a cast cell can land on a new-seat cell while an equivalent new-mould cell sits empty nearby. Filling
+// the empty mould cell keeps the metal IN the part instead of shoving it up into the chamber to strand.
+function forgeNearestMould(gx,gy,gz){
+  const RMAX=Math.max(FGW,FGH,FGD);
+  for (let r=0;r<RMAX;r++)
+    for (let dy=-r;dy<=r;dy++) for (let dx=-r;dx<=r;dx++) for (let dz=-r;dz<=r;dz++){
+      if (Math.max(Math.abs(dx),Math.abs(dy),Math.abs(dz))!==r) continue;
+      const nx=gx+dx, ny=gy+dy, nz=gz+dz;
+      if (!fIn(nx,ny,nz)) continue; const id=fIdx(nx,ny,nz);
+      if (!fgFill[id] && fgMould[id]) return id;
+    }
+  return -1;
+}
 // Reorient the part to a new rotation matrix (Turn = tip about X, Roll = roll about Z). Cast
 // metal (cells inside the box) is snapshotted in the part frame and re-laid rotated into the new
 // pose, so it RIDES the move as a rigid body; cold stays put, molten re-flows to the new down.
@@ -7810,7 +7830,8 @@ function forgeReorient(newRot, msg){
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const id=fIdx(gx,gy,gz); if (!fgFill[id]) continue;
     const p=invRot(oldRot, gx-cx, gy-oldCy, gz-cz);
-    if (Math.abs(p[0])<=sh.hx+0.01 && Math.abs(p[1])<=sh.hy+0.01 && Math.abs(p[2])<=sh.hz+0.01)
+    const hx=sh.castHx||sh.hx, hy=sh.castHy||sh.hy, hz=sh.castHz||sh.hz;   // cast bound clears the proud thread
+    if (Math.abs(p[0])<=hx+0.01 && Math.abs(p[1])<=hy+0.01 && Math.abs(p[2])<=hz+0.01)
       cast.push([p[0],p[1],p[2],fgTemp[id],fgLocked[id],fgMetal[id]]);   // inside the part bound -> rotate with it
     else air.push([id,fgTemp[id],fgLocked[id],fgMetal[id]]);            // hanging nugget / falling drip -> keep put
   }
@@ -7829,7 +7850,9 @@ function forgeReorient(newRot, msg){
   // nearest free cell, not deleted. The old code silently dropped it, so turning the template to
   // clear metal out of the core area destroyed it and left you short to finish the part.
   for (const c of displaced){
-    const spot=forgeNearestFree(c[0],c[1],c[2]);
+    let spot=forgeNearestMould(c[0],c[1],c[2]);           // keep it IN the part first — refill an empty mould cell
+    if (spot<0) spot=forgeNearestFree(c[0],c[1],c[2]);     // else the nearest legal cell (chamber over the footprint)
+    if (spot<0){ for (let i=0;i<FG_N;i++) if (!fgFill[i]&&!fgSeat[i]){ spot=i; break; } }   // last resort: never drop mass
     if (spot>=0){ fgFill[spot]=1; fgTemp[spot]=c[3]; fgLocked[spot]=c[4]; fgMetal[spot]=c[5]; }
   }
   for (const a of air){ fgFill[a[0]]=1; fgTemp[a[0]]=a[1]; fgLocked[a[0]]=a[2]; fgMetal[a[0]]=a[3]; }
