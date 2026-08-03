@@ -7094,8 +7094,15 @@ function fCellShade(ix,iy,iz){
   if (setCol && t<0.22){ const f=Math.min(1,(0.22-t)/0.16); _fcolor.lerp(setCol,f); }
   if (t<0.2 && !((inMould||mid>0)&&t<0.1)){ const hsh=((ix*374761393+iy*668265263+iz*2246822519)>>>0)/4294967295; _fcolor.multiplyScalar(0.8+hsh*0.36); }
   if (fgLocked[cid]) _fcolor.copy(FORGE_LOCK_COL[mid]||F_LOCK);
+  // LEVEL GAUGE: when the leveller is out, the blocks the slab passes through glow its colour — a
+  // bright ring on the surface at that height, so you can read which layer you're on. Soft cyan while
+  // you raise/lower to choose a layer, a brighter cyan once grabbed (held). Not a heat colour — the
+  // leveller doesn't melt. Wins over all other tints.
+  if (forgeTool==='level' && forgeLevelPlane.visible && iy===forgeLevelY)
+    _fcolor.lerp(forgeLevelHold?_fLvlHeld:_fLvlPick, forgeLevelHold?0.95:0.85);   // near-total override so the band reads against the verdigris metal
   return (inMould && t<0.16) ? 0 : Math.max(0,Math.min(1,(t-0.08)/0.34));
 }
+const _fLvlPick=new THREE.Color(0x8fe4ff), _fLvlHeld=new THREE.Color(0xeaffff);   // icy cyan while picking, near-white once grabbed — high contrast vs the metal
 function fPushFace(cx0,cy0,cz0, F, heat){            // one cell face: 2 tris, flat outward normal
   for (const k of _FTRI){
     if (forgeVCount>=FORGE_MAXV) return;
@@ -7196,9 +7203,7 @@ function forgeCyclePower(){
 // (Quench and Turn are one-shot actions, not held tools.) The 3D tool palette selects this.
 let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible'
 let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false;
-let forgeLevelDir=null;                  // [gx,gz] grid slide direction set by the drag while the level is held; null = no slide, just heat
-const LEVEL_ADD=0.05;                   // per-step heat into the slab (a touch hotter than the torch)
-const LEVEL_BAND=1.8;                   // half-thickness of the heated slab, in cells (thick enough to keep a working layer molten as it levels)
+let forgeLevelDir=null;                  // [gx,gz] grid slide direction set by the drag while the level is held; null = no slide
 const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // THE CRUCIBLE — the PLAYER-LOADED alloy pour. Copper is the base framework; the crucible
 // lays a second metal (the alloy housing) into any area of the template, in its own colour.
@@ -7297,13 +7302,12 @@ function fluxHeat(){
     forgeDirty=true;
   }
 }
-// ---------- the LEVELLER: a heat SLAB you raise/lower, then hold to sweep a whole layer ----------
-// Reworked: the leveller is NOT a hand-torch. It is a horizontal SLAB the player raises and lowers
-// through the cast (forgeLevelY). Press-and-hold FREEZES the slab at that height and keeps the metal
-// in that layer molten; then dragging the mouse slides ALL molten metal across the box in the drag
-// direction — pick a layer, heat it, and sweep it out to the corners. That is a deliberate "spread
-// THIS level" action, unlike the torch's point-melt-and-corral. The torch's power dial does NOT widen
-// the leveller (it is a torch-only upgrade); the slab is always the full footprint.
+// ---------- the LEVELLER: a SLAB you raise/lower, then hold to sweep a molten layer ----------
+// The leveller is NOT a hand-torch and does NOT melt. It is a horizontal SLAB the player raises and
+// lowers through the cast (forgeLevelY) to pick a layer; press-and-hold GRABS that layer, and dragging
+// the mouse slides whatever is already MOLTEN there across the box in the drag direction. The loop is
+// torch-a-layer-molten then leveller-drag-it-flat: two tools, two jobs. The torch's power dial does
+// NOT widen the leveller (it is a torch-only upgrade); the slab is always the full footprint.
 const _lvlV=new THREE.Vector3();
 // Which grid level sits nearest the cursor on screen — used while HOVERING to raise/lower the slab.
 // Each candidate level's centre is projected to screen and the closest in Y wins, so the slab tracks
@@ -7317,22 +7321,12 @@ function forgeLevelFromScreen(sy){
   }
   return best;
 }
-// Heat the frozen slab: every metal cell within LEVEL_BAND of forgeLevelY, across the WHOLE footprint,
-// is warmed toward molten (superlinear heat-resistance, same feel as the torch). This is "heat up that
-// level of material" — a layer, not a point. No cursor sphere, no torch-power scaling.
-function forgeLevelHeat(){
-  const y0=Math.floor(forgeLevelY-LEVEL_BAND), y1=Math.ceil(forgeLevelY+LEVEL_BAND);
-  for (let iy=y0; iy<=y1; iy++){ if (iy<0||iy>=forgeRim) continue;
-    for (let ix=0; ix<FGW; ix++) for (let iz=0; iz<FGD; iz++){
-      if (!fgFootprint[ix+iz*FGW]) continue; const id=fIdx(ix,iy,iz);
-      if (!fgFill[id]||fgLocked[id]) continue;
-      const t=fgTemp[id]; fgTemp[id]=Math.min(1, t+LEVEL_ADD*(0.5+t*1.5)); forgeDirty=true;
-    }
-  }
-}
+// The leveller does NOT heat. It only MOVES metal that the TORCH has already made molten — so the
+// loop is: torch a layer molten, switch to the leveller, drag it flat. (An earlier version melted the
+// slab itself; that made the torch redundant, so heating was pulled back out.)
 // Map a screen drag (from the press anchor) to a grid horizontal direction. Screen right/down are
 // world +X/+Z; the bench yaw (forgeGroup.rotation.y) is undone so "drag left" always slides metal
-// toward screen-left however the part is turned. A dead-zone means a still hold only heats.
+// toward screen-left however the part is turned. A dead-zone means a still hold does nothing.
 function forgeLevelDirFromDrag(x,y){
   const dx=x-forgeSX, dy=y-forgeSY;
   if (dx*dx+dy*dy < 100) return null;                 // ~10px dead-zone: hold still = heat only
@@ -7362,9 +7356,11 @@ function forgeLevelSlide(dgx,dgz){
   }
 }
 // The heat-slab marker: cool blue while you raise/lower it to choose a layer, hot red while held.
-function forgeLevelPlaneHot(hot){
-  forgeLevelPlane.material.color.setHex(hot?0xff5a2a:0x59d6ff);
-  forgeLevelPlane.material.opacity=hot?0.4:0.16;
+// The heat-slab marker — cyan, brighter/more opaque once grabbed (held). Not heat-coloured: the
+// leveller only moves already-molten metal, it doesn't melt.
+function forgeLevelPlaneHot(held){
+  forgeLevelPlane.material.color.setHex(held?0xa6ecff:0x59d6ff);
+  forgeLevelPlane.material.opacity=held?0.34:0.16;
 }
 // Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
 // not thermal — so it works on QUENCHED metal too. It ONLY removes metal that is OUTSIDE
@@ -7684,7 +7680,7 @@ function forgeSimTick(){
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
-    if (forgeLevelHold){ forgeLevelHeat(); if (forgeLevelDir && forgeSpin%2===0) forgeLevelSlide(forgeLevelDir[0],forgeLevelDir[1]); }   // keep the frozen layer molten; drag slides ALL molten metal that way
+    if (forgeLevelHold && forgeLevelDir && forgeSpin%2===0) forgeLevelSlide(forgeLevelDir[0],forgeLevelDir[1]);   // leveller ONLY moves metal — the torch does the melting; drag slides whatever is already molten
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
@@ -7912,7 +7908,7 @@ function updateForgeHud(){
     : forgeCrucHeat<1 ? 'Crucible loaded — hold ANYWHERE to HEAT it ('+Math.round(forgeCrucHeat*100)+'%); at molten it can pour.'
     : 'Crucible molten — hold on the frame; the pot TIPS for a moment, then pours ALLOY around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
-    forgeTool==='level' ? 'Leveller: move the mouse up/down to raise or lower the glowing slab to a layer, then PRESS AND HOLD to freeze it and melt that layer. Drag left / right / forward / back to slide all molten metal that way — sweep a pile out to the corners. Use the turn buttons to spin the bench.'
+    forgeTool==='level' ? 'Leveller (moves metal — it does NOT melt): torch a layer molten first, then move the mouse up/down to line the glowing slab up with it, PRESS AND HOLD, and drag left / right / forward / back to slide that molten metal — sweep a pile out to the corners. Use the turn buttons to spin the bench.'
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
     : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
@@ -8028,10 +8024,10 @@ function forgeDown(x,y){
   const rt=forgeRackPick(x,y); if (rt){ forgeSetTool(rt); return; }   // clicked a tool on the rack
   const aim=forgeAimCell(x,y);
   if (forgeTool==='level'){
-    // FREEZE the slab at the height the hover already picked, then drag to sweep that molten layer.
-    // The whole gesture is press-hold-drag, so there is no drag-to-rotate here — use the turn buttons.
+    // GRAB the slab at the height the hover already picked, then drag to sweep whatever is molten at
+    // that layer. The gesture is press-hold-drag, so there is no drag-to-rotate here — use turn buttons.
     forgeLevelHold=true; forgeLevelDir=null; forgeSX=x; forgeSY=y;
-    forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(true);
+    forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(true); forgeDirty=true;   // ring brightens (grabbed)
     return;
   }
   if (forgeTool==='grind'){
@@ -8065,7 +8061,9 @@ function forgeMove(x,y){
     if (forgeLevelHold){                        // held: the slab is frozen; the drag sets the slide direction
       forgeLevelDir=forgeLevelDirFromDrag(x,y);
     } else {                                     // hovering: raise/lower the slab to pick a layer
-      forgeLevelY=forgeLevelFromScreen(y); forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(false);
+      const ny=forgeLevelFromScreen(y);
+      if (ny!==forgeLevelY){ forgeLevelY=ny; forgeDirty=true; }   // re-tint the ring at the new height
+      forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(false);
     }
     return;
   }
@@ -8074,7 +8072,7 @@ function forgeMove(x,y){
   const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
 function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false;
-  forgeLevelHold=false; forgeLevelDir=null; if (forgeTool==='level') forgeLevelPlaneHot(false);   // release: slab cools back to the blue "pick a layer" state
+  forgeLevelHold=false; forgeLevelDir=null; if (forgeTool==='level'){ forgeLevelPlaneHot(false); forgeDirty=true; }   // release: slab + ring cool back to the blue "pick a layer" state
   forgeSX=null; forgeSY=null; }
 // Select the active held tool. Holsters the others; shows the level slab (cool, ready to raise/lower)
 // when Level is chosen and hides it otherwise; syncs the palette/button highlight.
@@ -8082,6 +8080,7 @@ function forgeSetTool(name){
   forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeLevelDir=null; forgeCrucPouring=false; forgeCrucPourHold=0; forgeBeam.visible=false;
   if (name==='level'){ forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(false); }   // the slab you raise/lower to pick a layer
   else forgeLevelPlane.visible=false;
+  forgeDirty=true;   // rebuild so the level ring appears/clears with the tool
   for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
   if (typeof forgeSyncPalette==='function') forgeSyncPalette();
   if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the hanging pot
