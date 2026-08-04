@@ -9569,7 +9569,12 @@ let t=0, lastNow=0;
   lamp.intensity=0.6+Math.sin(t*2)*0.12;
   // no idle drift at the seating bench: the orientation you chose IS the input,
   // and a slow spin would quietly change the score you are reading.
-  if (!dragging&&!grinding&&!seatBenchOn) mineral.rotation.y+=0.0012*benchSpeed();
+  // ALSO no drift while the saw is closing: the blade retreats whenever the core's
+  // rotation changes (so a deliberate turn can't shove stone through it), and the
+  // idle drift changes that rotation every frame — which fired the retreat on every
+  // contact and stopped the saw cutting at all (gap held, nothing faceted). A grind
+  // wants a steady turntable anyway; only a hand-drag should move the core now.
+  if (!dragging&&!grinding&&!seatBenchOn&&!sawClosing) mineral.rotation.y+=0.0012*benchSpeed();
   if (activeCore) applyCorePivot();      // spin the core about the template centre (no-op while seating)
   seatBenchTick(dt);
   if (seatBenchOn) drawSeatGauges();     // live charge/resonance gauges (sparkline scrolls as you turn)
