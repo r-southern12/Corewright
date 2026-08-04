@@ -6501,21 +6501,30 @@ function _vprof(pts,py){
 }
 const VCORE_R=1.2*SEAT_PER;                        // sphere power-core radius in cells (~5.1)
 // MORTAR & PESTLE — a squat thick-walled cup; the core sits in the bowl, a chunky pestle leans on the rim.
-const MORT_HY=10;                                                    // = cup-bottom depth, so the cup rests on the floor
-const MORT_OUT=[[-10,4.6],[-9,6.9],[-7,8.5],[4,8.5],[5.5,7.6]];       // rounded base -> straight wall -> rim (~5.5)
-const MORT_CAV=[[-6.5,0],[-5,4.6],[-3,5.9],[5.7,5.9]];               // rounded bowl bottom -> open well to the rim
-const MORT_SOCK_PY=-1.4;                                              // core sphere centre (sits low in the bowl, below the rim)
-const _mortPestle=(px,py,pz)=>{                                       // a fat pestle leaning UP-and-OUT of the +x rim
-  const ax=6.4,ay=3.5,bx=8.2,by=9.6, dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy;
+const MORT_HY=9;                                                     // = cup-bottom depth, so the cup rests on the floor
+const MORT_RIM=7;                                                    // rim height
+const MORT_OUT=[[-9,4.6],[-8,6.9],[-6,8.6],[5.5,8.6],[7,7.7]];        // rounded base -> straight wall -> rolled rim
+const MORT_BOWL=[[3,0],[4,3.4],[5,4.7],[7.1,4.9]];                   // the OPEN grinding bowl on top (the pestle grinds here — NOT the core)
+const MORT_SOCK_PY=-3.4;                                              // core sphere centre — housed low in the BODY, loaded from the +x SIDE
+const _MORT_THROAT_R=VCORE_R+0.2;                                    // side insert bore radius (core width)
+// A BOLD, LONG pestle standing in the bowl and leaning up-and-out — stays ABOVE the mortar. Kept within
+// the grid's lying length (cup-bottom + pestle <= grid) so a turn never sheds its tip.
+const _mortPestle=(px,py,pz)=>{
+  const ax=0.5,ay=3.2,bx=4.2,by=10.6, dx=bx-ax,dy=by-ay, L2=dx*dx+dy*dy;
   let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
-  return Math.hypot(px-(ax+dx*t),py-(ay+dy*t),pz)<=2.15;
+  return Math.hypot(px-(ax+dx*t),py-(ay+dy*t),pz)<=2.5;
 };
 const _mortBodyP=(px,py,pz)=>{
-  if (py>=-MORT_HY-0.01 && py<=5.5+0.01 && Math.hypot(px,pz)<=_vprof(MORT_OUT,py)+0.4) return true;   // the cup
-  if (py>=1 && py<=12 && _mortPestle(px,py,pz)) return true;                                           // the pestle (sticks up into the chamber)
+  if (py>=-MORT_HY-0.01 && py<=MORT_RIM+0.01 && Math.hypot(px,pz)<=_vprof(MORT_OUT,py)+0.4) return true;   // the cup
+  if (py>=1.5 && py<=13.2 && _mortPestle(px,py,pz)) return true;                                           // the pestle
   return false;
 };
-const _mortSeat=(px,py,pz)=>{ if (py<-6.51||py>5.7) return false; return Math.hypot(px,pz)<=_vprof(MORT_CAV,py); };
+const _mortSeat=(px,py,pz)=>{
+  if (_mortPestle(px,py,pz)) return false;                                                    // the pestle is SOLID, never void
+  if (py>=3 && py<=MORT_RIM+0.6 && Math.hypot(px,pz)<=_vprof(MORT_BOWL,py)) return true;        // open grinding bowl
+  if (px>=-0.2 && Math.hypot(py-MORT_SOCK_PY,pz)<=_MORT_THROAT_R) return true;                  // horizontal +x insert bore to the side face
+  return false;
+};
 // CALCINATOR — a wide bowl on a chunky banded pedestal; the core sits in the bowl (a little proud, brazier-like).
 const CALC_HY=9;
 const CALC_OUT=[[-9,5.2],[-7.4,7.2],[-6.4,4.0],[-1,4.2],[-0.4,5.6],[0.6,7.0],[8,10.3],[8.6,9.2]];      // foot -> stem -> band -> bowl -> rim
@@ -6534,7 +6543,7 @@ const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone',
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6},   // the drill-bit throat
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:10.8, castHy:12.5, castHz:9.5, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT},
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}},
   calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT},
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
@@ -6709,6 +6718,21 @@ forgePivot.add(forgeSeatWire);
 const forgeThreadWire=new THREE.Line(new THREE.BufferGeometry(),
   new THREE.LineBasicMaterial({color:0x7cf3ff,transparent:true,opacity:0.95,depthWrite:false}));
 forgeThreadWire.visible=false; forgeThreadWire.renderOrder=14; forgePivot.add(forgeThreadWire);
+// The PESTLE reference — a wireframe of the mortar's pestle stub (a non-revolved appendage the lathe
+// ghost can't show), so the player sees they're casting toward it. Rebuilt in forgeSyncGhostGeo from
+// the shape's `pestle` {a,b,r} and rotated with the part in forgePlaceGhosts.
+const forgePestleWire=new THREE.LineSegments(new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({color:0xB4A6FF,transparent:true,opacity:0.9,depthWrite:false}));
+forgePestleWire.visible=false; forgePestleWire.renderOrder=11; forgePivot.add(forgePestleWire);
+function _buildPestleWire(spec){
+  const A=spec.a, B=spec.b, r=spec.r;
+  const dir=new THREE.Vector3(B[0]-A[0],B[1]-A[1],B[2]-A[2]); const L=dir.length(); dir.normalize();
+  const geo=new THREE.CylinderGeometry(r*FVOX, r*FVOX, L*FVOX, 12, 1, true);   // capsule shaft (open ends)
+  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+  const mid=new THREE.Vector3((A[0]+B[0])/2*FVOX,(A[1]+B[1])/2*FVOX,(A[2]+B[2])/2*FVOX);
+  geo.applyMatrix4(new THREE.Matrix4().compose(mid, q, new THREE.Vector3(1,1,1)));
+  const e=new THREE.EdgesGeometry(geo, 24); geo.dispose(); return e;
+}
 // Swap the body + socket ghost GEOMETRY to the current template's shape. Called on template
 // change (enterForge), NOT on reorient — a turn/roll only re-places the existing ghosts. The
 // box body ghost stays a unit cube (scaled per-orientation below); the bit body ghost is a real
@@ -6752,6 +6776,9 @@ function forgeSyncGhostGeo(){
     forgeGhostWire.geometry=new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1));
     forgeThreadWire.visible=false;
   }
+  forgePestleWire.geometry.dispose();
+  if (s.pestle){ forgePestleWire.geometry=_buildPestleWire(s.pestle); forgePestleWire.visible=true; }
+  else { forgePestleWire.geometry=new THREE.BufferGeometry(); forgePestleWire.visible=false; }
   const sg=COMPONENTS[s.socketComp].ghost();
   forgeSeatFill.geometry.dispose(); forgeSeatWire.geometry.dispose();
   forgeSeatFill.geometry=sg; forgeSeatWire.geometry=new THREE.EdgesGeometry(sg);
@@ -6773,6 +6800,7 @@ function forgePlaceGhosts(){
   }
   forgeGhostWire.position.set(0, fWY(forgeCy)-PIVOT_Y, 0);
   if (forgeGhostCone){ forgeThreadWire.position.copy(forgeGhostWire.position); forgeThreadWire.quaternion.copy(q); }
+  if (forgePestleWire.visible){ forgePestleWire.position.copy(forgeGhostWire.position); forgePestleWire.quaternion.copy(q); }
   const s=fwdRot(forgeRot, 0,sh.socketPy,0);
   _fbC.set(fWX(cx+s[0]), fWY(forgeCy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
