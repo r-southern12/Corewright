@@ -6378,6 +6378,12 @@ const fgSeat=new Uint8Array(FG_N);     // 1 = core socket void — metal never e
 const fgFootprint=new Uint8Array(FGW*FGD); // 1 = a column that is part of the box (mould or seat) —
                                        // the chamber above it accepts metal; the inset border does NOT,
                                        // so metal can't perch on a lip outside the template's top edge.
+const fgColTop=new Int16Array(FGW*FGD);// highest MOULD row per column. Air ABOVE it (up to the rim) is
+                                       // TRANSIT space: a part with a tall spike (the mortar's pestle)
+                                       // pushes forgeRim way over its body, leaving a dead band of air
+                                       // between the vessel top and the rim — metal must fall THROUGH it
+                                       // to reach the mould, but must NOT overspill beside a tapered body
+                                       // (the bit's cone). Allowing only "above this column's mould" does both.
 const fgLocked=new Uint8Array(FG_N);   // 1 = QUENCHED metal: frozen in place, immune to heat/level/flow
 const fgMetal=new Uint8Array(FG_N);    // metal TYPE per cell: 0 = copper framework, 1 = crucible ALLOY.
                                        // Travels with the cell through the flow (fMove) so the alloy
@@ -6561,7 +6567,7 @@ function forgeSeatInsideP(px,py,pz){
 // without a keep-out chimney. Also sets forgeRim: the open-chamber floor, one row above
 // the box's highest cell in this pose (7 lying, 9 standing).
 function forgeBuildMould(){
-  fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgMouldTotal=0;
+  fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgColTop.fill(-1); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; const shape=forgeShape(); forgeCy=forgeCyFor(forgeRot,shape);
   let topGy=0;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
@@ -6569,7 +6575,7 @@ function forgeBuildMould(){
     if (!shape.bodyP(p[0],p[1],p[2])) continue;
     const id=fIdx(gx,gy,gz);
     if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
-    else { fgMould[id]=1; fgMouldTotal++; }
+    else { fgMould[id]=1; fgMouldTotal++; const c=gx+gz*FGW; if (gy>fgColTop[c]) fgColTop[c]=gy; }
     fgFootprint[gx+gz*FGW]=1;                 // this column belongs to the box
     if (gy>topGy) topGy=gy;
   }
@@ -7727,9 +7733,11 @@ function forgeFlowStep(){
 const FALL_EVERY=3;    // sim steps per cell of fall (~0.17s/cell at FSTEP) — slow enough to watch
 function forgeAllowed(ix,iy,iz){
   if (!fIn(ix,iy,iz)) return false;
+  const col=ix+iz*FGW;
   if (fgSeat[fIdx(ix,iy,iz)]) return false; // the core socket void: metal never enters it
-  if (iy>=forgeRim) return fgFootprint[ix+iz*FGW]===1;  // chamber: ONLY above the box footprint (no lip on the inset border)
-  return fgMould[fIdx(ix,iy,iz)]===1;       // below the rim: box interior (socket already removed)
+  if (iy>=forgeRim) return fgFootprint[col]===1;  // chamber: ONLY above the box footprint (no lip on the inset border)
+  if (fgMould[fIdx(ix,iy,iz)]) return true; // below the rim: box interior (socket already removed)
+  return fgFootprint[col]===1 && iy>fgColTop[col];   // TRANSIT air directly above this column's body (metal falls THROUGH it to the mould); never beside a tapered body
 }
 // Break-off cleanup. Melting a stone leaves small bits stranded in the air — not
 // lone cells (fCrumb drops those) but 2..N-cell clusters that still hang because
