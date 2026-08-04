@@ -6558,8 +6558,10 @@ const _calcSeat=(px,py,pz)=>{ if (py<-1.01||py>8.7) return false; return Math.hy
 const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone',
-    seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6},   // the drill-bit throat
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:300, bowlDrop:0.6, yHi:13.2},
+    seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6,   // the drill-bit throat
+    insert:{c:[0,FORGE_BIT_HY,0], axis:[0,1,0], r:_BIT_SOCK_R, depth:FORGE_BIT_HY-FORGE_BIT_SEAT_PY-_BIT_SOCK_R}},   // core drops in the TOP
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:300, bowlDrop:0.6, yHi:13.2,
+    insert:{c:[_vprof(MORT_OUT,MORT_SOCK_PY),MORT_SOCK_PY,0], axis:[1,0,0], r:_MORT_THROAT_R, depth:_vprof(MORT_OUT,MORT_SOCK_PY)-VCORE_R}},   // core slides in the +x SIDE
   calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT},
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
@@ -6754,6 +6756,27 @@ forgeThreadWire.visible=false; forgeThreadWire.renderOrder=14; forgePivot.add(fo
 const forgePestleWire=new THREE.LineSegments(new THREE.BufferGeometry(),
   new THREE.LineBasicMaterial({color:0xB4A6FF,transparent:true,opacity:0.9,depthWrite:false}));
 forgePestleWire.visible=false; forgePestleWire.renderOrder=11; forgePivot.add(forgePestleWire);
+// The INSERT MOUTH — where the core actually goes IN. The amber seat sphere shows WHERE the core
+// sits but not the OPENING it enters through, so a buried sphere read as a floating ball ("no
+// distinction for the core insert"). This draws the bore's mouth ring at the body surface plus a
+// few axial neck lines back to the core, in a bright contrasting cyan, so the entry is unmistakable.
+// Bore axis is data (mortar = +x side, bit = +y top). Kept deliberately sparse — two rings + 4 bars.
+const forgeInsertWire=new THREE.LineSegments(new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({color:0x00e6ff,transparent:true,opacity:1,depthWrite:false}));
+forgeInsertWire.visible=false; forgeInsertWire.renderOrder=14; forgePivot.add(forgeInsertWire);
+function _buildInsertWire(spec){
+  const c=new THREE.Vector3(spec.c[0],spec.c[1],spec.c[2]);
+  const ax=new THREE.Vector3(spec.axis[0],spec.axis[1],spec.axis[2]).normalize();
+  const u=new THREE.Vector3(0,1,0); if (Math.abs(ax.dot(u))>0.9) u.set(1,0,0);
+  const v=new THREE.Vector3().crossVectors(ax,u).normalize(); u.crossVectors(v,ax).normalize();
+  const seg=spec.seg||24, bars=spec.bars||4, r=spec.r, depth=spec.depth;
+  const inner=c.clone().addScaledVector(ax,-depth);
+  const ring=(ctr,i)=>ctr.clone().addScaledVector(u,Math.cos(i/seg*6.2832)*r).addScaledVector(v,Math.sin(i/seg*6.2832)*r);
+  const pts=[];
+  for (const ctr of [c,inner]) for (let i=0;i<seg;i++){ pts.push(ring(ctr,i), ring(ctr,i+1)); }   // mouth + inner ring
+  for (let b=0;b<bars;b++){ const i=b*seg/bars; pts.push(ring(c,i), ring(inner,i)); }               // axial neck lines
+  return new THREE.BufferGeometry().setFromPoints(pts.map(p=>p.multiplyScalar(FVOX)));
+}
 function _buildPestleWire(spec){
   const A=spec.a, B=spec.b, r=spec.r;
   const dir=new THREE.Vector3(B[0]-A[0],B[1]-A[1],B[2]-A[2]); const L=dir.length(); dir.normalize();
@@ -6809,6 +6832,9 @@ function forgeSyncGhostGeo(){
   forgePestleWire.geometry.dispose();
   if (s.pestle){ forgePestleWire.geometry=_buildPestleWire(s.pestle); forgePestleWire.visible=true; }
   else { forgePestleWire.geometry=new THREE.BufferGeometry(); forgePestleWire.visible=false; }
+  forgeInsertWire.geometry.dispose();
+  if (s.insert){ forgeInsertWire.geometry=_buildInsertWire(s.insert); forgeInsertWire.visible=true; }
+  else { forgeInsertWire.geometry=new THREE.BufferGeometry(); forgeInsertWire.visible=false; }
   const sg=COMPONENTS[s.socketComp].ghost();
   forgeSeatFill.geometry.dispose(); forgeSeatWire.geometry.dispose();
   forgeSeatFill.geometry=sg; forgeSeatWire.geometry=new THREE.EdgesGeometry(sg);
@@ -6831,6 +6857,7 @@ function forgePlaceGhosts(){
   forgeGhostWire.position.set(0, fWY(forgeCy)-PIVOT_Y, 0);
   if (forgeGhostCone){ forgeThreadWire.position.copy(forgeGhostWire.position); forgeThreadWire.quaternion.copy(q); }
   if (forgePestleWire.visible){ forgePestleWire.position.copy(forgeGhostWire.position); forgePestleWire.quaternion.copy(q); }
+  if (forgeInsertWire.visible){ forgeInsertWire.position.copy(forgeGhostWire.position); forgeInsertWire.quaternion.copy(q); }
   const s=fwdRot(forgeRot, 0,sh.socketPy,0);
   _fbC.set(fWX(cx+s[0]), fWY(forgeCy+s[1])-PIVOT_Y, fWZ(cz+s[2]));
   forgeSeatFill.position.copy(_fbC); forgeSeatWire.position.copy(_fbC);
