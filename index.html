@@ -8125,7 +8125,10 @@ function renderForgeFeed(){
     const state = forgeCrucLoad.length<2 ? 'pick two feed ores'
       : forgeCrucHeat<1 ? 'hold to heat — '+hpc+'%'
       : 'molten · '+forgeCrucBudget+' left';
-    html = `<span class="fbLbl">Feed</span><div class="fbGrp">${feedChips}</div>`+
+    // Stores are shown HERE too, so you can queue feed ore AND load the pot without switching tools
+    // first — otherwise the crucible can never be your first action (empty feed, no way to fill it).
+    html = `<span class="fbLbl">Stores</span><div class="fbGrp">${storeChips('feed')}</div>`+
+      `<span class="fbSep"></span><span class="fbLbl">Feed</span><div class="fbGrp">${feedChips}</div>`+
       `<span class="fbSep"></span><span class="fbLbl">Crucible</span>`+
       `<div class="fbGrp">${slot(0)}${slot(1)}`+
       `<span class="fbHeatWrap"><span class="fbHeatFill" style="width:${hpc}%"></span></span>`+
