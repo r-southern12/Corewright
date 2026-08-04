@@ -6549,7 +6549,7 @@ const FORGE_SHAPES={
   box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone',
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6},   // the drill-bit throat
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}},
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:300, bowlDrop:0.6},
   calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT},
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
@@ -6597,7 +6597,13 @@ function forgeBuildMould(){
 const FORGE_NUG_MASS=310;               // cells per ore nugget — CONSTANT across all equipment; sized for the
                                         // finer grid so the ore out-volumes each cavity a touch (frame
                                         // 10x310=3100>3028, bit 8x310=2480>2432) and round(mould/310) gives 10 and 8
-function forgeOreCount(){ return Math.max(1, Math.round(fgMouldTotal / FORGE_NUG_MASS)); }
+// Ore is budgeted off the mould the pour can actually FILL, not the raw cell count. A shape with a solid
+// up-and-out protrusion (the mortar's leaning pestle) has ~oreVoid cells of mould that a top-down pour can
+// never reach — gravity won't push metal up into a leaning solid. Budgeting ore for those cells poured an
+// extra nugget that had nowhere to go but the bowl lip, where it froze as the stranded "brown points" at
+// the rim. Subtracting oreVoid meters the pour to the reachable cavity, so nothing overshoots to the lip.
+function forgeOreCount(){ const s=forgeShape(); const basis=fgMouldTotal-((s&&s.oreVoid)||0);
+  return Math.max(1, Math.round(basis / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
 // Drop one nugget of cold ore high in the chamber. Every nugget is the SAME MASS (FORGE_NUG_MASS
@@ -6612,6 +6618,13 @@ function forgeSeedNugget(metalKey){
   const mid=forgeMetalId(metalKey||'copper');
   forgeNugSize=FORGE_NUG_MASS;                    // fixed nugget mass — same dollop for every part
   const cx=(FGW-1)/2, cz=(FGD-1)/2, cy=FGH-9;    // hangs high, centred over the seat
+  // Open-bowl vessels (the mortar) carry a wide keep-clear bowl void right under the drop. A centred
+  // dollop melts down onto that void, can't enter the seat, and sheds OUT to freeze on the rim as the
+  // stranded "brown points" at the lip. `bowlDrop` steers the dollop toward the fillable WALL ring —
+  // columns whose mould reaches near the rim — so the melt drips straight into the cavity instead of
+  // crusting the lip. Penalty is the column's mould-top drop below the rim: ~0 for walls, large for the
+  // deep central bowl columns, so the dollop forms over the walls that actually accept metal.
+  const bowlDrop=forgeShape().bowlDrop||0;
   const rng=mulberry32(((Math.random()*2**31)|0) ^ (forgeNugUsed*2654435761|0));
   const ax=0.55+rng()*1.5, ay=0.6+rng()*1.3, az=0.55+rng()*1.5;   // per-axis stretch -> elongated/squashed
   const nLobes=1+((rng()*3)|0), lobes=[];                          // 1..3 arms it bulges toward
@@ -6628,6 +6641,7 @@ function forgeSeedNugget(metalKey){
     s += warpAmp*Math.sin(warpPh+Math.atan2(dz,dx)*warpF)*Math.min(r,4)*0.2;                                     // wave the skin
     s += (((ix*73856093^iy*19349663^iz*83492791)>>>0)%1000/1000-0.5)*0.55;                                       // crag jitter
     if (!chamber) s += 1000;                                       // mould cells: last resort only
+    else if (bowlDrop) s += (forgeRim-1-fgColTop[ix+iz*FGW])*bowlDrop;   // steer off the deep bowl void onto the walls
     cells.push([s,ix,iy,iz]);
   }
   cells.sort((a,b)=>a[0]-b[0]);
