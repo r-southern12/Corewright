@@ -7680,11 +7680,18 @@ function forgeFlowStep(){
     // It never enters the socket (forgeAllowed excludes it); a cell over the socket settles diagonally
     // OFF it into the cavity.
     if (!inSeat && iy>0){
+      // CONTAINMENT: metal already IN the mould can only settle into more MOULD (never the transit air
+      // beside a proud upstand like the pestle) — else it slid sideways out of the pestle into the open
+      // air and was lost. Metal in transit air / the chamber is unconstrained, so it still falls THROUGH
+      // that air to reach the mould below (that's what un-stranded the cup).
+      const curMould=fgMould[id];
+      const okT=(tid,tx,ty,tz)=> !fgFill[tid] && forgeAllowed(tx,ty,tz) && (!curMould || fgMould[tid]===1);
       let tgt=-1;
-      if (!fgFill[fIdx(ix,iy-1,iz)] && forgeAllowed(ix,iy-1,iz)) tgt=fIdx(ix,iy-1,iz);   // straight down
+      const bl=fIdx(ix,iy-1,iz);
+      if (okT(bl,ix,iy-1,iz)) tgt=bl;                                                    // straight down
       else { const order=(ix+iz+forgeSpin)&3;                                           // else diagonally down
         for (let s=0;s<4;s++){ const [dx,dz]=_lateral[(order+s)&3], nx=ix+dx, nz=iz+dz;
-          if (fIn(nx,iy-1,nz) && !fgFill[fIdx(nx,iy-1,nz)] && forgeAllowed(nx,iy-1,nz)){ tgt=fIdx(nx,iy-1,nz); break; } } }
+          if (fIn(nx,iy-1,nz)){ const nd=fIdx(nx,iy-1,nz); if (okT(nd,nx,iy-1,nz)){ tgt=nd; break; } } } }
       if (tgt>=0){
         if ((forgeSpin % FALL_EVERY)===0){ fMove(id,tgt,t); fMeltCreep(ix,iy,iz); moved=true; }
         continue;   // has a lower target: move on the cadence, else wait — either way don't shed
