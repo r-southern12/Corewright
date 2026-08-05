@@ -7399,10 +7399,9 @@ const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // lays a second metal (the alloy housing) into any area of the template, in its own colour.
 // The player CHOOSES two ores, LOADS them into the pot, HEATS it to molten, then POURS —
 // nothing is automatic. A load is worth two ores of metal (2 x a feed nugget), so a part is
-// mostly copper with alloy only where it counts (the core's hot face). One load per part,
-// two once upgraded (forgeCrucibleMax).
-let forgeCrucibleMax=1;                 // crucible loads allowed per part (1; 2 once upgraded)
-let forgeCrucChargesLeft=1;             // loads not yet spent this part
+// mostly copper with alloy only where it counts (the core's hot face). The crucible is NOT capped
+// per part any more — the only limit is ore: each load costs TWO ores, so you can pour alloy as
+// often as you can feed the pot two more.
 const CRUCIBLE_RATE=6;                  // alloy cells poured per pour-tick while held
 const CRUC_POUR_EVERY=3;                // pour a tick only every Nth sim step: ~10 cells/s, not 60 — a full charge (~96) took under 2s and dumped uncontrollably
 const CRUC_HEAT_RATE=0.02;              // crucible heat gain/step: ~1.6s from cold to molten at 30Hz
@@ -7653,8 +7652,8 @@ function forgeCrucibleStep(){
       fgFill[id]=1; fgTemp[id]=0.9; fgMetal[id]=forgeCrucPourId(); forgeCrucBudget--; poured++; forgeDirty=true;
       if (poured>=CRUCIBLE_RATE||forgeCrucBudget<=0) break;
     }
-  if (forgeCrucBudget<=0){                                                 // charge emptied — spend it
-    forgeCrucPouring=false; forgeCrucChargesLeft=Math.max(0,forgeCrucChargesLeft-1);
+  if (forgeCrucBudget<=0){                                                 // charge emptied — ready for the next
+    forgeCrucPouring=false;
     forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucSpent=false;
     forgeCrucGlow(); renderForgeFeed(); updateForgeHud();
   }
@@ -7664,7 +7663,6 @@ function forgeCrucibleStep(){
 // picked feed chunk is marked used (consumed from the run). The second ore commits the charge:
 // it arms the molten budget at two nuggets' worth (2 x a feed nugget).
 function forgeCrucLoadFromFeed(i){
-  if (forgeCrucChargesLeft<=0){ say('The crucible is spent for this part.','warn'); return; }
   if (forgeCrucHeat>0 || forgeCrucLoad.length>=2){ say('Pot is charged — pour it before loading again.','warn'); return; }
   const f=forgeFeed[i]; if (!f||f.used){ return; }
   f.used=true; forgeCrucLoad.push(f.metal);
@@ -7928,7 +7926,7 @@ function enterForge(){
   forgeBuildMould(); forgePlaceGhosts();
   fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
   // recharge the crucible and clear any half-built load for a fresh part
-  forgeCrucChargesLeft=forgeCrucibleMax; forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucBudget=0; forgeCrucSpent=false;
+  forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucBudget=0; forgeCrucSpent=false;
   // The feed starts EMPTY — the player composes it from stores (up to this part's ore count),
   // then clicks which chunk to drop and melt. Nothing is queued or dropped automatically.
   forgeNugSize=FORGE_NUG_MASS;
@@ -8150,7 +8148,7 @@ function updateForgeHud(){
     : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
     : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
-  const crucNote = forgeCrucChargesLeft<forgeCrucibleMax || forgeCrucLoad.length ? '  ·  crucible '+forgeCrucChargesLeft+' left' : '';
+  const crucNote = forgeCrucLoad.length ? '  ·  crucible loaded' : '';
   stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left'+crucNote;
   fill.style.width=fpc+'%';
   fin.disabled=frac<FILL_DONE;
@@ -8201,7 +8199,7 @@ function renderForgeFeed(){
   if (forgeTool==='crucible'){
     // The crucible melts its alloy down from TWO of the feed ores (not from stores):
     // pick two un-used feed chunks to load the pot.
-    const canLoad = forgeCrucHeat<=0 && forgeCrucLoad.length<2 && forgeCrucChargesLeft>0;
+    const canLoad = forgeCrucHeat<=0 && forgeCrucLoad.length<2;
     const feedChips=Array.from({length:forgeOreCount()},(_,i)=>{ const f=forgeFeed[i];
       if (!f) return `<span class="fbSlot empty" title="empty"></span>`;
       const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
@@ -8224,7 +8222,9 @@ function renderForgeFeed(){
       `<div class="fbGrp">${slot(0)}${slot(1)}`+
       `<span class="fbHeatWrap"><span class="fbHeatFill" style="width:${hpc}%"></span></span>`+
       `<span class="fbLbl" style="color:var(--crystal)">${state}</span></div>`+
-      `<span class="fbSep"></span><span class="fbLbl" style="color:var(--crystal)">${forgeCrucChargesLeft} charge${forgeCrucChargesLeft===1?'':'s'}</span>`;
+      // No per-part cap any more: the crucible pours as long as you can feed it two ores. Show how many
+      // more full loads the unused feed can make so "have 2 ores -> can pour" reads at a glance.
+      `<span class="fbSep"></span><span class="fbLbl" style="color:var(--crystal)">${Math.floor(forgeFeed.filter(f=>!f.used).length/2)} load${Math.floor(forgeFeed.filter(f=>!f.used).length/2)===1?'':'s'} ready</span>`;
   } else {
     // always render all of this part's ore slots (empty ones as placeholders) so the bar is a
     // fixed full length from the start rather than growing as ore is queued.
