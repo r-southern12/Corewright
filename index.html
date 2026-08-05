@@ -4782,6 +4782,12 @@ const RESOURCE=new Set([T_ORE,T_NODE1,T_NODE2,T_NODE3,T_MOSS,T_SALT,T_CINDER,T_R
   T_CLAY,T_MICA,T_BRINE,T_TIN]);
 // rolled fresh for a new run; loaded from the save when one exists
 let WORLD_SEED=(Math.random()*2**31)|0;
+// The world had almost no tin (it was band-locked and rare), so bronze was near-impossible to source.
+// Ore seams are now mostly TIN: 80% of every T_ORE cell becomes T_TIN, 20% stays a dust seam. Split on the
+// same per-cell roll r — inside an ore-table branch r is uniform in [0,chance), so r<chance*0.8 is the
+// lower 80% — keeping generation deterministic per column (a regen must reproduce the same tiles).
+const ORE_TIN_FRAC=0.8;
+const oreVein=chance=>(d,r)=> r < chance*ORE_TIN_FRAC ? T_TIN : T_ORE;
 
 // ---------- infinite world storage: a cache of columns keyed by absolute x ----------
 // The world is no longer a fixed WWxWH array. Each column is generated on demand
@@ -4859,7 +4865,7 @@ const PLANET_TERRA={
     [0.20,  T_CLAY,   0],
   ],
   deep:[
-    [0.035, T_ORE],
+    [0.035, oreVein(0.035)],
     [0.055, d=> d<52 ? T_IRON : T_VST],
     [0.028, d=> (d>=26&&d<52) ? T_TIN : T_S2],   // tin runs with iron in the T2 band
 
@@ -4880,7 +4886,7 @@ const PLANET_TERRA={
     { element:'fire', scale:22, threshold:0.82, hardMult:3, dps:6,
       tint:ELEM.fire.tint,
       deep:[
-        [0.05, T_ORE],
+        [0.05, oreVein(0.05)],
         [0.06, d=> d<52 ? T_IRON : T_VST],
         [0.028, d=> (d>=20&&d<46) ? T_TIN : T_S2],
         [0.28, (d,r,base)=> r<0.6 ? T_CINDER : base],
@@ -4890,7 +4896,7 @@ const PLANET_TERRA={
     { element:'ice', scale:26, threshold:0.86, hardMult:2, dps:0,
       tint:ELEM.ice.tint, gate:{ tier:3 },
       deep:[
-        [0.05, T_ORE],
+        [0.05, oreVein(0.05)],
         [0.26, (d,r,base)=> r<0.55 ? T_RIME : base],
         [0.10, T_BRINE],
       ] },
@@ -4915,7 +4921,7 @@ const PLANET_FERRIC={
     [0.16,  T_CLAY,  0],
   ],
   deep:[
-    [0.045, T_ORE],
+    [0.045, oreVein(0.045)],
     [0.075, d=> d<46 ? T_IRON : T_VST],
     [0.055, d=> d<24 ? T_NODE1 : d<46 ? T_NODE2 : T_NODE3],
     [0.10,  d=> d<24 ? T_SALT : T_MICA],
@@ -4928,7 +4934,7 @@ const PLANET_FERRIC={
     { element:'fire', scale:20, threshold:0.82, hardMult:3, dps:6,
       tint:ELEM.fire.tint,
       deep:[
-        [0.06, T_ORE],
+        [0.06, oreVein(0.06)],
         [0.10, d=> d<46 ? T_IRON : T_VST],
         [0.30, (d,r,base)=> r<0.6 ? T_CINDER : base],
         [0.10, T_BRINE],
@@ -4938,7 +4944,7 @@ const PLANET_FERRIC={
     { element:'ice', scale:24, threshold:0.86, hardMult:2, dps:0,
       tint:ELEM.ice.tint, gate:{ tier:3 },
       deep:[
-        [0.05, T_ORE],
+        [0.05, oreVein(0.05)],
         [0.12, d=> d<46 ? T_IRON : T_VST],
         [0.28, (d,r,base)=> r<0.55 ? T_RIME : base],
         [0.14, T_BRINE],
@@ -6569,7 +6575,7 @@ const FORGE_SHAPES={
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', bowlDrop:0.6,
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6,   // the drill-bit throat
     insert:{c:[0,FORGE_BIT_HY,0], axis:[0,1,0], r:_BIT_SOCK_R, depth:FORGE_BIT_HY-FORGE_BIT_SEAT_PY-_BIT_SOCK_R}},   // core drops in the TOP
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:400, bowlDrop:0.6, yHi:13.2,
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreFixed:10, bowlDrop:0.6, yHi:13.2,
     insert:{c:[_vprof(MORT_OUT,MORT_SOCK_PY),MORT_SOCK_PY,0], axis:[1,0,0], r:_MORT_THROAT_R, depth:_vprof(MORT_OUT,MORT_SOCK_PY)-VCORE_R}},   // core slides in the +x SIDE
   calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT, oreVoid:200},
 };
@@ -6631,7 +6637,12 @@ const FORGE_NUG_MASS=310;               // cells per ore nugget — CONSTANT acr
 // CEIL, not round: the ore must out-volume the fillable cavity a touch (the surplus is the flash allowance
 // the leveller sweeps off). round could land UNDER — the drill bit's grown mould (2849) rounded to 9 ore
 // = 2790 cells, short of the mould, so even a flawless pour capped at ~88% ("used all the ore, only 90%").
-function forgeOreCount(){ const s=forgeShape(); const basis=fgMouldTotal-((s&&s.oreVoid)||0);
+// A shape may PIN its ore count (oreFixed): the mortar wants a full 10 so there's enough metal to fill the
+// cup AND the pestle (which you fill by casting upside-down, then rotating upright — the flip trick), not
+// just the cup. The metered 8 left it short of the pestle; the surplus over a cup-only pour is flash to
+// level off. Otherwise ore is budgeted off the reachable cavity (mould minus any unfillable oreVoid).
+function forgeOreCount(){ const s=forgeShape(); if (s&&s.oreFixed) return s.oreFixed;
+  const basis=fgMouldTotal-((s&&s.oreVoid)||0);
   return Math.max(1, Math.ceil(basis / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
