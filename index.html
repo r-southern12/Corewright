@@ -6370,6 +6370,7 @@ const FY0=16;                           // origin row; raised with FGH so the de
 const fWX=ix=>(ix-(FGW-1)/2)*FVOX;
 const fWY=iy=>(iy-FY0)*FVOX;
 const fWZ=iz=>(iz-(FGD-1)/2)*FVOX;
+let forgeViewY=0;                       // world-Y the camera aims at in the forge view (the equipment centre)
 
 const fgFill=new Uint8Array(FG_N);     // 1 = metal present
 const fgTemp=new Float32Array(FG_N);   // 0..1 temperature; >FLOW_T is molten
@@ -6556,13 +6557,13 @@ const _calcSeat=(px,py,pz)=>{ if (py<-1.01||py>8.7) return false; return Math.hy
 // an optional extra void unioned with the core socket (the bit's throat, a vessel's open bowl). `ghostP`
 // is a revolved outer profile [y,r] for the wireframe (vessels); box/cone build their own.
 const FORGE_SHAPES={
-  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box'},
-  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone',
+  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box', bowlDrop:0.6},
+  bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', bowlDrop:0.6,
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6,   // the drill-bit throat
     insert:{c:[0,FORGE_BIT_HY,0], axis:[0,1,0], r:_BIT_SOCK_R, depth:FORGE_BIT_HY-FORGE_BIT_SEAT_PY-_BIT_SOCK_R}},   // core drops in the TOP
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:300, bowlDrop:0.6, yHi:13.2,
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreVoid:400, bowlDrop:0.6, yHi:13.2,
     insert:{c:[_vprof(MORT_OUT,MORT_SOCK_PY),MORT_SOCK_PY,0], axis:[1,0,0], r:_MORT_THROAT_R, depth:_vprof(MORT_OUT,MORT_SOCK_PY)-VCORE_R}},   // core slides in the +x SIDE
-  calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT},
+  calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT, oreVoid:200},
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
 // Socket test in the PART frame: the core's own component inside() (so a sphere/cube drops in as data),
@@ -6581,7 +6582,7 @@ function forgeSeatInsideP(px,py,pz){
 function forgeBuildMould(){
   fgMould.fill(0); fgSeat.fill(0); fgFootprint.fill(0); fgColTop.fill(-1); fgMouldTotal=0;
   const cx=(FGW-1)/2, cz=(FGD-1)/2; const shape=forgeShape(); forgeCy=forgeCyFor(forgeRot,shape);
-  let topGy=0;
+  let topGy=0, loGy=FGH;
   for (let gx=0;gx<FGW;gx++) for (let gy=0;gy<FGH;gy++) for (let gz=0;gz<FGD;gz++){
     const p=invRot(forgeRot, gx-cx, gy-forgeCy, gz-cz);
     if (!shape.bodyP(p[0],p[1],p[2])) continue;
@@ -6589,9 +6590,14 @@ function forgeBuildMould(){
     if (forgeSeatInsideP(p[0],p[1],p[2])) fgSeat[id]=1;
     else { fgMould[id]=1; fgMouldTotal++; const c=gx+gz*FGW; if (gy>fgColTop[c]) fgColTop[c]=gy; }
     fgFootprint[gx+gz*FGW]=1;                 // this column belongs to the box
-    if (gy>topGy) topGy=gy;
+    if (gy>topGy) topGy=gy; if (gy<loGy) loGy=gy;
   }
   forgeRim=topGy+1;
+  // Camera look-target for the forge: the equipment's vertical CENTRE. The shared camera looks at world
+  // origin (grid FY0), which for the forge sits ABOVE the body — between the template and the ore hang
+  // zone — so a zoom pulled toward that midpoint, not the part ("zoom centre is between the ore and the
+  // template"). Aim at the body centroid instead so a zoom closes on the equipment. resize() reads this.
+  forgeViewY=fWY((loGy+topGy)/2);
   forgeSyncTargetPts();                         // refresh the 3D fill-target lattice for this pose
 }
 // The feed: raw ore comes as a run of small NUGGETS fed one at a time, not one huge
@@ -6614,8 +6620,11 @@ const FORGE_NUG_MASS=310;               // cells per ore nugget — CONSTANT acr
 // never reach — gravity won't push metal up into a leaning solid. Budgeting ore for those cells poured an
 // extra nugget that had nowhere to go but the bowl lip, where it froze as the stranded "brown points" at
 // the rim. Subtracting oreVoid meters the pour to the reachable cavity, so nothing overshoots to the lip.
+// CEIL, not round: the ore must out-volume the fillable cavity a touch (the surplus is the flash allowance
+// the leveller sweeps off). round could land UNDER — the drill bit's grown mould (2849) rounded to 9 ore
+// = 2790 cells, short of the mould, so even a flawless pour capped at ~88% ("used all the ore, only 90%").
 function forgeOreCount(){ const s=forgeShape(); const basis=fgMouldTotal-((s&&s.oreVoid)||0);
-  return Math.max(1, Math.round(basis / FORGE_NUG_MASS)); }
+  return Math.max(1, Math.ceil(basis / FORGE_NUG_MASS)); }
 let forgeNugUsed=0, forgeNugSize=FORGE_NUG_MASS;   // nuggets spawned so far this part; cells per nugget (fixed)
 function forgeNugWant(){ return fgMouldTotal; }
 // Drop one nugget of cold ore high in the chamber. Every nugget is the SAME MASS (FORGE_NUG_MASS
@@ -7992,6 +8001,7 @@ function forgeReorient(newRot, msg){
   // identity, so the move reads as a real ~0.3s rotation rather than an instant snap.
   matQuat(_mMul(oldRot,_mT(newRot)), forgeTurnFromQ); forgeTurnT=0; forgePivot.quaternion.copy(forgeTurnFromQ);
   forgeDirty=true; syncForgeMesh(); updateForgeHud();
+  if (typeof resize==='function') resize();     // the pose changed the body centre — re-aim the camera
   if (typeof say==='function' && msg) say(msg,'good');
 }
 // Turn/Roll the box 90° about grid X / grid Z, forward or back. Reset returns it to lying and
@@ -9088,6 +9098,7 @@ function showView(name){
   else if (name==='brew'){ renderBrew(); say('The still is lit.'); }
   else if (name==='lapidary'){ renderLapidary(); say('The lapidary. Clean roughs, then shape the crystal.'); }
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
+  if (inForge) resize();                       // re-aim the camera at the equipment centre (forgeViewY)
   if (tut.on) tutDock();
 }
 // The station-switch bar: hop between the four shaping stations without a trip
@@ -9558,9 +9569,13 @@ function resize(){
   const fovH=2*Math.atan(Math.tan(fovV/2)*camera.aspect);
   const distH=R/Math.sin(fovH/2);
   const dist=Math.min(45,Math.max(4,Math.max(distV,distH)/zoom));
-  camera.position.set(0,dist*0.18,dist);
+  // The forge aims at the EQUIPMENT centre (forgeViewY), not world origin. World origin sits above the
+  // body — between the template and the ore hang zone — so a zoom there pulled toward that midpoint
+  // instead of the part. Every other view keeps origin (tY=0).
+  const tY=(typeof view!=='undefined'&&view==='forgeb')?forgeViewY:0;
+  camera.position.set(0,tY+dist*0.18,dist);
   if (typeof cameraHome!=='undefined') cameraHome.copy(camera.position);
-  camera.lookAt(0,0,0);
+  camera.lookAt(0,tY,0);
   camera.updateProjectionMatrix();
 }
 function setZoom(z){ zoom=Math.min(3,Math.max(0.5,z)); resize(); }
