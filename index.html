@@ -4785,6 +4785,7 @@ function castAt(cx,cy){
 const jetSelected=()=>potion&&POTIONS[potion]&&POTIONS[potion].kind==='jet';
 function benchDown(x,y){
   if (view==='forgeb'){ forgeDown(x,y); return; }
+  if (view==='brewb'){ brewDown(x,y); return; }
   if (view==='polish'&&castAt(x,y)){ polishing=true; polishAt(x,y,performance.now()); return; }
   if (sandSelected()&&castAt(x,y)){ sanding=true; sandAt(x,y,performance.now()); return; }
   if (jetSelected()&&castAt(x,y)){ jetting=true; jetAt(x,y,performance.now()); return; }
@@ -4814,6 +4815,7 @@ function carveTick(){
 }
 function benchMove(x,y,hover){
   if (view==='forgeb'){ forgeMove(x,y); return; }
+  if (view==='brewb'){ brewMove(x,y); return; }
   if (polishing||sanding||jetting||scribing||grinding){
     carveX=x; carveY=y; carvePending=true; return;
   }
@@ -4833,6 +4835,7 @@ function benchMove(x,y,hover){
 }
 function benchUp(x,y){
   if (view==='forgeb'){ forgeUp(x,y); return; }
+  if (view==='brewb'){ brewUp(x,y); return; }
   if (polishing){ polishing=false; return; }
   if (sanding){ sanding=false; return; }
   if (jetting){ jetting=false; return; }
@@ -5244,7 +5247,7 @@ const LAB_W=8, LAB_H=4;              // four 2x2 wings in a row
 const LAB_WINGS=[
   {key:'lapidary', label:'The Lapidary',      view:'lapidary', col:'#4FE3C1'},
   {key:'forge',    label:'The Forge',         view:'forge',  col:'#E8A33D'},
-  {key:'brewing',  label:'Brewing Station',   view:'brew',   col:'#8B7CF6'},
+  {key:'brewing',  label:'Brewing Station',   view:'brewb',  col:'#8B7CF6'},
   {key:'suit',     label:'Suit & Systems',    view:'lab',    col:'#5b6ea0'}
 ];
 const LAB_RECALL_DIST=40;            // surface further than this and it re-lands
@@ -8510,6 +8513,193 @@ function forgeQuench(){
   if (typeof say==='function') say(n?('Quenched — '+n+' locked in.'):'Nothing in the frame to quench yet.', n?'good':'warn');
 }
 
+// ============================================================
+// THE BREWING BENCH — a side-on 3D alchemy line (phase 2). Four apparatus, four skills, run in order:
+//   Mortar (grind)  ->  Calcinator (calcine)  ->  Retort (distill)  ->  Alembic (condense)
+// The four skill scores set the potion's QUALITY, which lifts its POTENCY (how much a solvent cuts).
+// Ingredients: coloured core POWDER (the colour picks the potion) + a world reagent + dust. Factory
+// apparatus for now; core-powered efficiency and one-click replication are later phases.
+// ============================================================
+const brewGroup=new THREE.Group(); scene.add(brewGroup); brewGroup.visible=false;
+const _glassMat=new THREE.MeshPhysicalMaterial({color:0x9fd0e0,metalness:0,roughness:0.12,transparent:true,opacity:0.45,clearcoat:1});
+const _copperMat=new THREE.MeshStandardMaterial({color:0xb5713a,metalness:0.85,roughness:0.35});
+const _brewGlowMat=hex=>new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0,depthWrite:false});
+function _mortarProp(){ const g=new THREE.Group();
+  g.add(_tm(new THREE.CylinderGeometry(0.5,0.34,0.5,20),_brass,0,0.25,0));
+  const pes=_tm(new THREE.CylinderGeometry(0.07,0.11,0.6,10),_steelM,0.12,0.58,0); pes.rotation.z=0.4; g.add(pes); g.userData.pestle=pes;
+  return g; }
+function _calcProp(){ const g=new THREE.Group();
+  g.add(_tm(new THREE.BoxGeometry(0.72,0.55,0.6),_brassD,0,0.27,0));
+  g.add(_tm(new THREE.CylinderGeometry(0.34,0.2,0.28,18),_copperMat,0,0.68,0));
+  const gl=_tm(new THREE.SphereGeometry(0.17,12,10),_brewGlowMat(0xff7a30),0,0.5,0); g.add(gl); g.userData.glow=gl; return g; }
+function _retortProp(){ const g=new THREE.Group();
+  g.add(_tm(new THREE.SphereGeometry(0.4,18,14),_glassMat,0,0.4,0));
+  const nk=_tm(new THREE.CylinderGeometry(0.06,0.06,0.75,10),_glassMat,0.36,0.55,0); nk.rotation.z=-1.05; g.add(nk);
+  const gl=_tm(new THREE.SphereGeometry(0.24,12,10),_brewGlowMat(0xff9a40),0,0.4,0); g.add(gl); g.userData.glow=gl; return g; }
+function _alembicProp(){ const g=new THREE.Group();
+  g.add(_tm(new THREE.SphereGeometry(0.36,18,12,0,6.283,0,2.0),_glassMat,0,0.48,0));
+  g.add(_tm(new THREE.ConeGeometry(0.32,0.42,16),_brass,0,0.78,0));
+  const sp=_tm(new THREE.CylinderGeometry(0.05,0.05,0.55,8),_glassMat,0.34,0.55,0); sp.rotation.z=-0.95; g.add(sp);
+  g.add(_tm(new THREE.SphereGeometry(0.17,12,10),_glassMat,0.6,0.16,0));
+  const gl=_tm(new THREE.SphereGeometry(0.2,12,10),_brewGlowMat(0x6fd0ff),0,0.48,0); g.add(gl); g.userData.glow=gl; return g; }
+const _brewStations=[_mortarProp(),_calcProp(),_retortProp(),_alembicProp()];
+const BREW_X=[-2.7,-0.9,0.9,2.7];
+_brewStations.forEach((s,i)=>{ s.position.set(BREW_X[i],-0.95,0); brewGroup.add(s); });
+brewGroup.add(_tm(new THREE.BoxGeometry(7.6,0.25,1.5),new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}),0,-1.02,0));
+const _brewSpot=new THREE.PointLight(0xffe0b0,0,3.5); brewGroup.add(_brewSpot);
+
+const BREW_POTIONS=[
+  {id:'h',        color:'teal',   reagent:'moss',  label:'Level Solvent'},
+  {id:'v',        color:'azure',  reagent:'salt',  label:'Standing Tincture'},
+  {id:'digjet',   color:'violet', reagent:'clay',  label:'Jet Rinse',  tank:'jet'},
+  {id:'brinejet', color:'rose',   reagent:'brine', label:'Brine Jet',  tank:'brine'},
+  {id:'sand',     color:'lime',   reagent:'clay',  label:'Sandblast',  tank:'sand'},
+  {id:'blast',    color:'amber',  reagent:'salt',  label:'Blast Phial'}
+];
+const BREW_COST={powder:4, reagent:2, dust:3};       // per brew: 4 colour powder + 2 reagent + 3 dust
+const BREW_STAGE_NAMES=['Grind','Calcine','Distill','Condense'];
+const potionQ={};                                    // best quality (0..1) brewed per potion id -> lifts potency
+let brew=null;                                       // active brew session, or null at the picker
+
+function brewCanAfford(pt){
+  return ingStock(pt.color)>=BREW_COST.powder && ingStock(pt.reagent)>=BREW_COST.reagent && dust>=BREW_COST.dust;
+}
+function brewStart(pt){
+  if (!adminOn && !brewCanAfford(pt)){ say('Not enough '+pt.color+' powder / '+pt.reagent+' / dust.','warn'); return; }
+  if (!adminOn){ powder[pt.color]-=BREW_COST.powder; reagents[pt.reagent]-=BREW_COST.reagent; dust-=BREW_COST.dust; updateMeters(); }
+  brew={ potion:pt, stage:0, scores:[], tt:0,
+    grinding:false, angDelta:0, lastAng:null, fill:0, inband:0, offband:0,   // mortar
+    held:false, temp:0, band:0.55, calc:0, scorch:0,                          // calcinator
+    prog:0, collect:false, collected:0, collWeight:0,                         // retort
+    coolant:0, purity:0, condT:0 };                                           // alembic
+  renderBrewHud();
+}
+function brewScoreAndAdvance(score){
+  brew.scores.push(Math.max(0,Math.min(1,score)));
+  brew.stage++; brew.tt=0;
+  // reset per-stage locals for the next one
+  Object.assign(brew,{grinding:false,angDelta:0,lastAng:null,fill:0,inband:0,offband:0,
+    held:false,temp:0,band:0.55,calc:0,scorch:0,prog:0,collect:false,collected:0,collWeight:0,coolant:0,purity:0,condT:0});
+  if (brew.stage>=4) brewFinish();
+  else renderBrewHud();
+}
+function brewFinish(){
+  const pt=brew.potion;
+  const Q=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;      // 0..1 overall
+  potionQ[pt.id]=Math.max(potionQ[pt.id]||0, Q);                    // record personal best (lifts potency)
+  if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*Q))); }
+  else { potions[pt.id]=(potions[pt.id]||0)+1; }
+  updateMeters(); updateStock();
+  say(`${pt.label} brewed — quality ${Math.round(Q*100)}%.`,'good');
+  floatText(pt.label+' '+Math.round(Q*100)+'%','var(--crystal)');
+  brew=null; renderBrewHud();
+}
+function brewAngle(x,y){ return Math.atan2(y-innerHeight/2, x-innerWidth/2); }
+function brewDown(x,y){
+  if (!brew) return;
+  const s=brew.stage;
+  if (s===0){ brew.grinding=true; brew.lastAng=brewAngle(x,y); }
+  else if (s===1){ brew.held=true; }
+  else if (s===2){ brew.collect=true; }
+  else if (s===3){ brew.lastX=x; brew.lastY=y; }
+}
+function brewMove(x,y){
+  if (!brew) return;
+  const s=brew.stage;
+  if (s===0 && brew.grinding){ const a=brewAngle(x,y);
+    if (brew.lastAng!=null){ let d=a-brew.lastAng; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; brew.angDelta+=Math.abs(d); }
+    brew.lastAng=a; }
+  else if (s===3 && brew.lastX!=null){ brew.coolant=Math.min(1, brew.coolant+(Math.abs(x-brew.lastX)+Math.abs(y-brew.lastY))/900); brew.lastX=x; brew.lastY=y; }
+}
+function brewUp(){
+  if (!brew) return;
+  if (brew.stage===0) brew.grinding=false;
+  if (brew.stage===1) brew.held=false;
+  if (brew.stage===2) brew.collect=false;
+  if (brew.stage===3) brew.lastX=null;
+}
+function brewTick(dt){
+  // light the active station
+  for (let i=0;i<4;i++){ const gl=_brewStations[i].userData.glow; if (gl) gl.material.opacity=(brew&&brew.stage===i)?0.35+0.25*Math.sin(t*4):0.05; }
+  if (brew){ _brewSpot.position.set(BREW_X[brew.stage],-0.2,0.9); _brewSpot.intensity=0.7; } else _brewSpot.intensity=0;
+  if (!brew) return;
+  brew.tt+=dt;
+  const s=brew.stage;
+  if (s===0){                                          // MORTAR — steady circular grind
+    const angVel=brew.angDelta/Math.max(0.001,dt); brew.angDelta=0;
+    const inband=brew.grinding && angVel>1.4 && angVel<7.5;
+    if (inband){ brew.fill+=dt*0.42; brew.inband+=dt; } else if (brew.grinding){ brew.offband+=dt; }
+    if (!brew.grinding) brew.fill=Math.max(0,brew.fill-dt*0.1);
+    if (brew.fill>=1 && brew.tt>0.4){ const q=brew.inband/Math.max(0.001,brew.inband+brew.offband); brewScoreAndAdvance(q); }
+  } else if (s===1){                                    // CALCINATOR — hold the heat in a drifting band
+    brew.band=0.5+0.2*Math.sin(brew.tt*0.7);
+    brew.temp=Math.max(0,Math.min(1.2, brew.temp+(brew.held?0.55:-0.42)*dt));
+    const d=Math.abs(brew.temp-brew.band);
+    if (d<0.13) brew.calc+=dt*0.5*(1-d/0.13);
+    if (brew.temp>0.96) brew.scorch+=dt*0.35;
+    if (brew.calc>=1){ brewScoreAndAdvance(Math.max(0,brew.calc-brew.scorch)); }
+  } else if (s===2){                                    // RETORT — collect only the HEARTS window
+    brew.prog+=dt/6.5;
+    const q=Math.max(0,1-Math.pow((brew.prog-0.5)/0.26,2));   // bell peak at mid-run
+    brew.qNow=q;
+    if (brew.collect){ brew.collected+=q*dt; brew.collWeight+=dt; }
+    if (brew.prog>=1){ const avg=brew.collWeight>0?brew.collected/brew.collWeight:0; const enough=Math.min(1,brew.collWeight/2.4);
+      brewScoreAndAdvance(avg*enough); }
+  } else if (s===3){                                    // ALEMBIC — keep the condenser circulating
+    brew.coolant=Math.max(0, brew.coolant-dt*0.45);
+    if (brew.coolant>0.45) brew.purity+=dt*0.45*brew.coolant;
+    brew.condT+=dt;
+    if (brew.condT>=5){ brewScoreAndAdvance(Math.min(1, brew.purity/1.9)); }
+  }
+  renderBrewHud();
+}
+
+let _brewHud=null;
+function ensureBrewHud(){
+  if (_brewHud) return _brewHud;
+  _brewHud=document.createElement('div'); _brewHud.id='brewHud';
+  _brewHud.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(720px,94vw);'+
+    'z-index:12;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;'+
+    'box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 6px 18px rgba(0,0,0,.55);display:none;font-size:13px';
+  document.body.appendChild(_brewHud);
+  return _brewHud;
+}
+function _bar(label,frac,col,mark){
+  const p=Math.max(0,Math.min(100,frac*100));
+  const m=(mark!==undefined)?`<span style="position:absolute;left:${Math.max(0,Math.min(100,mark*100))}%;top:-2px;bottom:-2px;width:2px;background:#fff;box-shadow:0 0 5px #fff"></span>`:'';
+  return `<div style="margin:5px 0"><div style="font-size:11px;color:var(--dim);margin-bottom:2px">${label}</div>`+
+    `<div style="position:relative;height:12px;background:#0a0e18;border-radius:4px;overflow:visible">`+
+    `<div style="height:100%;width:${p}%;background:${col};border-radius:4px"></div>${m}</div></div>`;
+}
+function renderBrewHud(){
+  const el=ensureBrewHud(); el.style.display=(view==='brewb')?'':'none';
+  if (view!=='brewb') return;
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  if (!brew){                                          // PICKER
+    const chips=BREW_POTIONS.map(pt=>{ const H=CORE_HUES.find(h=>h.key===pt.color); const ok=adminOn||brewCanAfford(pt);
+      const best=potionQ[pt.id]?` · best ${Math.round(potionQ[pt.id]*100)}%`:'';
+      return `<button class="act" data-brew="${pt.id}" ${ok?'':'disabled'} style="text-align:left;opacity:${ok?1:0.5}">`+
+        `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">​</span> `+
+        `${pt.label}<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`;
+    }).join('');
+    el.innerHTML=`<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Brewing line — pick a potion (colour = core powder)</div>`+
+      `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px">${chips}</div>`;
+    el.querySelectorAll('[data-brew]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.brew); if (pt) brewStart(pt); });
+    return;
+  }
+  // IN A BREW: pipeline + the active stage's gauge
+  const pipe=BREW_STAGE_NAMES.map((n,i)=>`<span style="color:${i<brew.stage?'var(--crystal)':i===brew.stage?'var(--amber)':'var(--dim)'}">${i<brew.stage?'✓ ':''}${n}</span>`).join('  →  ');
+  let body='', tip='';
+  const s=brew.stage;
+  if (s===0){ body=_bar('Fineness (circle the pestle — steady, not too fast)',brew.fill,'#8fe6c8',1); tip='Drag in smooth circles to grind. Fill the ring.'; }
+  else if (s===1){ body=_bar('Heat (press & hold to warm, release to cool)',brew.temp/1.2,brew.temp>0.96?'#ff5a2a':'#ffb347',brew.band/1.2)+_bar('Calcined',brew.calc,'#ffd27a'); tip='Hold the heat on the drifting mark. Don\'t scorch.'; }
+  else if (s===2){ const inHearts=(brew.qNow||0)>0.6; body=_bar('Distillate — collect only at the peak',brew.qNow||0,inHearts?'#8fe6c8':'#c96a6a')+_bar('Run',brew.prog,'#7c8bd0'); tip='Press & HOLD to collect — only while the bar is high (the hearts).'; }
+  else { body=_bar('Coolant (keep dragging to circulate)',brew.coolant,'#6fd0ff')+_bar('Purity',Math.min(1,brew.purity/1.9),'#a885ff'); tip='Keep dragging to hold the condenser cool while it settles.'; }
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><b style="color:var(--crystal)">${brew.potion.label}</b><span class="mono" style="color:var(--dim)">${pipe}</span></div>${body}<div class="sub" style="margin-top:5px">${tip}</div>`;
+}
+function enterBrewBench(){ brew=null; brewGroup.rotation.set(0.05,0,0); renderBrewHud(); }
+function leaveBrewBench(){ brew=null; if (_brewHud) _brewHud.style.display='none'; }
+
 function renderBrew(){
   const shelf=document.getElementById('reagentShelf');
   shelf.innerHTML='';
@@ -9271,10 +9461,10 @@ function showView(name){
   // The shaping benches AND the forge hide the reagent rail — glassware/ores are no use mid-cut,
   // and the forge shows its ores in the top feed strip already, so the bulky rail is redundant there.
   // A class, not an inline display, so the stylesheet stays in control.
-  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb');
+  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb');
   // The forge is its own workspace — the drill/air/dust meters aren't relevant while you pour, and
   // the player questioned why they were there, so the top meter strip is hidden in the forge bench.
-  document.getElementById('meters').style.display=(name==='forgeb')?'none':'';
+  document.getElementById('meters').style.display=(name==='forgeb'||name==='brewb')?'none':'';
   document.getElementById('expedHud').classList.toggle('on',isExped);
   document.getElementById('nudge').classList.remove('on');
   document.getElementById('alignChip').classList.remove('lit');
@@ -9283,16 +9473,19 @@ function showView(name){
   canvas.style.display=isExped?'none':'';
   // The hand-forge is a 3D bench like the shaping stations, but its own subsystem.
   const inForge=name==='forgeb';
+  const inBrew=name==='brewb';              // the brewing line — its own 3D subsystem too
   document.getElementById('forgeBench').classList.toggle('on',inForge);
   document.getElementById('fbPower').classList.toggle('on',inForge);   // the power dial rides with the forge
   if (inForge) renderForgePower();
-  mineral.visible=!inForge;                 // hide the carving core while forging
+  mineral.visible=!inForge && !inBrew;      // hide the carving core while forging or brewing
   forgeGroup.visible=inForge;
+  brewGroup.visible=inBrew;
+  if (inBrew) enterBrewBench(); else leaveBrewBench();
   forgeRack.visible=inForge;                // the 3D tool rack rides the camera in-forge only
   if (!inForge){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; }
   if (inForge){ if (!forgeActive) enterForge(); } else if (forgeActive) leaveForge();
   renderForgeFeed();                          // show the top ore-feed strip in-forge, hide it out
-  document.getElementById('benchBack').classList.toggle('on',isMachine||inForge);
+  document.getElementById('benchBack').classList.toggle('on',isMachine||inForge||inBrew);
   renderWingNav();          // wing tiles replace the old expedition/lab toggle
   // The excavation bench is dirt-and-core only: no template, no align, no ghost,
   // no seat. The shaping stations get the full alignment/template chip set.
@@ -9326,9 +9519,10 @@ function showView(name){
   } else if (name==='lab'){ renderLab(); say('The lab hums.'); }
   else if (name==='forge'){ renderForge(); say('The forge glows. Metal in, drill parts out.'); }
   else if (name==='brew'){ renderBrew(); say('The still is lit.'); }
+  else if (name==='brewb'){ say('The brewing line. Pick a potion, then work each apparatus in turn.'); }
   else if (name==='lapidary'){ renderLapidary(); say('The lapidary. Clean roughs, then shape the crystal.'); }
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
-  if (inForge) resize();                       // re-aim the camera at the equipment centre (forgeViewY)
+  if (inForge||inBrew) resize();               // re-aim the camera at the equipment centre
   if (tut.on) tutDock();
 }
 // The station-switch bar: hop between the four shaping stations without a trip
@@ -9803,7 +9997,7 @@ function resize(){
   // The forge aims at the EQUIPMENT centre (forgeViewY), not world origin. World origin sits above the
   // body — between the template and the ore hang zone — so a zoom there pulled toward that midpoint
   // instead of the part. Every other view keeps origin (tY=0).
-  const tY=(typeof view!=='undefined'&&view==='forgeb')?forgeViewY:0;
+  const tY=(typeof view!=='undefined'&&view==='forgeb')?forgeViewY:(view==='brewb'?-0.3:0);
   camera.position.set(0,tY+dist*0.18,dist);
   if (typeof cameraHome!=='undefined') cameraHome.copy(camera.position);
   camera.lookAt(0,tY,0);
@@ -9886,6 +10080,7 @@ let t=0, lastNow=0;
   carveTick();            // one carving sample per frame, from the latest touch position
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
+  if (view==='brewb') brewTick(dt);      // the brewing line: the active station's minigame
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   frameStats(now);
