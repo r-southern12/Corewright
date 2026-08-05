@@ -4511,6 +4511,15 @@ function seatCore(){
     el('r_suit').textContent=`→ Suit life support (+${suitGain} air)`;
     el('r_drill').textContent=`→ Drill power core (q${Math.round(s.output*100)}%)`;
     extra=` Output ${Math.round(s.output*100)}% — choose where it goes.`;
+    // Only BURNING for the bank consumes the core; seating it in the drill (or spending it on
+    // suit air) KEEPS it, as the comment above says. It was being deleted here at seat time no
+    // matter the route, so a power core seated in the drill vanished the moment you pulled it
+    // (nothing to return to storage). routeCell() now owns consumption — bank removes, the rest keep.
+    consumed=false;
+    // Mark it a FINISHED power cell: it passed the cell seat (fits the housing). Only sealed cells are
+    // offered in the drill's power picker — a merely-cleaned rough is not a power core yet, so it no
+    // longer clutters the list ("these are unfinished, only cleaned cores").
+    activeCore.sealed=true;
   } else if (comp==='drill'){
     // A seated core OCCUPIES the drill. It isn't consumed and isn't a number
     // baked in — it can be pulled out and re-seated at a better angle.
@@ -4581,7 +4590,11 @@ function routeCell(where){
     say(`Cell burnt for the bank: +${charge}⚡. That core is spent.`,'good');
   } else if (where==='drill'){
     if (partScore({tier:c.tier,output:c.output})>partScore(drill.power)){
-      drill.power=c; say('Power core seated in the drill. The core returns to storage.','good');
+      // Store the core's ID so the slot LINKS to the inventory core — the lab reads its geometry for
+      // the thumbnail, the picker highlights it as fitted, and pulling it just clears the link (the
+      // core is still in storage). Without the id the seated core had no home and was lost on unseat.
+      drill.power={id:core&&core.id, tier:c.tier, output:c.output};
+      say('Power core seated in the drill. The core stays in storage — pull it any time.','good');
     } else say('Weaker than the drill\'s current power core; kept in storage.','warn');
     // core kept: not consumed
   } else {
@@ -8507,7 +8520,10 @@ function renderSeatPicker(){
   // the drill core seat wants a Drill Core (comp 'drill'); the power seat wants a Power Cell
   // (comp 'cell'). A core carved to the other shape is NOT eligible. Untagged legacy cores pass.
   const wantComp=isCore?'drill':'cell';
-  const opts=inventory.filter(c=>c.clean&&c.cells&&c.id!==otherId && (!c.comp||c.comp===wantComp))
+  // The POWER seat wants a FINISHED power cell (one seated at the bench, c.sealed) — a cleaned/carved
+  // rough is not a power core. The drill-core seat keeps its old rule (any cleaned drill-shaped core).
+  const needSealed=pickerFor==='power';
+  const opts=inventory.filter(c=>c.clean&&c.cells&&c.id!==otherId && (!needSealed||c.sealed) && (!c.comp||c.comp===wantComp))
     .map(c=>({c,out:forgeOutputOf(c)}))
     .sort((a,b)=>b.out-a.out);
   el.innerHTML=`<div class="pickWrap"><div class="pickHead">
@@ -8526,7 +8542,9 @@ function renderSeatPicker(){
           <div class="dseatArt" style="border-color:#${H.base.toString(16).padStart(6,'0')}">${seatGlyph(pickerFor,c.tier,out)}</div>
           <b>${TIERS[c.tier].name}</b>
           <span>${Math.round(out*100)}% · ${H.key}</span>${affTag}</button>`;}).join('')
-        :`<div class="sub" style="padding:6px">No shaped cores in storage. Carve one at the lapidary.</div>`}
+        :`<div class="sub" style="padding:6px">${needSealed
+            ?'No seated power cells. Carve a core to the Power Cell shape, then seat it at the Seating Bench.'
+            :'No shaped cores in storage. Carve one at the lapidary.'}</div>`}
     </div></div>`;
   el.querySelectorAll('[data-pick]').forEach(b=>{
     b.onclick=()=>{
@@ -9448,14 +9466,14 @@ const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill 
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
 function packCore(c){
-  return {i:c.id,s:c.seed,t:c.tier,p:q3(c.polish),h:c.hots,cl:c.clean?1:0,
+  return {i:c.id,s:c.seed,t:c.tier,p:q3(c.polish),h:c.hots,cl:c.clean?1:0,sl:c.sealed?1:0,
     hm:q3(c.hotMass||1),ht:q3(c.hotTotal||0),n:c.name,cp:c.comp,al:c.align||undefined,
     hu:c.hueIdx===undefined?-2:c.hueIdx, h2:c.hueIdx2===undefined?-2:c.hueIdx2,
     c:c.cells?c.cells.map(x=>[q3(x.px),q3(x.py),q3(x.pz),q3(x.size),q3(x.conc),q3(x.shade),
       x.mat||0,x.bev||0,x.pol||0,x.scar?1:0,x.tier||0,x.frag?1:0]):null};
 }
 function unpackCore(o){
-  return {id:o.i,seed:o.s,tier:o.t,polish:o.p||0,hots:o.h||0,clean:!!o.cl,
+  return {id:o.i,seed:o.s,tier:o.t,polish:o.p||0,hots:o.h||0,clean:!!o.cl,sealed:!!o.sl,
     hotMass:o.hm||1,hotTotal:o.ht||0,name:o.n,comp:o.cp,align:o.al||undefined,
     hueIdx:(o.hu===undefined||o.hu===-2)?undefined:o.hu,
     hueIdx2:(o.h2===undefined||o.h2===-2)?undefined:o.h2,
