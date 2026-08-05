@@ -1981,18 +1981,23 @@ function addVoxelMesh(c,polish){
     base=SCAR.clone().multiplyScalar(0.75+c.shade*0.3);
     emis=new THREE.Color(0x140a2e);
   } else {
-    /* The crystal's colour is the CORE'S hue, not a fixed teal. Concentration
-       brightens toward that hue's glow; a core carrying a secondary hue bleeds
-       toward it in the hot regions, giving larger stones a visible spectrum. */
+    /* The crystal's colour is the CORE'S hue. The body is the primary hue; the CONDENSATION (hot
+       regions) reads as the SECONDARY hue if the core has one — the hotspots literally become the second
+       colour, cold stone stays the body colour. Both the surface colour AND the glow trend to that hot
+       hue, or the earlier version drowned it: the emissive lit hot cells in the PRIMARY colour at up to
+       1.8 intensity, washing the second hue right back out (the "no violet on a violet-glow core" bug).
+       The hot target is the secondary hue's glow when present, else the body's own glow. */
     const H=activeCore?coreHue(activeCore):CORE_HUES[0];
-    const baseCol=new THREE.Color(H.base), glowCol=new THREE.Color(H.glow);
-    let hued=baseCol.clone().lerp(glowCol,Math.min(1,c.conc*1.15));
-    if (activeCore&&activeCore.hueIdx2>=0){
-      const H2=CORE_HUES[activeCore.hueIdx2];
-      hued.lerp(new THREE.Color(H2.glow),Math.min(1,c.conc*0.9)*0.55);
-    }
-    base=hued.multiplyScalar(0.62+c.shade*0.3);
-    emis=baseCol.clone().multiplyScalar(0.12).lerp(glowCol.clone().multiplyScalar(0.4),c.conc);
+    const H2=(activeCore&&activeCore.hueIdx2>=0)?CORE_HUES[activeCore.hueIdx2]:null;
+    const baseCol=new THREE.Color(H.base);
+    // Hot cells trend to the second hue's SATURATED base (so it reads clearly as that colour, not a pale
+    // wash); the emissive uses its brighter glow so it still lights up. No secondary -> brighten toward
+    // the body's own glow, the classic single-hue look.
+    const hotCol=new THREE.Color(H2?H2.base:H.glow);
+    const hotGlow=new THREE.Color(H2?H2.glow:H.glow);
+    const hued=baseCol.clone().lerp(hotCol,Math.min(1,c.conc*1.35));
+    base=hued.multiplyScalar(0.6+c.shade*0.3);
+    emis=baseCol.clone().multiplyScalar(0.12).lerp(hotGlow.clone().multiplyScalar(0.5),c.conc);
   }
   const p=polish||0;
   const m=new THREE.Mesh(shardGeoFor(c),new THREE.MeshPhysicalMaterial({
@@ -6252,7 +6257,10 @@ function forgeThumbMesh(part){
 function coreThumbMesh(core){
   if (!core||!core.cells||!core.cells.length) return null;
   const cells=core.cells;   // ALL cells — an uncleaned rough must show the DIRT/matrix still on it,
-  const H=coreHue(core), hot=new THREE.Color(0xffd070), c=new THREE.Color();
+  // Hot cells trend to the CONDENSATION (secondary) hue if the core has one, else the body's own glow —
+  // NOT a fixed gold, which was hiding the second colour on the storage thumbnail.
+  const H=coreHue(core), H2=(core.hueIdx2!==undefined&&core.hueIdx2>=0)?CORE_HUES[core.hueIdx2]:null;
+  const hot=new THREE.Color(H2?H2.glow:H.glow), c=new THREE.Color();
   let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9], ssum=0;
   for (const s of cells){ const q=[s.px,s.py,s.pz]; for (let a=0;a<3;a++){ if(q[a]<mn[a])mn[a]=q[a]; if(q[a]>mx[a])mx[a]=q[a]; } ssum+=s.size; }
   const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
@@ -6261,7 +6269,7 @@ function coreThumbMesh(core){
     // matrix cells are the rock/soil crust to be cleaned off — render them as rough dirt so a
     // prospected-but-dirty rough reads as buried, not a clean crystal.
     if (isMatrix(s)){ c.setHex(0x6a5a44).multiplyScalar(0.72+0.5*(s.shade||0.4)); }
-    else { c.setHex(H.base); if (s.conc>0.45) c.lerp(hot,Math.min(1,(s.conc-0.45)*1.6)); }
+    else { c.setHex(H.base); if (s.conc>0.28) c.lerp(hot,Math.min(1,(s.conc-0.28)*1.7)); }
     list.push([(s.px-ctr[0])*scl,(s.py-ctr[1])*scl,(s.pz-ctr[2])*scl,Math.max(0.12,s.size*scl),c.getHex()]); }
   return _voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.2,roughness:0.5,emissive:0x0a0704,emissiveIntensity:0.22}));
 }
