@@ -3132,11 +3132,13 @@ function sawTick(dt,now){
   sawScanStamp=massVersion; sawScanGap=sawGap; sawScanRot=rotKey;
   const touching=sawContact();
   /* Turning the core can shove crystal THROUGH the blade, and a blade cannot occupy solid stone —
-     so a ROTATION pushes it clear to the new surface. This runs whether the blade is IDLE or being
-     HELD: a held blade that isn't retreated clips straight through the stone as you turn it (the
-     reported bug). Holding STEADY (no rotation) leaves the blade where it is so it can grind in;
-     only a rotation retreats it, and releasing the button never does (that would undo the cut). */
-  if (touching.length && sawScanRot!==sawRestRot){
+     so a ROTATION pushes it clear to the new surface. But that must only be a DELIBERATE turn (a
+     hand-drag), NOT the ambient turntable drift: retreating on the drift froze the core the instant
+     you held the blade (the drift was suppressed to stop it, which killed the spin). Now the drift
+     keeps turning the core UNDER a held blade — it just cuts the crystal the turn presents — while a
+     drag still backs the blade off. An IDLE blade (not closing) still tracks any rotation so its
+     preview follows the surface. */
+  if (touching.length && sawScanRot!==sawRestRot && (!sawClosing || dragging)){
     const maxProud=Math.max(...touching.map(v=>v.proud));
     sawGap+=maxProud+0.02;
     positionSaw();
@@ -9672,14 +9674,12 @@ let t=0, lastNow=0;
     return;
   }
   lamp.intensity=0.6+Math.sin(t*2)*0.12;
-  // no idle drift at the seating bench: the orientation you chose IS the input,
-  // and a slow spin would quietly change the score you are reading.
-  // ALSO no drift while the saw is closing: the blade retreats whenever the core's
-  // rotation changes (so a deliberate turn can't shove stone through it), and the
-  // idle drift changes that rotation every frame — which fired the retreat on every
-  // contact and stopped the saw cutting at all (gap held, nothing faceted). A grind
-  // wants a steady turntable anyway; only a hand-drag should move the core now.
-  if (!dragging&&!grinding&&!seatBenchOn&&!sawClosing) mineral.rotation.y+=0.0012*benchSpeed();
+  // The turntable keeps its slow ambient spin while you HOLD a tool — the bruting wheel and the
+  // faceting saw used to freeze the core (grinding/sawClosing killed the drift), which read as a bug.
+  // The saw now cuts the crystal the spin presents rather than retreating on it (see sawTick), so the
+  // spin is safe to leave running. Only a deliberate hand-drag or the seating bench stops it — a drag
+  // IS the input, and at the seating bench a quiet spin would change the score you're reading.
+  if (!dragging&&!seatBenchOn) mineral.rotation.y+=0.0012*benchSpeed();
   if (activeCore) applyCorePivot();      // spin the core about the template centre (no-op while seating)
   seatBenchTick(dt);
   if (seatBenchOn) drawSeatGauges();     // live charge/resonance gauges (sparkline scrolls as you turn)
