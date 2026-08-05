@@ -953,9 +953,8 @@
   </table>
   <p id="seatText"></p>
   <div id="routeRow">
-    <button class="act" id="r_bank">→ Burn for lab power</button>
-    <button class="act" id="r_drill">→ Drill power core</button>
-    <button class="act" id="r_suit">→ Suit life support (+max air)</button>
+    <button class="act" id="r_drill">→ Fit as drill power core</button>
+    <button class="act" id="r_suit">→ Spend on suit life support (+max air)</button>
   </div>
   <button class="act" id="againBtn">Back to the lab</button>
 </div></div>
@@ -979,8 +978,8 @@
      hotspot must sit IN the ring) cuts recipe costs and gives a
      chance of a double batch.
    • POWER CELL ROUTING: seating a cell asks where it goes —
-     lab bank (machines), drill power core (readiness), or suit
-     life support (max air).
+     drill power core (permanent, readiness) or suit life support
+     (spent for max air). Lab power comes from burning raw roughs.
    • AIR: 2 minutes of it, ticking down underground, refilled on
      the surface. Run dry and your hp follows. The bar flashes
      red under 20s. Life-support cells raise the ceiling.
@@ -1441,11 +1440,11 @@ const isCrystal=c=>c.mat===undefined;
 let inventory=[], activeCore=null, built=0, builtNames=[];
 let forgedParts=[];   // the persistent shelf of forged frames/bits — each carries its 3D voxel snapshot
 let dust=0, hp=100, hardcore=true, corpse=null;
-// POWER (v16): cells are CONSUMABLE. A seated cell dumps its charge into
-// the bank and is spent. No recharging, no plinth — the only way to keep
-// the machines running is to keep mining, keep carving, keep feeding them.
-// (Overrules GPT's durable-hardware model: the human wants the survival
-// pressure of a resource you must continually replace.)
+// POWER: lab power is fuelled by BURNING RAW CLEANED CORES — quick charge from a core you didn't
+// invest in. A finished, seated power CELL is a PERMANENT part (equipment use), never burnt: grinding
+// down a 5-minute carve for 20 seconds of bench power made no sense. Keep the machines running by
+// mining more roughs and burning the ones you don't intend to shape.
+// (Superseded the earlier "cells are consumable, dumped into the bank" model at the player's request.)
 let powerBank=0;
 let maxAir=120, air=120;
 const metals={copper:0,iron:0,vst:0,tin:0};
@@ -2982,7 +2981,7 @@ let sawGap=3.0;                  // distance of the blade from the template cent
 let sawClosing=false, sawT=0;
 let lastSawCut=0;                 // timestamp of the last successful cut
 let sawRestRot=null;              // rotation the blade was last parked at
-const SAW_POWER=0.2;             // power per cut — 5 cuts to the power unit
+const SAW_POWER=0.12;            // power per cut (eased from 0.2 — bench drain was a little aggressive)
 const SAW_CD=200;               // ms between cuts: caps the saw at 5 cuts/second,
                                  // so holding grinds steadily instead of instantly
 const SAW_SPEED=1.1;             // world units per second
@@ -3702,7 +3701,7 @@ function grindAt(x,y,now){
   for (const v of voxels){ if (cellDist(v.cell,lh)<=r) out.add(v.mesh); }
   if (out.size===0) return;
   if (tutBlocks(out)){ grinding=false; return; }
-  if (!tut.on&&!drawPower(0.2+0.5*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
+  if (!tut.on&&!drawPower(0.12+0.3*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
   lastGrind=now;
   const shed=dissolve(out);
   if (shed>0){
@@ -3720,7 +3719,7 @@ function grindAt(x,y,now){
 // takes a mirror finish (grey → the crystal's own colour), drawing power and
 // dust as it works. polish (0..1) = polished exposed faces / all exposed faces,
 // and each polished face lifts output at seating.
-const POLISH_DUST_PER=1, POLISH_POWER_PER=0.25;   // cost per lap tick
+const POLISH_DUST_PER=1, POLISH_POWER_PER=0.15;   // cost per lap tick (eased from 0.25)
 const POLISH_RADIUS=0.75, POLISH_CD=55;
 const POLISH_GREY=new THREE.Color(0x8a8f99);
 let polishing=false, lastPolish=0;
@@ -4498,19 +4497,14 @@ function seatCore(){
   let extra='', consumed=true;
   el('routeRow').classList.remove('on');
   if (comp==='cell'){
-    // The only place a core is offered up whole is the power cell — and even
-    // then only if you burn it for the bank. Drill/suit routing keeps it.
+    // A power cell is a FINISHED, PERMANENT part now — it is NOT burnt for lab power (that's what raw
+    // cleaned roughs are for). It's fit as the drill's power core, or spent on the suit's life support.
     pendingCell={tier,output:s.output}; pendingCore=activeCore;
     el('routeRow').classList.add('on');
-    // Show what each route actually pays BEFORE committing. Burning quotes power
-    // from OUTPUT, while the shaping benches report surface area — two different
-    // numbers, so a core reading 54% surface can burn for far less than expected.
-    const bankGain=Math.max(12,Math.round(70*tier*s.output));
     const suitGain=Math.round(35*tier*s.output);
-    el('r_bank').textContent=`→ Burn for lab power (+${bankGain}⚡)`;
-    el('r_suit').textContent=`→ Suit life support (+${suitGain} air)`;
-    el('r_drill').textContent=`→ Drill power core (q${Math.round(s.output*100)}%)`;
-    extra=` Output ${Math.round(s.output*100)}% — choose where it goes.`;
+    el('r_suit').textContent=`→ Spend on suit life support (+${suitGain} air)`;
+    el('r_drill').textContent=`→ Fit as drill power core (q${Math.round(s.output*100)}%)`;
+    extra=` A ${Math.round(s.output*100)}% power cell — fit it in the drill (kept), or spend it on suit air.`;
     // Only BURNING for the bank consumes the core; seating it in the drill (or spending it on
     // suit air) KEEPS it, as the comment above says. It was being deleted here at seat time no
     // matter the route, so a power core seated in the drill vanished the moment you pulled it
@@ -4581,14 +4575,7 @@ function routeCell(where){
   const c=pendingCell; const core=pendingCore;
   pendingCell=null; pendingCore=null;
   document.getElementById('routeRow').classList.remove('on');
-  if (where==='bank'){
-    // Burning for lab power is the ONE route that consumes the core outright.
-    const charge=Math.max(12,Math.round(70*c.tier*c.output));
-    powerBank+=charge;
-    if (core){ inventory=inventory.filter(x=>x!==core); if (activeCore===core) activeCore=null; }
-    floatText('+'+charge+'⚡','var(--violet)');
-    say(`Cell burnt for the bank: +${charge}⚡. That core is spent.`,'good');
-  } else if (where==='drill'){
+  if (where==='drill'){
     if (partScore({tier:c.tier,output:c.output})>partScore(drill.power)){
       // Store the core's ID so the slot LINKS to the inventory core — the lab reads its geometry for
       // the thumbnail, the picker highlights it as fitted, and pulling it just clears the link (the
@@ -4596,19 +4583,22 @@ function routeCell(where){
       drill.power={id:core&&core.id, tier:c.tier, output:c.output};
       say('Power core seated in the drill. The core stays in storage — pull it any time.','good');
     } else say('Weaker than the drill\'s current power core; kept in storage.','warn');
-    // core kept: not consumed
-  } else {
+    // core kept: a power cell is a permanent part, never consumed by fitting it
+  } else {   // suit: SPEND the cell for a permanent air boost — a one-time sacrifice, so it IS consumed
     const gain=Math.round(35*c.tier*c.output);
     maxAir+=gain; air=maxAir;
-    say(`Life support extended — +${gain}s air. The core returns to storage.`,'good');
+    if (core){ inventory=inventory.filter(x=>x!==core); if (activeCore===core) activeCore=null; }
+    say(`Life support extended — +${gain}s max air. That cell is spent.`,'good');
   }
   updateMeters();
 }
-document.getElementById('r_bank').onclick=()=>routeCell('bank');
 document.getElementById('r_drill').onclick=()=>routeCell('drill');
 document.getElementById('r_suit').onclick=()=>routeCell('suit');
 document.getElementById('againBtn').onclick=()=>{
-  if (pendingCell) routeCell('bank');   // default routing if skipped
+  // Skipping the choice KEEPS the finished cell in storage (it's sealed, ready for the drill picker) —
+  // it is no longer auto-burnt. A power cell is a permanent part, not fuel.
+  pendingCell=null; pendingCore=null;
+  document.getElementById('routeRow').classList.remove('on');
   document.getElementById('seat').classList.remove('on');
   showView('lapidary');
 };
@@ -8750,6 +8740,19 @@ function grindToDust(core){
   say(`${core.name} ground to dust — +${gain}◈.`,'good');
   updateMeters(); renderLapidary();
 }
+// Raw cleaned cores are the LAB-POWER fuel now — not finished power cells. A cell you shaped and seated
+// is a permanent part; grinding one down for 5 minutes to get 20 seconds of bench power made no sense.
+// Burning a rough is quick power at the cost of a core you didn't invest in. Scaled by tier (rougher
+// cores from deeper tiers carry more charge). Sealed power cells are excluded in the card UI.
+const CORE_BURN_POWER=tier=>Math.round(45*tier);          // 45 / 90 / 135 by tier
+function burnCoreForPower(core){
+  const gain=CORE_BURN_POWER(core.tier);
+  if (!removeCore(core)) return;
+  powerBank+=gain;
+  floatText('+'+gain+'⚡','var(--violet)');
+  say(`${core.name} burnt for lab power — +${gain}⚡.`,'good');
+  updateMeters(); renderLapidary();
+}
 function deleteCore(core){
   removeCore(core);
   say(`${core.name} discarded.`);
@@ -8794,6 +8797,15 @@ function coreCard(core,clean){
     grind.className='tiny'; grind.textContent='Grind → dust';
     grind.onclick=()=>grindToDust(core);
     btns.appendChild(grind);
+    // A rough (not a finished power cell) can be burnt for lab power — the fuel source, so power cells
+    // stay permanent. A sealed cell is a permanent part and is never offered up to the burn.
+    if (!core.sealed){
+      const burn=document.createElement('button');
+      burn.className='tiny'; burn.textContent='Burn → ⚡'+CORE_BURN_POWER(core.tier);
+      burn.title='Burn this rough for lab power';
+      burn.onclick=()=>burnCoreForPower(core);
+      btns.appendChild(burn);
+    }
   }
   const del=document.createElement('button');
   del.className='tiny danger'; del.textContent='✕';
