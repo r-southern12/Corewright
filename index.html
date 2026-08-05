@@ -918,7 +918,7 @@
 <div id="brew" class="overlay">
   <button class="closeX" id="x_brew" aria-label="Close brewing">✕</button>
   <div class="wrap">
-    <h2>Reagent shelf</h2>
+    <h2>Powder larder</h2>
     <div id="reagentShelf"></div>
     <h2>Brewing machines <span class="mono" id="stillBonusNote"></span></h2>
     <div id="recipeList"></div>
@@ -1468,6 +1468,26 @@ const metals={copper:0,iron:0,vst:0,tin:0};
 // Expanded for excavation. Each reagent has a depth and a job, so the
 // potion you can brew is a function of where you've been able to dig.
 const reagents={moss:0,salt:0,clay:0,mica:0,brine:0,cinder:0,rime:0};
+/* CORE POWDER — the potion ingredient. Working a core (cutting waste off at the shaping benches, or
+   grinding a spare one whole) grinds its crystal to POWDER coloured by the core's hue; a hot cell near
+   the condensation gives the SECONDARY hue instead. Each potion family wants a particular colour, so
+   the cores you dig decide the potions you can brew — a colour-driven brewing loop that replaced the
+   old moss/salt/clay reagent recipes. Keyed by CORE_HUES.key. */
+const powder={teal:0,amber:0,violet:0,rose:0,azure:0,lime:0};
+const POWDER_K=2;            // powder per unit crystal volume ground: a core grinds to ~25 (≈6 doses); shaping
+                             // waste off one gives ~10 as a byproduct — recipes want 3-5 of a colour
+// Which powder colour a removed crystal cell yields: the condensation (secondary) hue at a hot cell,
+// else the body hue. Cores without a secondary always give their body colour.
+function cellPowderHue(core,conc){
+  if (!core||core.hueIdx===undefined) return 'teal';
+  if (core.hueIdx2!==undefined && core.hueIdx2>=0 && (conc||0)>0.5) return CORE_HUES[core.hueIdx2].key;
+  return CORE_HUES[core.hueIdx].key;
+}
+// A recipe `needs` entry can be a powder colour, a reagent, or dust — resolve each against the right pool.
+const POWDER_KEYS=new Set(CORE_HUES.map(h=>h.key));
+const ingStock=k=> k==='dust'?dust : (POWDER_KEYS.has(k)?powder[k] : (reagents[k]||0));
+const ingSpend=(k,n)=>{ if (k==='dust') dust-=n; else if (POWDER_KEYS.has(k)) powder[k]-=n; else reagents[k]-=n; };
+const ingLabel=k=> k==='dust'?'◈' : (POWDER_KEYS.has(k)?k:k);
 const REAGENT_INFO={
   moss:{label:'Lumen moss',depth:'topsoil',note:'glows faintly; settles flat'},
   clay:{label:'Binding clay',depth:'topsoil',note:'grips dirt and lifts it away'},
@@ -1711,19 +1731,23 @@ function scanRange(){ const o=suitOutput('coil'); return o?3+suitTier('coil')*2+
 function wardResist(){ const o=suitOutput('forgePrism'); return o?Math.min(0.6,0.15+0.45*o):0; }
 function aegisArmor(){ const o=suitOutput('alembic'); return o?Math.min(0.6,0.15+0.45*o):0; }
 
+/* Potions brew from CORE POWDER now, not world reagents. Each family has a signature colour, and the
+   higher grades ask for more of it plus a second colour, so a good potion shelf needs a spread of core
+   hues. `needs` mixes powder-colour keys (from CORE_HUES), reagent keys, and `dust` freely — canAfford
+   /the brew UI resolve each against powder/reagents/dust. Colour map: teal→Level, azure→Standing,
+   violet→Jet (and the fine grades), rose→Brine, lime→Sandblast, amber→Blast. */
 const RECIPES={
-  h:{label:'Level Solvent',needs:{moss:2,dust:3},hint:'strips a level plane — takes whole cubes at the cut'},
-  hM:{label:'Level Solvent II',makes:'hMed',needs:{moss:3,mica:1,dust:4},hint:'splits boundary cubes once — a cleaner level cut'},
-  hH:{label:'Level Solvent III',makes:'hHi',needs:{moss:4,mica:2,brine:1,dust:6},hint:'splits boundary cubes twice — the finest level cut'},
-  v:{label:'Standing Tincture',needs:{moss:2,dust:3},hint:'strips a standing plane — whole cubes'},
-  vs:{label:'Standing Tincture (salt)',makes:'v',needs:{salt:2,dust:3},hint:'the cheaper route, once you find salt'},
-  vM:{label:'Standing Tincture II',makes:'vMed',needs:{salt:3,mica:1,dust:4},hint:'splits boundary cubes once'},
-  vH:{label:'Standing Tincture III',makes:'vHi',needs:{salt:4,mica:2,brine:1,dust:6},hint:'splits boundary cubes twice'},
-  jet:{label:'Jet Rinse',needs:{clay:2,dust:2},hint:'a pressurised hose — strips matrix off a raw core'},
-  brinejet:{label:'Brine Jet',makes:'brine',needs:{brine:2,clay:1,dust:4},
+  h:{label:'Level Solvent',needs:{teal:3,dust:2},hint:'strips a level plane — takes whole cubes at the cut'},
+  hM:{label:'Level Solvent II',makes:'hMed',needs:{teal:4,azure:2,dust:3},hint:'splits boundary cubes once — a cleaner level cut'},
+  hH:{label:'Level Solvent III',makes:'hHi',needs:{teal:5,azure:3,violet:1,dust:5},hint:'splits boundary cubes twice — the finest level cut'},
+  v:{label:'Standing Tincture',needs:{azure:3,dust:2},hint:'strips a standing plane — whole cubes'},
+  vM:{label:'Standing Tincture II',makes:'vMed',needs:{azure:4,teal:2,dust:3},hint:'splits boundary cubes once'},
+  vH:{label:'Standing Tincture III',makes:'vHi',needs:{azure:5,teal:3,violet:1,dust:5},hint:'splits boundary cubes twice'},
+  jet:{label:'Jet Rinse',needs:{violet:3,dust:2},hint:'a pressurised hose — strips matrix off a raw core'},
+  brinejet:{label:'Brine Jet',makes:'brine',needs:{rose:3,violet:1,dust:4},
     hint:'the deep-strata hose: 150 charge, enough to strip a tier-III rind'},
-  sand:{label:'Sandblast',needs:{clay:2,dust:2},hint:'an abrasive jet — refines the grain wherever it touches'},
-  blast:{label:'Blast Phial',needs:{salt:3,dust:6},hint:'thrown weapon and wall-breaker on expedition'}
+  sand:{label:'Sandblast',needs:{lime:3,dust:2},hint:'an abrasive jet — refines the grain wherever it touches'},
+  blast:{label:'Blast Phial',needs:{amber:4,rose:2,dust:6},hint:'thrown weapon and wall-breaker on expedition'}
 };
 /* ============================================================
    THE FORGE — a template is a pattern the press stamps from METAL
@@ -2952,8 +2976,13 @@ function dissolve(set){
     massVersion++;
     if (activeCore) activeCore.forgeOutput=undefined;
     activeCore.cells=activeCore.cells.filter(c=>!goneCells.has(c));
-    let vol=0; for (const c of goneCells) vol+=c.size*c.size*c.size;
-    dust+=vol*22*TIERS[activeCore.tier].dustPer;
+    // Removed CRYSTAL becomes coloured POWDER (the potion ingredient), by the core's hue; removed MATRIX
+    // (dirt) still becomes dust. So digging pays dust and grinding the stone pays powder.
+    const dper=TIERS[activeCore.tier].dustPer; let dustVol=0;
+    for (const c of goneCells){ const cv=c.size*c.size*c.size;
+      if (isCrystal(c)) powder[cellPowderHue(activeCore,c.conc)]+=cv*POWDER_K;
+      else dustVol+=cv; }
+    dust+=dustVol*22*dper;
     updateMeters();
     cullInterior();                          // cutting exposes new faces
   }
@@ -3426,15 +3455,12 @@ function fillTank(id){
   const T=TANKS[id]; if (!T) return false;
   const rec=RECIPES[T.recipe];
   for (const k in rec.needs){
-    const have=(k==='dust')?dust:reagents[k];
-    if (have<rec.needs[k]){
-      say(`Not enough ${k==='dust'?'dust':REAGENT_INFO[k].label} to brew ${T.label}.`,'warn');
+    if (ingStock(k)<rec.needs[k]){
+      say(`Not enough ${k==='dust'?'dust':k+' powder'} to brew ${T.label}.`,'warn');
       return false;
     }
   }
-  for (const k in rec.needs){
-    if (k==='dust') dust-=rec.needs[k]; else reagents[k]-=rec.needs[k];
-  }
+  for (const k in rec.needs) ingSpend(k,rec.needs[k]);
   tank[id]=Math.min(T.cap,tank[id]+T.per);
   updateMeters(); updateStock();
   say(`${T.label} tank topped up: ${tank[id]} charge.`,'good');
@@ -3443,10 +3469,7 @@ function fillTank(id){
 // Can this tank be refilled right now from what's in the inventory?
 function canFillTank(id){
   const rec=RECIPES[TANKS[id].recipe];
-  for (const k in rec.needs){
-    const have=(k==='dust')?dust:reagents[k];
-    if (have<rec.needs[k]) return false;
-  }
+  for (const k in rec.needs) if (ingStock(k)<rec.needs[k]) return false;
   return true;
 }
 let jetGrade='jet';            // which grade the jet is set to ('jet' or 'brine')
@@ -5330,7 +5353,7 @@ addEventListener('keydown',e=>{
     for (const k in MACHINES) MACHINES[k].unlocked=true;
     dust=9999; powerBank=9999;
     for (const k in potions) potions[k]=99;
-    for (const k in reagents) reagents[k]=99;
+    for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
     metals.copper=99; metals.iron=99; metals.vst=99;
     if (!inventory.length){ adminSpawn(1); adminSpawn(2); adminSpawn(3); }
     updateMeters(); updateStock();
@@ -5472,7 +5495,7 @@ function die(){
     corpse={x:player.x,y:player.y,cores:inventory.slice(),
       reagents:{...reagents},metals:{...metals}};
     inventory=[];
-    for (const k in reagents) reagents[k]=0;
+    for (const k in reagents) reagents[k]=0; for (const k in powder) powder[k]=0;
     metals.copper=0; metals.iron=0; metals.vst=0;
     say('You black out. The haul stays with the body — go back for it.','bad');
     saveGame();                       // atomic: corpse exists before anything else can run
@@ -8450,26 +8473,29 @@ function forgeQuench(){
 function renderBrew(){
   const shelf=document.getElementById('reagentShelf');
   shelf.innerHTML='';
-  const tierOf={moss:1,clay:1,salt:2,mica:2,brine:3,cinder:3,rime:3};
-  for (const k of ['moss','clay','salt','mica','brine','cinder','rime']){
-    const r=REAGENT_INFO[k];
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  // The shelf is now the POWDER larder — six colours ground from cores. Recipes draw on these.
+  for (const H of CORE_HUES){
     const d=document.createElement('div');
-    d.className='card t'+tierOf[k];
-    d.innerHTML=`<div class="info">${r.label}
-      <div class="sub">${r.depth} — ${r.note}</div></div>
-      <div class="mono">${reagents[k]}</div>`;
+    d.className='card';
+    d.innerHTML=`<div class="info" style="display:flex;align-items:center;gap:7px">
+        <span style="width:12px;height:12px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 6px ${hx(H.glow)}88"></span>
+        ${H.key} powder</div>
+      <div class="mono">${Math.floor(powder[H.key])}</div>`;
     shelf.appendChild(d);
   }
-  document.getElementById('stillBonusNote').textContent='';
+  document.getElementById('stillBonusNote').textContent='Grind cores at the lapidary to stock powder — its colour follows the core\'s hue.';
   const list=document.getElementById('recipeList');
   list.innerHTML='';
+  const hueCol={}; for (const H of CORE_HUES) hueCol[H.key]=hx(H.glow);
   for (const k in RECIPES){
     const r=RECIPES[k];
-    const dcost=r.needs.dust;
-    const needTxt=Object.entries(r.needs).map(([ing,n])=>
-      ing==='dust'?`${dcost}◈`:`${n} ${ing}`).join(' + ');
-    const can=Object.entries(r.needs).every(([ing,n])=>
-      ing==='dust'?dust>=dcost:reagents[ing]>=n);
+    const needTxt=Object.entries(r.needs).map(([ing,n])=>{
+      if (ing==='dust') return `${n}◈`;
+      const col=hueCol[ing]||'var(--dim)';
+      return `<span style="color:${col}">${n} ${ing}</span>`;
+    }).join(' + ');
+    const can=Object.entries(r.needs).every(([ing,n])=> ingStock(ing)>=n);
     const div=document.createElement('div');
     div.className='card';
     const _tid=Object.keys(TANKS).find(id=>TANKS[id].recipe===k);
@@ -8484,9 +8510,7 @@ function renderBrew(){
       if (tankId){ fillTank(tankId); renderBrew();
         pulse(document.getElementById('recipeList').children[Object.keys(RECIPES).indexOf(k)],'fxFlash');
         return; }
-      for (const [ing,n] of Object.entries(r.needs)){
-        if (ing==='dust') dust-=dcost; else reagents[ing]-=n;
-      }
+      for (const [ing,n] of Object.entries(r.needs)) ingSpend(ing,n);
       const target=r.makes||k;
       potions[target]+=1;
       updateMeters(); updateStock(); renderBrew();
@@ -8835,13 +8859,18 @@ function coreGlowText(core){
     : `barren · ${coreShardCount(core)} shards`;
   return `${hueTag} · ${body}${suits}`;
 }
-function grindToDust(core){
-  const shards=coreShardCount(core)||1;
-  const gain=Math.round(shards*3*TIERS[core.tier].dustPer);
+// Grind a WHOLE stored core to coloured POWDER (the potion ingredient), by hue — the hot cells give the
+// condensation hue. This is the bulk route (the shaping benches also grind waste to powder as you cut).
+function grindToPowder(core){
+  if (core.cells===null) generateCells(core);
+  const got={};
+  for (const c of core.cells){ if (!isCrystal(c)) continue; const cv=c.size*c.size*c.size;
+    const key=cellPowderHue(core,c.conc); const g=cv*POWDER_K; powder[key]+=g; got[key]=(got[key]||0)+g; }
   if (!removeCore(core)) return;
-  dust+=gain;
-  floatText('+'+gain+'◈','var(--amber)');
-  say(`${core.name} ground to dust — +${gain}◈.`,'good');
+  const parts=Object.entries(got).map(([k,v])=>`+${Math.round(v)} ${k}`);
+  const total=Object.values(got).reduce((a,b)=>a+b,0);
+  floatText('+'+Math.round(total)+' powder','var(--crystal)');
+  say(`${core.name} ground to powder — ${parts.join(', ')||'nothing (barren)'}.`,'good');
   updateMeters(); renderLapidary();
 }
 // Raw cleaned cores are the LAB-POWER fuel now — not finished power cells. A cell you shaped and seated
@@ -8898,8 +8927,9 @@ function coreCard(core,clean){
   btns.appendChild(clamp);
   if (clean){
     const grind=document.createElement('button');
-    grind.className='tiny'; grind.textContent='Grind → dust';
-    grind.onclick=()=>grindToDust(core);
+    grind.className='tiny'; grind.textContent='Grind → powder';
+    grind.title='Grind this core to coloured potion powder';
+    grind.onclick=()=>grindToPowder(core);
     btns.appendChild(grind);
     // A rough (not a finished power cell) can be burnt for lab power — the fuel source, so power cells
     // stay permanent. A sealed cell is a permanent part and is never offered up to the burn.
@@ -9028,7 +9058,7 @@ document.getElementById('stripBtn').onclick=()=>{
 document.getElementById('unlockBtn').onclick=()=>{
   for (const k in MACHINES) MACHINES[k].unlocked=true;
   dust=9999; powerBank=9999;
-  for (const k in reagents) reagents[k]=99;
+  for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
   metals.copper=99; metals.iron=99; metals.vst=99;
   for (const k in potions) potions[k]=99;
   updateMeters(); updateStock(); renderLab();
@@ -9134,7 +9164,7 @@ function newRun(){
   corpse=null; hardcore=true;
   nextId=1;
   metals.copper=0; metals.iron=0; metals.vst=0;
-  for (const k in reagents) reagents[k]=0;
+  for (const k in reagents) reagents[k]=0; for (const k in powder) powder[k]=0;
   for (const k in potions) delete potions[k];
   potions.h=3; potions.v=3; potions.jet=2; potions.blast=2;
 
@@ -9553,7 +9583,7 @@ document.getElementById('tutAdmin').onclick=()=>{
   for (const k in MACHINES) MACHINES[k].unlocked=true;
   dust=9999; powerBank=9999;
   for (const k in potions) potions[k]=99;
-  for (const k in reagents) reagents[k]=99;
+  for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
   metals.copper=99; metals.iron=99; metals.vst=99;
   if (!inventory.length){ adminSpawn(1); adminSpawn(2); adminSpawn(3); }
   updateMeters(); updateStock(); showView('lab');
@@ -9624,7 +9654,7 @@ function saveGame(){
       player:{x:q3(player.x),y:q3(player.y)},
       alt, seenBits,
       dust:q3(dust), hp:q3(hp), air:q3(air), maxAir,
-      hardcore, metals:{...metals}, reagents:{...reagents}, potions:{...potions},
+      hardcore, metals:{...metals}, reagents:{...reagents}, powder:{...powder}, potions:{...potions},
       drill:{frame:drill.frame,bit:drill.bit,core:drill.core,power:drill.power},
       equip:{coil:equip.coil,forgePrism:equip.forgePrism,alembic:equip.alembic},
       powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
@@ -9664,6 +9694,7 @@ function loadGame(){
     dust=d.dust; hp=d.hp; air=d.air; maxAir=d.maxAir;
     hardcore=d.hardcore;
     Object.assign(metals,d.metals); Object.assign(reagents,d.reagents);
+    if (d.powder) Object.assign(powder,d.powder);            // graceful: pre-powder saves start with an empty larder
     Object.assign(potions,d.potions);
     drill.frame=d.drill.frame; drill.bit=d.drill.bit;
     drill.core=d.drill.core; drill.power=d.drill.power;
