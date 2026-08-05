@@ -1657,6 +1657,23 @@ function coreSuitLive(){
   for (const sys of CORE_SYSTEMS) vals[sys.key]=(base?base[sys.key]:0)*refine;
   return {vals, refine, base};
 }
+/* CORE HARDNESS — how much the stone resists a solvent. Tier-led (deeper stone is harder), with the body
+   HUE and how densely PACKED the grain is riding on top: a mirror-fine, well-worked core is denser and
+   fights the cut more than a coarse rough — so refining a core makes it better AND harder to keep cutting.
+   A potion removes a fixed mass BUDGET divided by this, so a hard core needs a stronger (better-brewed)
+   solvent. Nothing consumed hardness before, which is why it "never took". */
+const HUE_HARD={teal:1.00, amber:1.18, violet:0.94, rose:1.06, azure:0.90, lime:1.22};
+const TIER_HARD=[0, 1.0, 1.5, 2.0, 2.6, 3.3];
+function coreHardness(core){
+  if (!core) return 1;
+  const tierH=TIER_HARD[core.tier]||1;
+  const hue=(core.hueIdx!==undefined)?(HUE_HARD[CORE_HUES[core.hueIdx].key]||1):1;
+  // packing: finer average grain = denser = harder (1.0 raw, up to ~1.45 fully faceted)
+  let n=0,sz=0; for (const c of (core.cells||[])) if (isCrystal(c)){ n++; sz+=c.size; }
+  const avg=n?sz/n:TIERS[core.tier].vox;
+  const grain=Math.max(1, TIERS[core.tier].vox/avg);
+  return tierH*hue*(1+0.14*(grain-1));
+}
 function drillPower(){
   // the drill core's hue lifts or drags the whole assembly via its own slot
   const coreAff=affinityFactor(drill.core,'drill');
@@ -2949,13 +2966,28 @@ function planeSplitBoundary(axis,b,levels){
     for (const v of straddlers) if (v.mesh.parent) splitOneCube(v);
   }
 }
+// A plane solvent removes a fixed MASS BUDGET, not everything past the plane. The budget is the potion's
+// POTENCY over the core's HARDNESS — so a strong solvent on a soft stone eats a deep slab, a weak one on a
+// hard stone only skims, and you re-apply (or brew a better potion) to plane further. Factory potency is 1;
+// brewed potions will scale it later. Cubes farthest past the plane go first, so the cut planes the high
+// stone DOWN toward the plane rather than nibbling at the surface.
+const PLANE_BASE_POTENCY=1;      // factory solvent strength — brewing quality lifts this in a later phase
+const PLANE_BUDGET_K=0.9;        // world-volume a potency-1 solvent removes at hardness 1 (tuned below)
+function planeCutBudget(){
+  return PLANE_BASE_POTENCY*PLANE_BUDGET_K/Math.max(0.5, coreHardness(activeCore));
+}
 function planeVictims(){
-  const p=POTIONS[potion], b=planePos();
-  const out=new Set();
+  const p=POTIONS[potion], b=planePos(), axis=p.axis;
+  const cand=[];
   for (const v of voxels){
     v.mesh.getWorldPosition(wpos);
-    if ((p.axis==='y'?wpos.y:wpos.x)>b) out.add(v.mesh);
+    const pos=(axis==='y'?wpos.y:wpos.x);
+    if (pos>b) cand.push([v.mesh, pos-b, v.cell.size*v.cell.size*v.cell.size]);
   }
+  cand.sort((a,c)=>c[1]-a[1]);                    // farthest past the plane first
+  const budget=planeCutBudget();
+  const out=new Set(); let spent=0;
+  for (const c of cand){ if (spent>=budget) break; out.add(c[0]); spent+=c[2]; }
   return out;
 }
 
@@ -4594,7 +4626,7 @@ function drawCoreSpider(){
   for (let i=0;i<=N;i++){ const [x,y]=pt(i%N,R*suit.vals[CORE_SYSTEMS[i%N].key]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
   ctx.closePath(); ctx.fillStyle=rgba(hue.base,0.30); ctx.fill(); ctx.strokeStyle=hx(hue.glow); ctx.lineWidth=1.6; ctx.stroke();
   for (let i=0;i<N;i++){ const [x,y]=pt(i,R*suit.vals[CORE_SYSTEMS[i].key]); ctx.fillStyle=hx(hue.glow); ctx.beginPath(); ctx.arc(x,y,2,0,7); ctx.fill(); }
-  if (rf) rf.textContent=Math.round(suit.refine*100)+'% refined';
+  if (rf) rf.textContent=Math.round(suit.refine*100)+'% refined · hardness '+coreHardness(activeCore).toFixed(1);
 }
 let pendingCell=null, pendingCore=null;
 function seatCore(){
