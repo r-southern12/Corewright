@@ -8601,11 +8601,16 @@ function _profileCubes(profile, hex){
   return cells; }
 function _factoryMortar(targetH){ return _finishFactory(_profileCubes(MORT_OUT,0xc9a24a), targetH); }
 function _factoryCalcinator(targetH){ return _finishFactory(_profileCubes(CALC_OUT,0xb5713a), targetH); }
-function _factoryRetort(targetH){ const glass=0x9fd8ff, brass=0xc9a24a; let cells=[];
-  cells=cells.concat(_latticeList(5,5,5,(x,y,z)=>{ const d=Math.sqrt(x*x+y*y+z*z); return d>3.5&&d<=5 && y<4; }, glass));   // round flask shell
-  for (let i=0;i<8;i++){ const x=1+Math.round(i*0.8), y=4+Math.round(i*0.55)-(i>4?(i-4)*0.8:0); cells.push([x,y,0,glass]); cells.push([x,y,1,glass]); }  // neck bends over
-  cells=cells.concat(_latticeList(3,3,3,(x,y,z)=> Math.sqrt(x*x+y*y+z*z)<=3, glass).map(c=>[c[0]+9,c[1]+2,c[2],c[3]]));   // receiver
-  cells=cells.concat(_latticeList(5,1,5,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>3.4&&d<4.6&&y<-3; }, brass));      // stand ring
+// A ROUND-BOTTOM FLASK held in a wooden ring-stand — the real retort silhouette. Bulb + short neck,
+// a timber band round the belly and three splayed legs. The liquid, heat glow and the tap/valve are
+// dynamic meshes added in the station build so they can bubble, glow and open.
+function _factoryRetort(targetH){ const glass=0xb9d4dc, wood=0x5a3f28; let cells=[];
+  cells=cells.concat(_latticeList(6,6,6,(x,y,z)=>{ const d=Math.sqrt(x*x+y*y+z*z); return d>4.4&&d<=5.4 && y<3.6; }, glass));       // round bulb, open at top
+  cells=cells.concat(_latticeList(2,6,2,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>1.0&&d<=2.0 && y>=3 && y<=8; }, glass));    // short straight neck
+  cells=cells.concat(_latticeList(2,1,2,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>1.6&&d<=2.6 && y>=7 && y<=8; }, glass));    // rolled lip
+  cells=cells.concat(_latticeList(7,1,7,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>5.2&&d<=6.5 && y>=-1 && y<=0; }, wood));    // timber ring band
+  for (const ang of [0.4, 2.5, 4.6]){ const lx=Math.cos(ang), lz=Math.sin(ang);                                                   // three splayed legs
+    for (let i=0;i<7;i++){ const r=5.8+i*0.45, y=-1-i; cells.push([Math.round(lx*r), y, Math.round(lz*r), wood]); cells.push([Math.round(lx*r+ (Math.abs(lx)<0.6?1:0)), y, Math.round(lz*r+(Math.abs(lz)<0.6?1:0)), wood]); } }
   return _finishFactory(cells, targetH); }
 function _factoryAlembic(targetH){ const glass=0x9fd8ff, brass=0xc9a24a, cop=0xb5713a; let cells=[];
   cells=cells.concat(_latticeList(5,6,5,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>3.3&&d<=4.6 && y>=-6 && y<=1; }, cop));   // cucurbit
@@ -8655,11 +8660,19 @@ function buildBrewStations(){
   // CALCINATOR: a housed core that brightens with power, and the metal heats (retinted in the tick).
   { const g=_brewStationG[1];
     const core=_coreGlowMesh(); core.position.set(0,g.userData.mouth*0.4,0.0); g.add(core); g.userData.core=core; }
-  // RETORT: the flask+neck tilt to STEER the running distillate into the fixed receiver.
-  { const g=_brewStationG[2]; const eq=g.userData.equip, my2=g.userData.mouth;
-    const tilt=new THREE.Group(); if (eq){ g.remove(eq); tilt.add(eq); } g.add(tilt);   // whole flask tilts about the bench
-    const rec=_tm(new THREE.BoxGeometry(0.36,0.3,0.36), new THREE.MeshStandardMaterial({color:0x2a3340,metalness:0.3,roughness:0.6}), 0.72,0.15,0); g.add(rec);
-    g.userData.tilt=tilt; g.userData.receiver=rec; g.userData.neckY=my2*0.62; }
+  // RETORT: a round-bottom flask over a flame. Liquid bubbles as it heats; the player opens the TAP
+  // to draw the distillate off into the receiver — only the hearts run pure.
+  { const g=_brewStationG[2]; const mo=g.userData.mouth;
+    const liqList=[]; for (let x=-3;x<=3;x++) for (let y=-2;y<=1;y++) for (let z=-3;z<=3;z++) if (Math.sqrt(x*x+y*y*2+z*z)<=3) liqList.push([x*0.085,y*0.085,z*0.085,0.095,0x7fd0b0]);
+    const liquid=_voxThumb(liqList, new THREE.MeshStandardMaterial({transparent:true,opacity:0.82,emissive:0x0a2018,emissiveIntensity:0.3}));
+    liquid.position.set(0,mo*0.30,0); g.add(liquid);
+    const heat=_tm(new THREE.SphereGeometry(0.18,12,10), new THREE.MeshBasicMaterial({color:0xff7a2a,transparent:true,opacity:0}), 0, mo*0.10, 0); g.add(heat);
+    const valve=new THREE.Group(); valve.position.set(0, mo*0.30, 0.34);
+    const spout=_tm(new THREE.CylinderGeometry(0.035,0.035,0.2,8), _brass.clone(), 0,0,0.05); spout.rotation.x=Math.PI/2; valve.add(spout);
+    const lever=_tm(new THREE.BoxGeometry(0.045,0.2,0.045), _brass.clone(), 0,0.1,0); valve.add(lever);
+    g.add(valve);
+    const rec=_tm(new THREE.BoxGeometry(0.3,0.26,0.3), new THREE.MeshStandardMaterial({color:0x2a3340,metalness:0.3,roughness:0.6}), 0, mo*0.02, 0.6); g.add(rec);
+    g.userData.liquid=liquid; g.userData.heat=heat; g.userData.valve=valve; g.userData.lever=lever; g.userData.receiver=rec; g.userData.spoutY=mo*0.30; }
   // ALEMBIC: circulate coolant round the condenser — a ring of cube-drops orbits as you drag circles.
   { const g=_brewStationG[3]; const my3=g.userData.mouth;
     const loop=new THREE.Group(); for (let i=0;i<10;i++){ const m=_tm(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshBasicMaterial({color:0x6fd0ff}),0,0,0); loop.add(m); }
@@ -8735,7 +8748,7 @@ const _bcPos=new THREE.Vector3(), _bcLook=new THREE.Vector3(); let _bcInit=false
 function brewCamUpdate(dt){
   const st=brew?brew.stage:-1; const G=(st>=0)?_brewStationG[st]:null, mo=G?G.userData.mouth:0.9; let tp, tl;
   if (st===0){ tp=[BREW_X[0], BREW_BASE_Y+3.1, 0.55]; tl=[BREW_X[0], BREW_BASE_Y+mo*0.55, 0]; }    // birds-eye over the mortar
-  else if (st>=1){ tp=[BREW_X[st], BREW_BASE_Y+mo*0.75, 2.4]; tl=[BREW_X[st], BREW_BASE_Y+mo*0.5, 0]; } // side-on at the station
+  else if (st>=1){ tp=[BREW_X[st], BREW_BASE_Y+mo*0.85, 2.2+mo*1.6]; tl=[BREW_X[st], BREW_BASE_Y+mo*0.48, 0]; } // side-on, pulled back to frame the whole vessel
   else { tp=[0, BREW_BASE_Y+2.1, 7.8]; tl=[0, BREW_BASE_Y+0.5, 0]; }                               // establishing shot of the whole line
   const TP=new THREE.Vector3(tp[0],tp[1],tp[2]), TL=new THREE.Vector3(tl[0],tl[1],tl[2]);
   if (!_bcInit){ _bcPos.copy(TP); _bcLook.copy(TL); _bcInit=true; }
@@ -8791,20 +8804,25 @@ function brewTick(dt){
       if (brew.held && Math.random()<(brew.ignite<1?0.9:0.5)) _brewSpark(BREW_X[1]+(Math.random()-0.5)*0.5, BREW_BASE_Y+my*0.5+Math.random()*0.4, 0, brew.temp>0.9?0xff6a30:0xffb040, 0.4, 0.6+Math.random()*0.7); }
     if (brew.calc>=1.3){ brewScoreAndAdvance(Math.max(0,Math.min(1,(brew.calc-brew.scorch)/1.3))); }
 
-  } else if (s===2){                                   // RETORT — collect ONLY the HEARTS as the cut runs heads->hearts->tails
-    const LEAD=1.6, RUN=9.5, H0=0.30, H1=0.66;          // steam lead-in, then a long run; hearts window in the middle
-    if (brew.tt<LEAD){                                  // lead-in: the boil builds, steam curls off the neck
-      brew.armed=true; brew.prog=0; brew.zone='warming';
-      if (G&&Math.random()<0.5) _brewSpark(BREW_X[2]+(Math.random()-0.5)*0.4, BREW_BASE_Y+(G.userData.neckY||0.6)+0.1, 0, 0xbcd0d8, 0.3, 0.5+Math.random()*0.4);
-    } else {
+  } else if (s===2){                                   // RETORT — heat the flask, open the TAP only during the HEARTS cut
+    const LEAD=1.6, RUN=9.5, H0=0.30, H1=0.66;          // heat-up lead-in, then a long run; hearts window in the middle
+    const sy=G?(G.userData.spoutY||0.6):0.6, hot=Math.min(1,brew.tt/2.2);
+    if (G){
+      if (G.userData.heat) G.userData.heat.material.opacity=hot*(0.6+0.4*Math.sin(t*9));   // the flame under the flask
+      if (G.userData.liquid) G.userData.liquid.material.emissiveIntensity=0.3+hot*0.7;
+      if (G.userData.lever){ const tgt=brew.collecting?-1.15:0; G.userData.lever.rotation.z+=(tgt-G.userData.lever.rotation.z)*Math.min(1,dt*9); }  // the tap opens
+      if (hot>0.3 && Math.random()<hot*0.5) _brewSpark(BREW_X[2]+(Math.random()-0.5)*0.5, BREW_BASE_Y+sy+Math.random()*0.35, (Math.random()-0.5)*0.3, 0xbcd8d0, 0.2, 0.5+Math.random()*0.5);  // bubbles/steam
+    }
+    if (brew.tt<LEAD){ brew.armed=true; brew.prog=0; brew.zone='warming'; }   // lead-in: the flask comes to the boil
+    else {
       brew.prog=(brew.tt-LEAD)/RUN;
       const inHearts=brew.prog>H0 && brew.prog<H1;
       brew.zone=inHearts?'hearts':(brew.prog<=H0?'heads':'tails');
       if (brew.collecting){ if (inHearts) brew.hearts+=dt; else if (brew.prog<=H0) brew.heads+=dt; else brew.tails+=dt;
-        if (G&&Math.random()<0.8){ const col=inHearts?0x8fe6c8:(brew.prog<=H0?0xd98a3a:0x8892a0);
+        if (G&&Math.random()<0.85){ const col=inHearts?0x8fe6c8:(brew.prog<=H0?0xd98a3a:0x8892a0);   // the tap runs into the receiver
           const drop=new THREE.Mesh(_brewSparkGeo,new THREE.MeshBasicMaterial({color:col,transparent:true}));
-          drop.scale.setScalar(0.06); drop.position.set(BREW_X[2]+0.5, BREW_BASE_Y+(G.userData.neckY||0.6), 0);
-          drop.userData={vx:0.5,vy:-0.2,vz:0,life:0.6,age:0}; brewGroup.add(drop); _brewFX.push(drop);
+          drop.scale.setScalar(0.055); drop.position.set(BREW_X[2], BREW_BASE_Y+sy, 0.46);
+          drop.userData={vx:0,vy:-0.15,vz:0.35,life:0.55,age:0}; brewGroup.add(drop); _brewFX.push(drop);
           if (_brewFX.length>140){ const o=_brewFX.shift(); brewGroup.remove(o); o.material.dispose(); } } }
       if (brew.prog>=1){ const heartsAvail=(H1-H0)*RUN;
         const yld=Math.min(1,brew.hearts/heartsAvail), purity=brew.hearts/(brew.hearts+brew.heads+brew.tails+0.01);
@@ -8877,7 +8895,7 @@ function renderBrewHud(){
       :brew.zone==='heads'?'<span style="color:#d98a3a">heads (harsh) — wait</span>':'<span style="color:#8892a0">tails (weak) — stop</span>';
     body=`<div style="font-size:11px;color:var(--dim);margin:5px 0 2px">Cut &nbsp; heads · <span style="color:#8fe6c8">hearts</span> · tails &nbsp;—&nbsp; ${zoneTxt}</div>${seg}`+
       _bar('Hearts collected',Math.min(1,brew.hearts/2.5),'#8fe6c8');
-    tip='Press & HOLD to collect — only while the marker is in the green HEARTS band. Too early is harsh, too late is weak.';
+    tip='Press & HOLD to open the tap — draw off the distillate only while the marker is in the green HEARTS band. Too early is harsh, too late is weak.';
   } else {
     body=_bar('Coolant',brew.coolant,brew.coolant>0.4?'#6fd0ff':'#3a6070')+_bar('Purity',Math.min(1,brew.purity/2.6),'#a885ff');
     tip=brew.armed?'Circle GENTLY and steadily to keep the coolant moving while it condenses — no need to race.'
