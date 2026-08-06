@@ -919,10 +919,15 @@
 <div id="brew" class="overlay">
   <button class="closeX" id="x_brew" aria-label="Close brewing">✕</button>
   <div class="wrap">
+    <h2>Brewing line <span class="mono" id="lineStrengthNote"></span></h2>
+    <div class="sub">Fit each apparatus with a forged vessel and a power core, then enter the line. Better gear lifts the ceiling on potion strength — skill decides how close you get to it.</div>
+    <div id="brewSetup"></div>
+    <div id="brewPicker"></div>
+    <button class="act" id="enterLineBtn" style="margin:12px 0 4px;width:100%">⚗ Enter the brewing line →</button>
+    <h2>Stores</h2>
+    <div id="brewStores"></div>
     <h2>Powder larder</h2>
     <div id="reagentShelf"></div>
-    <h2>Brewing machines <span class="mono" id="stillBonusNote"></span></h2>
-    <div id="recipeList"></div>
     <h2>Transmutation <span class="mono">tin ◈ <b id="txTin">0</b></span></h2>
     <div class="sub" style="margin-bottom:6px">Tin is the reagent of change — it undoes, converts and seeds, but never acts alone.</div>
     <div id="txList"></div>
@@ -5252,7 +5257,7 @@ const LAB_W=8, LAB_H=4;              // four 2x2 wings in a row
 const LAB_WINGS=[
   {key:'lapidary', label:'The Lapidary',      view:'lapidary', col:'#4FE3C1'},
   {key:'forge',    label:'The Forge',         view:'forge',  col:'#E8A33D'},
-  {key:'brewing',  label:'Brewing Station',   view:'brewb',  col:'#8B7CF6'},
+  {key:'brewing',  label:'Brewing Station',   view:'brew',   col:'#8B7CF6'},
   {key:'suit',     label:'Suit & Systems',    view:'lab',    col:'#5b6ea0'}
 ];
 const LAB_RECALL_DIST=40;            // surface further than this and it re-lands
@@ -5339,7 +5344,8 @@ function renderWingNav(){
      navigation away and strand the player. */
   const LAPIDARY_INNER=['dig','cleave','brute','facet','polish','seatbench'];
   const here=LAB_WINGS.find(w=>w.view===view)
-    || (LAPIDARY_INNER.includes(view)?LAB_WINGS[0]:null);
+    || (LAPIDARY_INNER.includes(view)?LAB_WINGS[0]:null)
+    || (view==='brewb'?LAB_WINGS.find(w=>w.key==='brewing'):null);   // the 3D brewing line keeps the brewing wing's nav
   if (!here){ nav.innerHTML=''; nav.classList.remove('wings'); return; }
   nav.classList.add('wings');
   nav.innerHTML=
@@ -8559,6 +8565,32 @@ const BREW_COST={powder:4, reagent:2, dust:3};
 const BREW_STAGE_NAMES=['Grind','Calcine','Distill','Condense'];
 const potionQ={};                                    // best quality (0..1) brewed per potion id -> lifts potency
 let brew=null;                                       // active brew session, or null at the picker
+// The LINE SET-UP: which forged vessel + power core is fitted at each apparatus. null equipment = the best
+// you've forged (auto); null core = an empty seat (the line still runs, just weakly). Better gear raises the
+// CEILING on potion strength, so skilled play on a bare line can't out-brew a well-kitted one.
+const brewEquip={mortar:null, pestle:null, calcinator:null};   // fitted forged-part id (or null = auto best)
+const brewCore={mortar:null, calcinator:null, retort:null, alembic:null};   // fitted power-core id (or null = empty)
+const BREW_EQUIP_STATIONS=[
+  {key:'mortar',     shape:'mortar',     label:'Mortar',     core:true},
+  {key:'pestle',     shape:'pestle',     label:'Pestle',     core:false},
+  {key:'calcinator', shape:'calcinator', label:'Calcinator', core:true},
+  {key:'retort',     shape:null,         label:'Retort',     core:true, factory:true},
+  {key:'alembic',    shape:null,         label:'Alembic',    core:true, factory:true}
+];
+function brewCoresAvail(){ return inventory.filter(c=>c.clean&&c.cells&&c.sealed&&(!c.comp||c.comp==='cell')); }
+function brewCoreFitted(st){ const id=brewCore[st]; if (id==null) return null; return brewCoresAvail().find(c=>String(c.id)===String(id))||null; }
+function brewEquipFitted(shape){ if (!shape) return null; const id=brewEquip[shape];
+  if (id!=null){ const p=forgedParts.find(x=>String(x.id)===String(id) && x.shape===shape); if (p) return p; }
+  return _bestForged(shape); }   // fall back to the best forged of that shape
+// Gear factor 0..1 from the fitted vessels (forge quality) and cores (output); drives the potency ceiling.
+function brewGearFactor(){
+  const eq=['mortar','pestle','calcinator'].map(sh=>{ const p=brewEquipFitted(sh); return p?(0.3+0.7*(p.q||0)):0; });
+  const eqAvg=eq.reduce((a,b)=>a+b,0)/eq.length;
+  const cores=['mortar','calcinator','retort','alembic'].map(st=>{ const c=brewCoreFitted(st); return c?forgeOutputOf(c):0; });
+  const coreAvg=cores.reduce((a,b)=>a+b,0)/cores.length;
+  return Math.max(0,Math.min(1, 0.55*eqAvg + 0.45*coreAvg));
+}
+function brewPotencyMult(){ return 0.35+0.65*brewGearFactor(); }   // multiplies minigame quality into final potion strength
 // Reagent chunk colours for the grind — several SHADES per reagent so a pile reads as real material:
 // moss = greens, clay = browns, brine = blues, salt/blast = pale salty greys. The fine dust already in
 // the bowl (and the dust the crush throws) is the potion's own powder hue.
@@ -8644,7 +8676,7 @@ function _coreGlowMesh(){ const list=[]; for (let x=-1;x<=1;x++) for (let y=-1;y
 function buildBrewStations(){
   for (let i=0;i<4;i++){ if (_brewStationG[i]){ brewGroup.remove(_brewStationG[i]); _brewStationG[i]=null; } }
   const targetH=1.25;
-  const mortarPart=_bestForged('mortar'), calcPart=_bestForged('calcinator'), pestlePart=_bestForged('pestle');
+  const mortarPart=brewEquipFitted('mortar'), calcPart=brewEquipFitted('calcinator'), pestlePart=brewEquipFitted('pestle');
   const models=[
     mortarPart?_brewForgeCubes(mortarPart,targetH):_factoryMortar(targetH),
     calcPart?_brewForgeCubes(calcPart,targetH):_factoryCalcinator(targetH),
@@ -8777,12 +8809,13 @@ function brewScoreAndAdvance(score){
 }
 function brewFinish(){
   const pt=brew.potion;
-  const Q=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;
+  const skill=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;   // how well you worked the line
+  const Q=skill*brewPotencyMult();                                   // ...capped by the gear you fitted
   potionQ[pt.id]=Math.max(potionQ[pt.id]||0, Q);
   if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*Q))); }
   else { potions[pt.id]=(potions[pt.id]||0)+1; }
   updateMeters(); updateStock();
-  say(`${pt.label} brewed — quality ${Math.round(Q*100)}%.`,'good');
+  say(`${pt.label} brewed — ${Math.round(Q*100)}% strength (${Math.round(skill*100)}% craft × ${Math.round(brewPotencyMult()*100)}% gear).`,'good');
   floatText(pt.label+' '+Math.round(Q*100)+'%','var(--crystal)');
   brew=null; renderBrewHud();
 }
@@ -8964,9 +8997,12 @@ function renderBrewHud(){
         `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">&#8203;</span> `+
         `${pt.label}<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`;
     }).join('');
-    el.innerHTML=`<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Brewing line — pick a potion (colour = core powder)</div>`+
+    el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`+
+      `<span style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)">Brewing line — pick a potion (colour = core powder)</span>`+
+      `<button class="act" id="brewToSetup" style="font-size:11px;padding:3px 8px">← Setup</button></div>`+
       `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px">${chips}</div>`;
     el.querySelectorAll('[data-brew]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.brew); if (pt) brewStart(pt); });
+    const bs=document.getElementById('brewToSetup'); if (bs) bs.onclick=()=>showView('brew');
     return;
   }
   const pipe=BREW_STAGE_NAMES.map((n,i)=>`<span style="color:${i<brew.stage?'var(--crystal)':i===brew.stage?'var(--amber)':'var(--dim)'}">${i<brew.stage?'✓ ':''}${n}</span>`).join('  →  ');
@@ -9006,58 +9042,77 @@ function renderBrewHud(){
 function enterBrewBench(){ brew=null; _brewTrans=null; for (const p of _brewTransFX){ brewGroup.remove(p.mesh); p.mesh.material.dispose(); } _brewTransFX=[]; brewGroup.rotation.set(0,0,0); _bcInit=false; buildBrewStations(); renderBrewHud(); }
 function leaveBrewBench(){ brew=null; if (_brewHud) _brewHud.style.display='none'; }
 
+let _brewPickFor=null;                                // which slot the setup picker is open for
 function renderBrew(){
-  const shelf=document.getElementById('reagentShelf');
-  shelf.innerHTML='';
+  _brewPickFor=null;
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
-  // The shelf is now the POWDER larder — six colours ground from cores. Recipes draw on these.
-  for (const H of CORE_HUES){
-    const d=document.createElement('div');
-    d.className='card';
-    d.innerHTML=`<div class="info" style="display:flex;align-items:center;gap:7px">
-        <span style="width:12px;height:12px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 6px ${hx(H.glow)}88"></span>
-        ${H.key} powder</div>
-      <div class="mono">${Math.floor(powder[H.key])}</div>`;
-    shelf.appendChild(d);
+  // powder larder
+  const shelf=document.getElementById('reagentShelf'); if (shelf){ shelf.innerHTML='';
+    for (const H of CORE_HUES){ const d=document.createElement('div'); d.className='card';
+      d.innerHTML=`<div class="info" style="display:flex;align-items:center;gap:7px">
+        <span style="width:12px;height:12px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 6px ${hx(H.glow)}88"></span>${H.key} powder</div>
+        <div class="mono">${Math.floor(powder[H.key])}</div>`; shelf.appendChild(d); } }
+  const eb=document.getElementById('enterLineBtn'); if (eb) eb.onclick=()=>showView('brewb');
+  renderBrewSetup(); renderBrewPicker(); renderBrewStores(); renderTx();
+}
+function renderBrewSetup(){
+  const el=document.getElementById('brewSetup'); if (!el) return;
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  const note=document.getElementById('lineStrengthNote');
+  if (note) note.innerHTML=`gear <b style="color:var(--amber)">${Math.round(brewGearFactor()*100)}%</b> · strength ceiling <b style="color:var(--crystal)">${Math.round(brewPotencyMult()*100)}%</b>`;
+  el.innerHTML=BREW_EQUIP_STATIONS.map(st=>{
+    const eq=st.factory?null:brewEquipFitted(st.shape);
+    const eqLabel=st.factory?'factory rig':(eq?`${eq.name} · ${Math.round((eq.q||0)*100)}%`:'none forged');
+    const core=st.core?brewCoreFitted(st.key):null;
+    const coreLabel=core?`${TIERS[core.tier].name} · ${Math.round(forgeOutputOf(core)*100)}%`:'empty';
+    return `<div class="card" style="display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center">
+      <div class="info"><b>${st.label}</b></div>
+      <div style="min-width:150px"><div class="sub" style="margin-bottom:3px">Vessel</div>
+        ${st.factory?`<span class="mono" style="color:var(--dim)">${eqLabel}</span>`
+          :`<button class="chip" data-eq="${st.shape}">${eqLabel}</button>`}</div>
+      <div style="min-width:135px">${st.core?`<div class="sub" style="margin-bottom:3px">Core</div>
+        <button class="chip" data-core="${st.key}">${coreLabel}</button>`:'<span class="sub" style="color:var(--dim)">hand tool</span>'}</div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-eq]').forEach(b=>b.onclick=()=>{ _brewPickFor={kind:'eq',shape:b.dataset.eq}; renderBrewPicker(); });
+  el.querySelectorAll('[data-core]').forEach(b=>b.onclick=()=>{ _brewPickFor={kind:'core',station:b.dataset.core}; renderBrewPicker(); });
+}
+function renderBrewPicker(){
+  const el=document.getElementById('brewPicker'); if (!el) return;
+  if (!_brewPickFor){ el.innerHTML=''; return; }
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  if (_brewPickFor.kind==='eq'){
+    const shape=_brewPickFor.shape, opts=forgedParts.filter(p=>p.shape===shape&&p.forge), cur=brewEquip[shape];
+    el.innerHTML=`<div class="card"><div class="info"><b>Fit the ${shape}</b> — pick a forged vessel</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        <button class="chip${cur==null?' lit':''}" data-pick="auto">Best (auto)</button>
+        ${opts.map(p=>`<button class="chip${String(cur)===String(p.id)?' lit':''}" data-pick="${p.id}">${p.name} · ${Math.round((p.q||0)*100)}%</button>`).join('')}
+        ${opts.length?'':'<span class="sub">None forged yet — forge one at the press.</span>'}</div></div>`;
+    el.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{ brewEquip[shape]=b.dataset.pick==='auto'?null:b.dataset.pick; _brewPickFor=null; renderBrew(); });
+  } else {
+    const stn=_brewPickFor.station, cores=brewCoresAvail(), cur=brewCore[stn];
+    const usedElsewhere=new Set(Object.entries(brewCore).filter(([k,v])=>k!==stn&&v!=null).map(([k,v])=>String(v)));
+    el.innerHTML=`<div class="card"><div class="info"><b>Fit a power core — ${stn}</b></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        <button class="chip${cur==null?' lit':''}" data-pick="none">Empty</button>
+        ${cores.filter(c=>!usedElsewhere.has(String(c.id))).map(c=>{ const H=coreHue(c);
+          return `<button class="chip${String(cur)===String(c.id)?' lit':''}" data-pick="${c.id}" style="border-color:${hx(H.base)}88">${TIERS[c.tier].name} · ${Math.round(forgeOutputOf(c)*100)}% · ${H.key}</button>`;}).join('')}
+        ${cores.length?'':'<span class="sub">No seated power cores. Carve a Power Cell and seat it at the Seating Bench.</span>'}</div></div>`;
+    el.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{ brewCore[stn]=b.dataset.pick==='none'?null:b.dataset.pick; _brewPickFor=null; renderBrew(); });
   }
-  document.getElementById('stillBonusNote').textContent='Grind cores at the lapidary to stock powder — its colour follows the core\'s hue.';
-  const list=document.getElementById('recipeList');
-  list.innerHTML='';
-  const hueCol={}; for (const H of CORE_HUES) hueCol[H.key]=hx(H.glow);
-  for (const k in RECIPES){
-    const r=RECIPES[k];
-    const needTxt=Object.entries(r.needs).map(([ing,n])=>{
-      if (ing==='dust') return `${n}◈`;
-      const col=hueCol[ing]||'var(--dim)';
-      return `<span style="color:${col}">${n} ${ing}</span>`;
-    }).join(' + ');
-    const can=Object.entries(r.needs).every(([ing,n])=> ingStock(ing)>=n);
-    const div=document.createElement('div');
-    div.className='card';
-    const _tid=Object.keys(TANKS).find(id=>TANKS[id].recipe===k);
-    const _cnt=_tid?`${tank[_tid]}/${TANKS[_tid].cap} tank`:`×${potions[r.makes||k]}`;
-    div.innerHTML=`<div class="info">${r.label} <span class="mono" style="color:var(--dim)">${_cnt}</span>
-      <div class="sub">${r.hint} — needs ${needTxt}</div></div>`;
-    // recipes that feed a TANK (jet/brine/sand) top the tank up; the rest bottle
-    const tankId=Object.keys(TANKS).find(id=>TANKS[id].recipe===k);
-    const btn=document.createElement('button');
-    btn.className='act'; btn.textContent=tankId?'Brew → tank':'Brew'; btn.disabled=!can;
-    btn.onclick=()=>{
-      if (tankId){ fillTank(tankId); renderBrew();
-        pulse(document.getElementById('recipeList').children[Object.keys(RECIPES).indexOf(k)],'fxFlash');
-        return; }
-      for (const [ing,n] of Object.entries(r.needs)) ingSpend(ing,n);
-      const target=r.makes||k;
-      potions[target]+=1;
-      updateMeters(); updateStock(); renderBrew();
-      floatText('+1 '+r.label,'var(--crystal)');
-      pulse(document.getElementById('recipeList').children[Object.keys(RECIPES).indexOf(k)],'fxFlash');
-      say(`${r.label} bottled.`,'good');
-    };
-    div.appendChild(btn);
-    list.appendChild(div);
-  }
-  renderTx();
+}
+function renderBrewStores(){
+  const el=document.getElementById('brewStores'); if (!el) return;
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  el.innerHTML=BREW_POTIONS.map(pt=>{
+    const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
+    const held=pt.tank?`${tank[pt.tank]}/${TANKS[pt.tank].cap} in tank`:`× ${potions[pt.id]||0} held`;
+    const strength=potionQ[pt.id]?`best ${Math.round(potionQ[pt.id]*100)}% strength`:'never brewed';
+    return `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
+      <div class="info"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)};margin-right:6px"></span>${pt.label}
+        <div class="sub">${held} · ${strength}</div></div>
+      <div class="mono" style="color:var(--crystal)">${potionQ[pt.id]?Math.round(potionQ[pt.id]*100)+'%':''}</div></div>`;
+  }).join('');
 }
 function renderTx(){
   document.getElementById('txTin').textContent=metals.tin;
@@ -9824,7 +9879,7 @@ function showView(name){
     say(MACHINES[name].desc);
   } else if (name==='lab'){ renderLab(); say('The lab hums.'); }
   else if (name==='forge'){ renderForge(); say('The forge glows. Metal in, drill parts out.'); }
-  else if (name==='brew'){ renderBrew(); say('The still is lit.'); }
+  else if (name==='brew'){ renderBrew(); say('Set up the line — fit your vessels and cores, then enter to brew.'); }
   else if (name==='brewb'){ say('The brewing line. Pick a potion, then work each apparatus in turn.'); }
   else if (name==='lapidary'){ renderLapidary(); say('The lapidary. Clean roughs, then shape the crystal.'); }
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
@@ -10179,7 +10234,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=15;  // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=16;  // v16: brewing-line setup (brewEquip/brewCore) + recorded potion strength (potionQ)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -10224,6 +10279,7 @@ function saveGame(){
       alt, seenBits,
       dust:q3(dust), hp:q3(hp), air:q3(air), maxAir,
       hardcore, metals:{...metals}, reagents:{...reagents}, powder:{...powder}, potions:{...potions},
+      potionQ:{...potionQ}, brewEquip:{...brewEquip}, brewCore:{...brewCore},
       drill:{frame:drill.frame,bit:drill.bit,core:drill.core,power:drill.power},
       equip:{coil:equip.coil,forgePrism:equip.forgePrism,alembic:equip.alembic},
       powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
@@ -10265,6 +10321,9 @@ function loadGame(){
     Object.assign(metals,d.metals); Object.assign(reagents,d.reagents);
     if (d.powder) Object.assign(powder,d.powder);            // graceful: pre-powder saves start with an empty larder
     Object.assign(potions,d.potions);
+    if (d.potionQ) Object.assign(potionQ,d.potionQ);         // best-brewed strength per potion
+    if (d.brewEquip) Object.assign(brewEquip,d.brewEquip);   // the fitted brewing vessels + cores
+    if (d.brewCore) Object.assign(brewCore,d.brewCore);
     drill.frame=d.drill.frame; drill.bit=d.drill.bit;
     drill.core=d.drill.core; drill.power=d.drill.power;
     equip.coil=d.equip.coil; equip.forgePrism=d.equip.forgePrism; equip.alembic=d.equip.alembic;
