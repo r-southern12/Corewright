@@ -8269,6 +8269,7 @@ function finishForge(){
   const made={name:`${mat.matName} ${m.label}`, tier:mat.tier, q};
   made.id=nextId++;                                      // a handle for the shelf
   made.part=m.part; if (m.system) made.system=m.system;  // remember which slot it fills
+  if (m.shape) made.shape=m.shape;                       // vessel identity (mortar/calcinator) for the brewing bench
   made.material=mat.matName; if (mat.alloy) made.alloyPart=true;
   made.alloySeat=forgeAlloySeatFrac();                   // resonance potential: alloy lining the seat
   made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
@@ -8514,39 +8515,23 @@ function forgeQuench(){
 }
 
 // ============================================================
-// THE BREWING BENCH — a side-on 3D alchemy line (phase 2). Four apparatus, four skills, run in order:
-//   Mortar (grind)  ->  Calcinator (calcine)  ->  Retort (distill)  ->  Alembic (condense)
-// The four skill scores set the potion's QUALITY, which lifts its POTENCY (how much a solvent cuts).
-// Ingredients: coloured core POWDER (the colour picks the potion) + a world reagent + dust. Factory
-// apparatus for now; core-powered efficiency and one-click replication are later phases.
+// THE BREWING BENCH (phase 2, rebuilt) — a side-on 3D alchemy line built from the player's OWN
+// forged equipment, drawn as the same metal CUBES the forge casts. Four apparatus, four skills,
+// run in order, the camera MOVING to each in turn:
+//   Mortar (grind, birds-eye) -> Calcinator (heat, side) -> Retort (steer the distillate) -> Alembic (circulate coolant)
+// Mortar & Calcinator are the player's REAL forged vessels (forgedParts, restored to canonical
+// upright orientation); the Retort & Alembic are factory rigs, cube-built to match, until they are
+// made forgeable. The four skill scores average into the potion's QUALITY, recorded in potionQ.
 // ============================================================
 const brewGroup=new THREE.Group(); scene.add(brewGroup); brewGroup.visible=false;
-const _glassMat=new THREE.MeshPhysicalMaterial({color:0x9fd0e0,metalness:0,roughness:0.12,transparent:true,opacity:0.45,clearcoat:1});
-const _copperMat=new THREE.MeshStandardMaterial({color:0xb5713a,metalness:0.85,roughness:0.35});
-const _brewGlowMat=hex=>new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0,depthWrite:false});
-function _mortarProp(){ const g=new THREE.Group();
-  g.add(_tm(new THREE.CylinderGeometry(0.5,0.34,0.5,20),_brass,0,0.25,0));
-  const pes=_tm(new THREE.CylinderGeometry(0.07,0.11,0.6,10),_steelM,0.12,0.58,0); pes.rotation.z=0.4; g.add(pes); g.userData.pestle=pes;
-  return g; }
-function _calcProp(){ const g=new THREE.Group();
-  g.add(_tm(new THREE.BoxGeometry(0.72,0.55,0.6),_brassD,0,0.27,0));
-  g.add(_tm(new THREE.CylinderGeometry(0.34,0.2,0.28,18),_copperMat,0,0.68,0));
-  const gl=_tm(new THREE.SphereGeometry(0.17,12,10),_brewGlowMat(0xff7a30),0,0.5,0); g.add(gl); g.userData.glow=gl; return g; }
-function _retortProp(){ const g=new THREE.Group();
-  g.add(_tm(new THREE.SphereGeometry(0.4,18,14),_glassMat,0,0.4,0));
-  const nk=_tm(new THREE.CylinderGeometry(0.06,0.06,0.75,10),_glassMat,0.36,0.55,0); nk.rotation.z=-1.05; g.add(nk);
-  const gl=_tm(new THREE.SphereGeometry(0.24,12,10),_brewGlowMat(0xff9a40),0,0.4,0); g.add(gl); g.userData.glow=gl; return g; }
-function _alembicProp(){ const g=new THREE.Group();
-  g.add(_tm(new THREE.SphereGeometry(0.36,18,12,0,6.283,0,2.0),_glassMat,0,0.48,0));
-  g.add(_tm(new THREE.ConeGeometry(0.32,0.42,16),_brass,0,0.78,0));
-  const sp=_tm(new THREE.CylinderGeometry(0.05,0.05,0.55,8),_glassMat,0.34,0.55,0); sp.rotation.z=-0.95; g.add(sp);
-  g.add(_tm(new THREE.SphereGeometry(0.17,12,10),_glassMat,0.6,0.16,0));
-  const gl=_tm(new THREE.SphereGeometry(0.2,12,10),_brewGlowMat(0x6fd0ff),0,0.48,0); g.add(gl); g.userData.glow=gl; return g; }
-const _brewStations=[_mortarProp(),_calcProp(),_retortProp(),_alembicProp()];
-const BREW_X=[-2.7,-0.9,0.9,2.7];
-_brewStations.forEach((s,i)=>{ s.position.set(BREW_X[i],-0.95,0); brewGroup.add(s); });
-brewGroup.add(_tm(new THREE.BoxGeometry(7.6,0.25,1.5),new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}),0,-1.02,0));
-const _brewSpot=new THREE.PointLight(0xffe0b0,0,3.5); brewGroup.add(_brewSpot);
+const BREW_X=[-3.9,-1.3,1.3,3.9];            // the four stations, left to right
+const BREW_BASE_Y=-0.55;                      // bench-top height in the shared scene
+const _brewMetalMat=new THREE.MeshStandardMaterial({metalness:0.55,roughness:0.42});   // white base; instanceColor carries the metal
+const _brewGlassMat=new THREE.MeshStandardMaterial({color:0xbfe6ff,metalness:0.1,roughness:0.14,transparent:true,opacity:0.5});
+const _brewSpot=new THREE.PointLight(0xffe6c0,0,6); brewGroup.add(_brewSpot);
+brewGroup.add(_tm(new THREE.BoxGeometry(10.6,0.3,2.0),new THREE.MeshStandardMaterial({color:0x23252d,metalness:0.6,roughness:0.5}),0,BREW_BASE_Y-0.16,0));
+const _brewSparkGeo=new THREE.BoxGeometry(1,1,1);
+let _brewFX=[];
 
 const BREW_POTIONS=[
   {id:'h',        color:'teal',   reagent:'moss',  label:'Level Solvent'},
@@ -8556,37 +8541,150 @@ const BREW_POTIONS=[
   {id:'sand',     color:'lime',   reagent:'clay',  label:'Sandblast',  tank:'sand'},
   {id:'blast',    color:'amber',  reagent:'salt',  label:'Blast Phial'}
 ];
-const BREW_COST={powder:4, reagent:2, dust:3};       // per brew: 4 colour powder + 2 reagent + 3 dust
+const BREW_COST={powder:4, reagent:2, dust:3};
 const BREW_STAGE_NAMES=['Grind','Calcine','Distill','Condense'];
 const potionQ={};                                    // best quality (0..1) brewed per potion id -> lifts potency
 let brew=null;                                       // active brew session, or null at the picker
 
-function brewCanAfford(pt){
-  return ingStock(pt.color)>=BREW_COST.powder && ingStock(pt.reagent)>=BREW_COST.reagent && dust>=BREW_COST.dust;
+// ---- cube-model builders --------------------------------------------------
+// _voxThumb builds an InstancedMesh of unit cubes from [ [x,y,z,size,hex], ... ]; we reuse it live in
+// the bench and remember each cube's base colour so heat can retint it per-instance.
+function _brewInst(model, mat){
+  if (!model) return null;
+  const inst=_voxThumb(model.list, mat);
+  inst.userData.baseHex=model.list.map(c=>c[4]);
+  return inst;
 }
+// A forged part -> centred cube list, un-rotated back to the CANONICAL part frame (bowl up), scaled to targetH.
+function _brewForgeCubes(part, targetH){
+  const f=part&&part.forge; if (!f||!f.cells||!f.cells.length) return null;
+  const W=f.W, H=f.H, D=f.D||W, R=f.rot||MAT_I, cx=(W-1)/2, cyy=(H-1)/2, cz=(D-1)/2;
+  const pts=[], mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for (let k=0;k<f.cells.length;k++){ const id=f.cells[k]; const iz=(id/(W*H))|0, rem=id-iz*W*H, iy=(rem/W)|0, ix=rem%W;
+    const p=invRot(R, ix-cx, iy-cyy, iz-cz); pts.push([p[0],p[1],p[2], f.metal[k]]);
+    for (let a=0;a<3;a++){ if(p[a]<mn[a])mn[a]=p[a]; if(p[a]>mx[a])mx[a]=p[a]; } }
+  const ext=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])+1, scl=targetH/ext;
+  const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  const list=pts.map(p=>[(p[0]-ctr[0])*scl,(p[1]-ctr[1])*scl,(p[2]-ctr[2])*scl, scl, MET_ICON[p[3]]!==undefined?MET_ICON[p[3]]:0x137a63]);
+  return {list, scl, top:(mx[1]-ctr[1])*scl, bot:(mn[1]-ctr[1])*scl, rad:Math.max(mx[0]-ctr[0],mx[2]-ctr[2])*scl};
+}
+function _latticeList(rx,ry,rz, keep, hex){ const L=[]; for (let x=-rx;x<=rx;x++) for (let y=-ry;y<=ry;y++) for (let z=-rz;z<=rz;z++) if (keep(x,y,z)) L.push([x,y,z,hex]); return L; }
+function _finishFactory(cells, targetH){
+  if (!cells.length) return null;
+  const mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for (const c of cells) for (let a=0;a<3;a++){ if(c[a]<mn[a])mn[a]=c[a]; if(c[a]>mx[a])mx[a]=c[a]; }
+  const ext=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])+1, scl=targetH/ext;
+  const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  const list=cells.map(c=>[(c[0]-ctr[0])*scl,(c[1]-ctr[1])*scl,(c[2]-ctr[2])*scl, scl, c[3]]);
+  return {list, scl, top:(mx[1]-ctr[1])*scl, bot:(mn[1]-ctr[1])*scl, rad:Math.max(mx[0]-ctr[0],mx[2]-ctr[2])*scl};
+}
+// Factory fallbacks + the two non-forgeable vessels, all cube-built so the whole line reads as one material.
+function _factoryMortar(targetH){ const brass=0xc9a24a;
+  let cells=_latticeList(6,5,6,(x,y,z)=>{ const bowl=Math.sqrt(x*x+(y+1)*(y+1)*1.25+z*z); const d=Math.sqrt(x*x+z*z);
+    return (bowl>3.3&&bowl<=4.6&&y<=2) || (y<-2&&d<3.6); }, brass);
+  return _finishFactory(cells,targetH); }
+function _factoryCalcinator(targetH){ const brass=0xc9a24a, cop=0xb5713a;
+  let cells=_latticeList(5,6,4,(x,y,z)=> (y<-1 && Math.abs(x)<4 && Math.abs(z)<3), brass);
+  cells=cells.concat(_latticeList(4,4,4,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>2.3&&d<=3.4&&y>=-1&&y<3; }, cop));
+  return _finishFactory(cells,targetH); }
+function _factoryRetort(targetH){ const glass=0x9fd8ff, brass=0xc9a24a; let cells=[];
+  cells=cells.concat(_latticeList(5,5,5,(x,y,z)=>{ const d=Math.sqrt(x*x+y*y+z*z); return d>3.5&&d<=5 && y<4; }, glass));   // round flask shell
+  for (let i=0;i<8;i++){ const x=1+Math.round(i*0.8), y=4+Math.round(i*0.55)-(i>4?(i-4)*0.8:0); cells.push([x,y,0,glass]); cells.push([x,y,1,glass]); }  // neck bends over
+  cells=cells.concat(_latticeList(3,3,3,(x,y,z)=> Math.sqrt(x*x+y*y+z*z)<=3, glass).map(c=>[c[0]+9,c[1]+2,c[2],c[3]]));   // receiver
+  cells=cells.concat(_latticeList(5,1,5,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>3.4&&d<4.6&&y<-3; }, brass));      // stand ring
+  return _finishFactory(cells, targetH); }
+function _factoryAlembic(targetH){ const glass=0x9fd8ff, brass=0xc9a24a, cop=0xb5713a; let cells=[];
+  cells=cells.concat(_latticeList(5,6,5,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>3.3&&d<=4.6 && y>=-6 && y<=1; }, cop));   // cucurbit
+  cells=cells.concat(_latticeList(5,7,5,(x,y,z)=>{ const d=Math.sqrt(x*x+y*y+z*z); return d>3.6&&d<=4.9 && y>1; }, brass));       // dome head
+  for (let i=0;i<7;i++) cells.push([4+Math.round(i*0.8), 2-Math.round(i*0.7), 0, glass]);                                          // spout
+  cells=cells.concat(_latticeList(2,3,2,(x,y,z)=> Math.sqrt(x*x+y*y+z*z)<=2.6, glass).map(c=>[c[0]+9,c[1]-4,c[2],c[3]]));         // receiver
+  return _finishFactory(cells, targetH); }
+
+// ---- station assembly (rebuilt each entry so it picks up the latest forged vessels) --------------
+const _brewStationG=[null,null,null,null];
+function _bestForged(shape){ let best=null; for (const p of forgedParts) if (p.shape===shape && p.forge){ if(!best||partScore(p)>partScore(best)) best=p; } return best; }
+function _circleGeo(r, y, seg){ const pos=[]; for (let i=0;i<=seg;i++){ const a=i/seg*Math.PI*2; pos.push(Math.cos(a)*r, y, Math.sin(a)*r); }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3)); return g; }
+function _coreGlowMesh(){ const list=[]; for (let x=-1;x<=1;x++) for (let y=-1;y<=1;y++) for (let z=-1;z<=1;z++) list.push([x*0.11,y*0.11,z*0.11,0.12,0x66e0ff]);
+  return _voxThumb(list, new THREE.MeshBasicMaterial({transparent:true,opacity:0.85})); }
+function buildBrewStations(){
+  for (let i=0;i<4;i++){ if (_brewStationG[i]){ brewGroup.remove(_brewStationG[i]); _brewStationG[i]=null; } }
+  const targetH=1.25;
+  const mortarPart=_bestForged('mortar'), calcPart=_bestForged('calcinator');
+  const models=[
+    mortarPart?_brewForgeCubes(mortarPart,targetH):_factoryMortar(targetH),
+    calcPart?_brewForgeCubes(calcPart,targetH):_factoryCalcinator(targetH),
+    _factoryRetort(targetH), _factoryAlembic(targetH)
+  ];
+  for (let i=0;i<4;i++){
+    const g=new THREE.Group(); g.position.set(BREW_X[i],BREW_BASE_Y,0);
+    const model=models[i];
+    const mesh=_brewInst(model, (i>=2?_brewGlassMat:_brewMetalMat).clone());
+    const lift=model?-model.bot:0;                     // rest the equipment's base on the bench top
+    g.userData={model, lift, mouth:model?(model.top-model.bot):0.9, real:(i===0?!!mortarPart:i===1?!!calcPart:false)};
+    if (mesh){ mesh.position.y=lift; g.add(mesh); g.userData.equip=mesh; g.userData.baseHex=mesh.userData.baseHex; }
+    _brewStationG[i]=g; brewGroup.add(g);
+  }
+  const my0=_brewStationG[0].userData.mouth, rad=Math.max(0.4,(models[0]?models[0].rad:0.7)*0.6);
+  // MORTAR birds-eye guides: a target ring at the bowl mouth, a pacing dot to match, the pestle marker, a fill arc.
+  { const g=_brewStationG[0];
+    const ring=new THREE.Line(_circleGeo(rad, my0+0.04, 64), new THREE.LineBasicMaterial({color:0x5a7a90})); g.add(ring);
+    const fill=new THREE.Line(_circleGeo(rad, my0+0.05, 64), new THREE.LineBasicMaterial({color:0x8fe6c8})); fill.geometry.setDrawRange(0,0); g.add(fill);
+    const pacer=_tm(new THREE.SphereGeometry(0.08,12,10), new THREE.MeshBasicMaterial({color:0x8fe6c8}), rad,my0+0.05,0); g.add(pacer);
+    const pestle=_tm(new THREE.BoxGeometry(0.11,0.28,0.11), _steelM.clone(), rad,my0+0.16,0); g.add(pestle);
+    const core=_coreGlowMesh(); core.position.set(0,my0*0.5,0); g.add(core);
+    g.userData.ring=ring; g.userData.fill=fill; g.userData.pacer=pacer; g.userData.pestle=pestle; g.userData.core=core; g.userData.rad=rad; g.userData.top=my0; }
+  // CALCINATOR: a housed core that brightens with power, and the metal heats (retinted in the tick).
+  { const g=_brewStationG[1];
+    const core=_coreGlowMesh(); core.position.set(0,g.userData.mouth*0.4,0.0); g.add(core); g.userData.core=core; }
+  // RETORT: the flask+neck tilt to STEER the running distillate into the fixed receiver.
+  { const g=_brewStationG[2]; const eq=g.userData.equip, my2=g.userData.mouth;
+    const tilt=new THREE.Group(); if (eq){ g.remove(eq); tilt.add(eq); } g.add(tilt);   // whole flask tilts about the bench
+    const rec=_tm(new THREE.BoxGeometry(0.36,0.3,0.36), new THREE.MeshStandardMaterial({color:0x2a3340,metalness:0.3,roughness:0.6}), 0.72,0.15,0); g.add(rec);
+    g.userData.tilt=tilt; g.userData.receiver=rec; g.userData.neckY=my2*0.62; }
+  // ALEMBIC: circulate coolant round the condenser — a ring of cube-drops orbits as you drag circles.
+  { const g=_brewStationG[3]; const my3=g.userData.mouth;
+    const loop=new THREE.Group(); for (let i=0;i<10;i++){ const m=_tm(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshBasicMaterial({color:0x6fd0ff}),0,0,0); loop.add(m); }
+    loop.position.set(0.1,my3*0.7,0); g.add(loop); g.userData.loop=loop; g.userData.core=_coreGlowMesh(); g.userData.core.position.set(0,my3*0.35,0); g.add(g.userData.core); }
+}
+
+// ---- particles ------------------------------------------------------------
+function _brewSpark(px,py,pz,hex,spread,up){ const m=new THREE.Mesh(_brewSparkGeo, new THREE.MeshBasicMaterial({color:hex,transparent:true}));
+  const s=0.04+Math.random()*0.05; m.scale.setScalar(s); m.position.set(px,py,pz);
+  m.userData={vx:(Math.random()-0.5)*spread, vy:up||(0.4+Math.random()*0.5), vz:(Math.random()-0.5)*spread, life:0.5+Math.random()*0.5, age:0};
+  brewGroup.add(m); _brewFX.push(m);
+  if (_brewFX.length>140){ const o=_brewFX.shift(); brewGroup.remove(o); o.material.dispose(); } }
+function _brewFXTick(dt){ for (let i=_brewFX.length-1;i>=0;i--){ const m=_brewFX[i], u=m.userData; u.age+=dt;
+  m.position.x+=u.vx*dt; m.position.y+=u.vy*dt; m.position.z+=u.vz*dt; u.vy-=2.6*dt;
+  m.material.opacity=Math.max(0,1-u.age/u.life);
+  if (u.age>=u.life){ brewGroup.remove(m); m.material.dispose(); _brewFX.splice(i,1); } } }
+
+// ---- economy + session ----------------------------------------------------
+function brewCanAfford(pt){ return ingStock(pt.color)>=BREW_COST.powder && ingStock(pt.reagent)>=BREW_COST.reagent && dust>=BREW_COST.dust; }
 function brewStart(pt){
   if (!adminOn && !brewCanAfford(pt)){ say('Not enough '+pt.color+' powder / '+pt.reagent+' / dust.','warn'); return; }
   if (!adminOn){ powder[pt.color]-=BREW_COST.powder; reagents[pt.reagent]-=BREW_COST.reagent; dust-=BREW_COST.dust; updateMeters(); }
   brew={ potion:pt, stage:0, scores:[], tt:0,
-    grinding:false, angDelta:0, lastAng:null, fill:0, inband:0, offband:0,   // mortar
-    held:false, temp:0, band:0.55, calc:0, scorch:0,                          // calcinator
-    prog:0, collect:false, collected:0, collWeight:0,                         // retort
-    coolant:0, purity:0, condT:0 };                                           // alembic
+    grinding:false, angDelta:0, lastAng:null, pacer:0, fill:0, inband:0, offband:0, angVel:0,   // mortar
+    held:false, temp:0, band:0.55, calc:0, scorch:0,                                            // calcinator
+    aimA:0, driftV:0.4, good:0, total:0, prog:0, steer:0,                                        // retort
+    coolant:0, purity:0, condT:0, loopA:0 };                                                     // alembic
+  // tint each vessel's housed-core glow to the potion's colour
+  const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
+  for (const g of _brewStationG){ if (g&&g.userData.core&&g.userData.core.material) g.userData.core.material.color.setHex(H.glow); }
   renderBrewHud();
 }
 function brewScoreAndAdvance(score){
   brew.scores.push(Math.max(0,Math.min(1,score)));
   brew.stage++; brew.tt=0;
-  // reset per-stage locals for the next one
-  Object.assign(brew,{grinding:false,angDelta:0,lastAng:null,fill:0,inband:0,offband:0,
-    held:false,temp:0,band:0.55,calc:0,scorch:0,prog:0,collect:false,collected:0,collWeight:0,coolant:0,purity:0,condT:0});
-  if (brew.stage>=4) brewFinish();
-  else renderBrewHud();
+  Object.assign(brew,{grinding:false,angDelta:0,lastAng:null,pacer:0,fill:0,inband:0,offband:0,angVel:0,
+    held:false,temp:0,band:0.55,calc:0,scorch:0,aimA:0,driftV:0.4,good:0,total:0,prog:0,steer:0,coolant:0,purity:0,condT:0,loopA:0});
+  if (brew.stage>=4) brewFinish(); else renderBrewHud();
 }
 function brewFinish(){
   const pt=brew.potion;
-  const Q=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;      // 0..1 overall
-  potionQ[pt.id]=Math.max(potionQ[pt.id]||0, Q);                    // record personal best (lifts potency)
+  const Q=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;
+  potionQ[pt.id]=Math.max(potionQ[pt.id]||0, Q);
   if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*Q))); }
   else { potions[pt.id]=(potions[pt.id]||0)+1; }
   updateMeters(); updateStock();
@@ -8594,92 +8692,131 @@ function brewFinish(){
   floatText(pt.label+' '+Math.round(Q*100)+'%','var(--crystal)');
   brew=null; renderBrewHud();
 }
+
+// ---- input ----------------------------------------------------------------
 function brewAngle(x,y){ return Math.atan2(y-innerHeight/2, x-innerWidth/2); }
-function brewDown(x,y){
-  if (!brew) return;
-  const s=brew.stage;
+function brewDown(x,y){ if (!brew) return; const s=brew.stage;
   if (s===0){ brew.grinding=true; brew.lastAng=brewAngle(x,y); }
   else if (s===1){ brew.held=true; }
-  else if (s===2){ brew.collect=true; }
-  else if (s===3){ brew.lastX=x; brew.lastY=y; }
-}
-function brewMove(x,y){
-  if (!brew) return;
-  const s=brew.stage;
-  if (s===0 && brew.grinding){ const a=brewAngle(x,y);
-    if (brew.lastAng!=null){ let d=a-brew.lastAng; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; brew.angDelta+=Math.abs(d); }
+  else if (s===2){ brew.steer=0; brew.lastX=x; }
+  else if (s===3){ brew.grinding=true; brew.lastAng=brewAngle(x,y); } }
+function brewMove(x,y){ if (!brew) return; const s=brew.stage;
+  if ((s===0||s===3) && brew.grinding){ const a=brewAngle(x,y);
+    if (brew.lastAng!=null){ let d=a-brew.lastAng; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; brew.angDelta+=Math.abs(d); brew.dir=d; }
     brew.lastAng=a; }
-  else if (s===3 && brew.lastX!=null){ brew.coolant=Math.min(1, brew.coolant+(Math.abs(x-brew.lastX)+Math.abs(y-brew.lastY))/900); brew.lastX=x; brew.lastY=y; }
-}
-function brewUp(){
-  if (!brew) return;
-  if (brew.stage===0) brew.grinding=false;
+  else if (s===2 && brew.lastX!=null){ brew.steer+=(x-brew.lastX)/220; brew.lastX=x; } }
+function brewUp(){ if (!brew) return;
+  if (brew.stage===0||brew.stage===3) brew.grinding=false;
   if (brew.stage===1) brew.held=false;
-  if (brew.stage===2) brew.collect=false;
-  if (brew.stage===3) brew.lastX=null;
+  if (brew.stage===2) brew.lastX=null; }
+
+// ---- camera: move to the active station ----------------------------------
+const _bcPos=new THREE.Vector3(), _bcLook=new THREE.Vector3(); let _bcInit=false;
+function brewCamUpdate(dt){
+  const st=brew?brew.stage:-1; const G=(st>=0)?_brewStationG[st]:null, mo=G?G.userData.mouth:0.9; let tp, tl;
+  if (st===0){ tp=[BREW_X[0], BREW_BASE_Y+3.1, 0.55]; tl=[BREW_X[0], BREW_BASE_Y+mo*0.55, 0]; }    // birds-eye over the mortar
+  else if (st>=1){ tp=[BREW_X[st], BREW_BASE_Y+mo*0.75, 2.4]; tl=[BREW_X[st], BREW_BASE_Y+mo*0.5, 0]; } // side-on at the station
+  else { tp=[0, BREW_BASE_Y+2.1, 7.8]; tl=[0, BREW_BASE_Y+0.5, 0]; }                               // establishing shot of the whole line
+  const TP=new THREE.Vector3(tp[0],tp[1],tp[2]), TL=new THREE.Vector3(tl[0],tl[1],tl[2]);
+  if (!_bcInit){ _bcPos.copy(TP); _bcLook.copy(TL); _bcInit=true; }
+  const k=Math.min(1, dt*4.5); _bcPos.lerp(TP,k); _bcLook.lerp(TL,k);
+  camera.position.copy(_bcPos); camera.up.set(0,1,0); camera.lookAt(_bcLook);
 }
+
+// ---- the tick: the active station's minigame ------------------------------
+const BREW_GRIND_W=3.2;                                // ideal grind pace, rad/s
 function brewTick(dt){
-  // light the active station
-  for (let i=0;i<4;i++){ const gl=_brewStations[i].userData.glow; if (gl) gl.material.opacity=(brew&&brew.stage===i)?0.35+0.25*Math.sin(t*4):0.05; }
-  if (brew){ _brewSpot.position.set(BREW_X[brew.stage],-0.2,0.9); _brewSpot.intensity=0.7; } else _brewSpot.intensity=0;
+  brewCamUpdate(dt); _brewFXTick(dt);
+  for (let i=0;i<4;i++){ const g=_brewStationG[i]; if (!g) continue;
+    const on=brew&&brew.stage===i;
+    g.visible = !brew || on;                            // focus on the active apparatus; show the whole line at the picker
+    if (g.userData.core&&g.userData.core.material){ const cm=g.userData.core.material;
+      cm.opacity = on ? (0.55+0.35*Math.sin(t*5)) : 0.16; }
+  }
+  if (brew){ _brewSpot.position.set(BREW_X[brew.stage],BREW_BASE_Y+1.2,1.2); _brewSpot.intensity=0.8; } else _brewSpot.intensity=0.2, _brewSpot.position.set(0,BREW_BASE_Y+1.5,1.5);
   if (!brew) return;
-  brew.tt+=dt;
-  const s=brew.stage;
-  if (s===0){                                          // MORTAR — steady circular grind
-    const angVel=brew.angDelta/Math.max(0.001,dt); brew.angDelta=0;
-    const inband=brew.grinding && angVel>1.4 && angVel<7.5;
-    if (inband){ brew.fill+=dt*0.42; brew.inband+=dt; } else if (brew.grinding){ brew.offband+=dt; }
-    if (!brew.grinding) brew.fill=Math.max(0,brew.fill-dt*0.1);
-    if (brew.fill>=1 && brew.tt>0.4){ const q=brew.inband/Math.max(0.001,brew.inband+brew.offband); brewScoreAndAdvance(q); }
-  } else if (s===1){                                    // CALCINATOR — hold the heat in a drifting band
+  brew.tt+=dt; const s=brew.stage, G=_brewStationG[s];
+  if (s===0){                                          // MORTAR — match the pacing dot, steady circles
+    brew.angVel=brew.angDelta/Math.max(0.001,dt); brew.angDelta=0;
+    if (brew.grinding) brew.pacer+=BREW_GRIND_W*dt;    // the pacer only runs while you grind
+    const paceErr=Math.abs(brew.angVel-BREW_GRIND_W)/BREW_GRIND_W;
+    const onPace=brew.grinding && brew.angVel>1.3 && brew.angVel<6.3 && paceErr<0.55;
+    if (onPace){ brew.fill=Math.min(1,brew.fill+dt*0.34); brew.inband+=dt; } else if (brew.grinding){ brew.offband+=dt*0.8; }
+    if (!brew.grinding) brew.fill=Math.max(0,brew.fill-dt*0.06);
+    if (G){ const rad=G.userData.rad, top=G.userData.top;
+      const pAng=brew.pacer, plAng=(brew.lastAng!=null?brew.lastAng:0);
+      G.userData.pacer.position.set(Math.cos(pAng)*rad, top+0.06, Math.sin(pAng)*rad);
+      G.userData.pacer.material.color.setHex(onPace?0x8fe6c8:0xe0b060);
+      G.userData.pestle.position.set(Math.cos(-plAng)*rad, top+0.16, Math.sin(-plAng)*rad);
+      G.userData.fill.geometry.setDrawRange(0, Math.round(65*brew.fill));
+      if (onPace && Math.random()<0.5){ const a=Math.random()*6.28, r=rad*(0.3+Math.random()*0.4);
+        _brewSpark(BREW_X[0]+Math.cos(a)*r, BREW_BASE_Y+top-0.1, Math.sin(a)*r, 0x9fe8d0, 0.8); } }
+    if (brew.fill>=1 && brew.tt>0.5){ brewScoreAndAdvance(brew.inband/Math.max(0.001,brew.inband+brew.offband)); }
+  } else if (s===1){                                   // CALCINATOR — pull power, hold the heat in the drifting band
     brew.band=0.5+0.2*Math.sin(brew.tt*0.7);
     brew.temp=Math.max(0,Math.min(1.2, brew.temp+(brew.held?0.55:-0.42)*dt));
     const d=Math.abs(brew.temp-brew.band);
-    if (d<0.13) brew.calc+=dt*0.5*(1-d/0.13);
+    if (d<0.13) brew.calc=Math.min(1.2, brew.calc+dt*0.5*(1-d/0.13));
     if (brew.temp>0.96) brew.scorch+=dt*0.35;
+    if (G){ const heat=Math.min(1,brew.temp/1.1); const eq=G.userData.equip;
+      // Heat glows the whole vessel via the MATERIAL's emissive — one assignment, not a per-cube retint
+      // (retinting thousands of instances every frame tanked the frame rate). instanceColor keeps the metal.
+      if (eq&&eq.material){ eq.material.emissive.setHex(brew.temp>0.98?0xff4a1e:0xff7a2a); eq.material.emissiveIntensity=heat*1.1; }
+      const my=G.userData.mouth;
+      if (brew.held && Math.random()<0.6) _brewSpark(BREW_X[1]+(Math.random()-0.5)*0.5, BREW_BASE_Y+my*0.6+Math.random()*0.4, 0, brew.temp>0.9?0xff6a30:0xffb040, 0.4, 0.7+Math.random()*0.6); }
     if (brew.calc>=1){ brewScoreAndAdvance(Math.max(0,brew.calc-brew.scorch)); }
-  } else if (s===2){                                    // RETORT — collect only the HEARTS window
-    brew.prog+=dt/6.5;
-    const q=Math.max(0,1-Math.pow((brew.prog-0.5)/0.26,2));   // bell peak at mid-run
-    brew.qNow=q;
-    if (brew.collect){ brew.collected+=q*dt; brew.collWeight+=dt; }
-    if (brew.prog>=1){ const avg=brew.collWeight>0?brew.collected/brew.collWeight:0; const enough=Math.min(1,brew.collWeight/2.4);
-      brewScoreAndAdvance(avg*enough); }
-  } else if (s===3){                                    // ALEMBIC — keep the condenser circulating
-    brew.coolant=Math.max(0, brew.coolant-dt*0.45);
-    if (brew.coolant>0.45) brew.purity+=dt*0.45*brew.coolant;
-    brew.condT+=dt;
-    if (brew.condT>=5){ brewScoreAndAdvance(Math.min(1, brew.purity/1.9)); }
+  } else if (s===2){                                   // RETORT — steer the running distillate into the receiver
+    brew.prog+=dt/7;
+    // the aim drifts; the player counter-steers. driftV flips now and then.
+    if (Math.random()<0.02) brew.driftV=(Math.random()<0.5?-1:1)*(0.3+Math.random()*0.4);
+    brew.aimA=Math.max(-0.9,Math.min(0.9, brew.aimA+brew.driftV*dt + brew.steer));
+    brew.steer*=0.0;                                   // steer applied as an impulse via move deltas
+    const onTarget=Math.abs(brew.aimA)<0.2;
+    brew.total+=dt; if (onTarget) brew.good+=dt;
+    if (G){ if (G.userData.tilt) G.userData.tilt.rotation.z=-brew.aimA;
+      const nk=BREW_X[2]+Math.sin(brew.aimA)*0.5, ny=BREW_BASE_Y+(G.userData.neckY||0.55);
+      // a running stream of drops off the neck, deflected by the tilt
+      if (Math.random()<0.7){ const drop=new THREE.Mesh(_brewSparkGeo, new THREE.MeshBasicMaterial({color:onTarget?0x8fe6c8:0xc96a6a,transparent:true}));
+        drop.scale.setScalar(0.06); drop.position.set(nk, ny, 0);
+        drop.userData={vx:Math.sin(brew.aimA)*0.9+(onTarget?0.5:0), vy:-0.2, vz:0, life:0.7, age:0}; brewGroup.add(drop); _brewFX.push(drop);
+        if (_brewFX.length>140){ const o=_brewFX.shift(); brewGroup.remove(o); o.material.dispose(); } }
+    }
+    if (brew.prog>=1){ brewScoreAndAdvance(brew.total>0?brew.good/brew.total:0); }
+  } else if (s===3){                                   // ALEMBIC — circulate coolant with steady circles
+    brew.angVel=brew.angDelta/Math.max(0.001,dt); brew.angDelta=0;
+    brew.coolant=Math.max(0, Math.min(1, brew.coolant + (brew.grinding&&brew.angVel>1.0?dt*0.5:-dt*0.4)));
+    if (brew.coolant>0.45) brew.purity+=dt*0.5*brew.coolant;
+    brew.condT+=dt; brew.loopA+=brew.angVel*dt*0.4 + dt*brew.coolant*2;
+    if (G&&G.userData.loop){ const loop=G.userData.loop, n=loop.children.length, R=0.4;
+      for (let i=0;i<n;i++){ const a=brew.loopA+i/n*6.283; loop.children[i].position.set(Math.cos(a)*R, Math.sin(a)*R*0.5, Math.sin(a)*0.15);
+        loop.children[i].material.color.setHex(brew.coolant>0.45?0x6fd0ff:0x3a5566); } }
+    if (brew.condT>=5.5){ brewScoreAndAdvance(Math.min(1, brew.purity/2.0)); }
   }
   renderBrewHud();
 }
 
+// ---- HUD ------------------------------------------------------------------
 let _brewHud=null;
-function ensureBrewHud(){
-  if (_brewHud) return _brewHud;
+function ensureBrewHud(){ if (_brewHud) return _brewHud;
   _brewHud=document.createElement('div'); _brewHud.id='brewHud';
   _brewHud.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(720px,94vw);'+
     'z-index:12;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;'+
     'box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 6px 18px rgba(0,0,0,.55);display:none;font-size:13px';
-  document.body.appendChild(_brewHud);
-  return _brewHud;
-}
-function _bar(label,frac,col,mark){
-  const p=Math.max(0,Math.min(100,frac*100));
+  document.body.appendChild(_brewHud); return _brewHud; }
+function _bar(label,frac,col,mark){ const p=Math.max(0,Math.min(100,frac*100));
   const m=(mark!==undefined)?`<span style="position:absolute;left:${Math.max(0,Math.min(100,mark*100))}%;top:-2px;bottom:-2px;width:2px;background:#fff;box-shadow:0 0 5px #fff"></span>`:'';
   return `<div style="margin:5px 0"><div style="font-size:11px;color:var(--dim);margin-bottom:2px">${label}</div>`+
     `<div style="position:relative;height:12px;background:#0a0e18;border-radius:4px;overflow:visible">`+
-    `<div style="height:100%;width:${p}%;background:${col};border-radius:4px"></div>${m}</div></div>`;
-}
+    `<div style="height:100%;width:${p}%;background:${col};border-radius:4px"></div>${m}</div></div>`; }
 function renderBrewHud(){
   const el=ensureBrewHud(); el.style.display=(view==='brewb')?'':'none';
   if (view!=='brewb') return;
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
-  if (!brew){                                          // PICKER
+  if (!brew){
     const chips=BREW_POTIONS.map(pt=>{ const H=CORE_HUES.find(h=>h.key===pt.color); const ok=adminOn||brewCanAfford(pt);
       const best=potionQ[pt.id]?` · best ${Math.round(potionQ[pt.id]*100)}%`:'';
       return `<button class="act" data-brew="${pt.id}" ${ok?'':'disabled'} style="text-align:left;opacity:${ok?1:0.5}">`+
-        `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">​</span> `+
+        `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">&#8203;</span> `+
         `${pt.label}<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`;
     }).join('');
     el.innerHTML=`<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">Brewing line — pick a potion (colour = core powder)</div>`+
@@ -8687,17 +8824,16 @@ function renderBrewHud(){
     el.querySelectorAll('[data-brew]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.brew); if (pt) brewStart(pt); });
     return;
   }
-  // IN A BREW: pipeline + the active stage's gauge
   const pipe=BREW_STAGE_NAMES.map((n,i)=>`<span style="color:${i<brew.stage?'var(--crystal)':i===brew.stage?'var(--amber)':'var(--dim)'}">${i<brew.stage?'✓ ':''}${n}</span>`).join('  →  ');
   let body='', tip='';
   const s=brew.stage;
-  if (s===0){ body=_bar('Fineness (circle the pestle — steady, not too fast)',brew.fill,'#8fe6c8',1); tip='Drag in smooth circles to grind. Fill the ring.'; }
-  else if (s===1){ body=_bar('Heat (press & hold to warm, release to cool)',brew.temp/1.2,brew.temp>0.96?'#ff5a2a':'#ffb347',brew.band/1.2)+_bar('Calcined',brew.calc,'#ffd27a'); tip='Hold the heat on the drifting mark. Don\'t scorch.'; }
-  else if (s===2){ const inHearts=(brew.qNow||0)>0.6; body=_bar('Distillate — collect only at the peak',brew.qNow||0,inHearts?'#8fe6c8':'#c96a6a')+_bar('Run',brew.prog,'#7c8bd0'); tip='Press & HOLD to collect — only while the bar is high (the hearts).'; }
-  else { body=_bar('Coolant (keep dragging to circulate)',brew.coolant,'#6fd0ff')+_bar('Purity',Math.min(1,brew.purity/1.9),'#a885ff'); tip='Keep dragging to hold the condenser cool while it settles.'; }
+  if (s===0){ body=_bar('Grind — match the pacing dot, steady circles',brew.fill,'#8fe6c8'); tip='Birds-eye: drag in circles to swing the pestle. Keep it level with the green dot to fill the ring.'; }
+  else if (s===1){ body=_bar('Heat (press & hold — the core powers the burner)',brew.temp/1.2,brew.temp>0.96?'#ff5a2a':'#ffb347',brew.band/1.2)+_bar('Calcined',brew.calc,'#ffd27a'); tip='Hold to draw power and heat the metal. Keep the glow on the drifting mark; don\'t scorch.'; }
+  else if (s===2){ const onT=Math.abs(brew.aimA)<0.2; body=_bar('Yield collected',brew.total>0?brew.good/brew.total:0,'#8fe6c8')+_bar('Run',brew.prog,'#7c8bd0'); tip='Drag left/right to tilt the retort and steer the running distillate into the receiver as it drifts.'; }
+  else { body=_bar('Coolant (drag circles to circulate)',brew.coolant,'#6fd0ff')+_bar('Purity',Math.min(1,brew.purity/2.0),'#a885ff'); tip='Drag steady circles to keep the condenser coolant moving while it settles.'; }
   el.innerHTML=`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><b style="color:var(--crystal)">${brew.potion.label}</b><span class="mono" style="color:var(--dim)">${pipe}</span></div>${body}<div class="sub" style="margin-top:5px">${tip}</div>`;
 }
-function enterBrewBench(){ brew=null; brewGroup.rotation.set(0.05,0,0); renderBrewHud(); }
+function enterBrewBench(){ brew=null; brewGroup.rotation.set(0,0,0); _bcInit=false; buildBrewStations(); renderBrewHud(); }
 function leaveBrewBench(){ brew=null; if (_brewHud) _brewHud.style.display='none'; }
 
 function renderBrew(){
