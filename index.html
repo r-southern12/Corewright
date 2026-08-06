@@ -6705,7 +6705,7 @@ const VCORE_R=1.2*SEAT_PER;                        // sphere power-core radius i
 const MORT_HY=9;                                                     // = cup-bottom depth, so the cup rests on the floor
 const MORT_RIM=7;                                                    // rim height
 const MORT_OUT=[[-9,4.6],[-8,6.9],[-6,8.6],[5.5,8.6],[7,7.7]];        // rounded base -> straight wall -> rolled rim
-const MORT_BOWL=[[3,0],[4,3.4],[5,4.7],[7.1,4.9]];                   // the OPEN grinding bowl on top (the pestle grinds here — NOT the core)
+const MORT_BOWL=[[2,0],[3,5.0],[4.5,6.6],[5.5,7.1],[7.1,7.4]];       // the OPEN grinding bowl — WIDE + thin-walled (r 7.4 inside an 8.6 rim). Floor sits above the core seat.
 const MORT_SOCK_PY=-3.4;                                              // core sphere centre — housed low in the BODY, loaded from the +x SIDE
 const _MORT_THROAT_R=VCORE_R+0.2;                                    // side insert bore radius (core width)
 // A BOLD, LONG pestle standing in the bowl and leaning up-and-out — stays ABOVE the mortar. Kept within
@@ -8546,7 +8546,7 @@ let _brewFX=[];
 
 const BREW_POTIONS=[
   {id:'h',        color:'teal',   reagent:'moss',  label:'Level Solvent'},
-  {id:'v',        color:'azure',  reagent:'salt',  label:'Standing Tincture'},
+  {id:'v',        color:'azure',  reagent:'moss',  label:'Standing Tincture'},
   {id:'digjet',   color:'violet', reagent:'clay',  label:'Jet Rinse',  tank:'jet'},
   {id:'brinejet', color:'rose',   reagent:'brine', label:'Brine Jet',  tank:'brine'},
   {id:'sand',     color:'lime',   reagent:'clay',  label:'Sandblast',  tank:'sand'},
@@ -8556,9 +8556,18 @@ const BREW_COST={powder:4, reagent:2, dust:3};
 const BREW_STAGE_NAMES=['Grind','Calcine','Distill','Condense'];
 const potionQ={};                                    // best quality (0..1) brewed per potion id -> lifts potency
 let brew=null;                                       // active brew session, or null at the picker
-// Reagent chunk colours for the grind — earthy moss/clay/salt tones. The fine dust that comes off is the
-// potion's own powder hue (the "tier-3" grade), so the mortar visibly turns raw reagent into coloured dust.
-const REAGENT_COL={moss:0x5f7a3a, clay:0x8a6a45, salt:0x9aa0a6, brine:0x4a6a72, mica:0x9a8a70, cinder:0x6a4a3a, rime:0x8aa6b0};
+// Reagent chunk colours for the grind — several SHADES per reagent so a pile reads as real material:
+// moss = greens, clay = browns, brine = blues, salt/blast = pale salty greys. The fine dust already in
+// the bowl (and the dust the crush throws) is the potion's own powder hue.
+const REAGENT_SHADES={
+  moss:[0x3f5e28,0x51702f,0x63823b,0x79974e],
+  clay:[0x6b482a,0x815a38,0x966b45,0xa87d55],
+  brine:[0x275f6e,0x347585,0x458c9c,0x59a2b0],
+  salt:[0x9aa0a6,0xb6bcc0,0xcdd2d5,0x848b93],
+  mica:[0x8a7a58,0x9c8c68,0xb0a07c,0x766845],
+  cinder:[0x5a3a2a,0x6e4a36,0x844f3a,0x4a3025],
+  rime:[0x7fa0ac,0x94b6c2,0xa9c8d2,0x6d8e9a]
+};
 
 // ---- cube-model builders --------------------------------------------------
 // _voxThumb builds an InstancedMesh of unit cubes from [ [x,y,z,size,hex], ... ]; we reuse it live in
@@ -8660,9 +8669,13 @@ function buildBrewStations(){
     pestle.position.set(rad,my0+0.16,0); g.add(pestle);
     const core=_coreGlowMesh(); core.position.set(0,my0*0.5,0); g.add(core);
     g.userData.ring=ring; g.userData.fill=fill; g.userData.pacer=pacer; g.userData.pestle=pestle; g.userData.core=core; g.userData.rad=rad; g.userData.top=my0; }
-  // CALCINATOR: a housed core that brightens with power, and the metal heats (retinted in the tick).
-  { const g=_brewStationG[1];
-    const core=_coreGlowMesh(); core.position.set(0,g.userData.mouth*0.4,0.0); g.add(core); g.userData.core=core; }
+  // CALCINATOR: the player's carved CORE sits in the bowl and the heat spreads OUTWARD from it. Precompute
+  // each metal cube's distance from the core so the glow front can march out (not the whole vessel at once).
+  { const g=_brewStationG[1]; const mo=g.userData.mouth, lift=g.userData.lift||0, model=g.userData.model, eq=g.userData.equip;
+    const core=_coreGlowMesh(); core.scale.setScalar(1.7); core.position.set(0, mo*0.44, 0); g.add(core); g.userData.core=core;
+    if (eq && model){ const cy=mo*0.44, d=[]; let mx=0.001;
+      for (const c of model.list){ const dd=Math.hypot(c[0], (c[1]+lift)-cy, c[2]); d.push(dd); if (dd>mx) mx=dd; }
+      g.userData.heatDist=d; g.userData.heatMax=mx; g.userData.heatBase=(g.userData.baseHex||[]).map(h=>new THREE.Color(h)); } }
   // RETORT: a round-bottom flask over a flame. Liquid bubbles as it heats; the player opens the TAP
   // to draw the distillate off into the receiver — only the hearts run pure.
   { const g=_brewStationG[2]; const mo=g.userData.mouth;
@@ -8692,23 +8705,41 @@ function _brewFXTick(dt){ for (let i=_brewFX.length-1;i>=0;i--){ const m=_brewFX
   m.position.x+=u.vx*dt; m.position.y+=u.vy*dt; m.position.z+=u.vz*dt; u.vy-=2.6*dt;
   m.material.opacity=Math.max(0,1-u.age/u.life);
   if (u.age>=u.life){ brewGroup.remove(m); m.material.dispose(); _brewFX.splice(i,1); } } }
+// The material SWEEP between stations — a stream of dust cubes lofts in an arc from one apparatus to the
+// next when a stage completes, so you see the ground/cooked/distilled matter carried on to the next step.
+let _brewTrans=null, _brewTransFX=[];
+function brewArcTransfer(fromStage, toStage, hue){
+  const gA=_brewStationG[fromStage], gB=_brewStationG[toStage]; if (!gA||!gB) return;
+  const ay=BREW_BASE_Y+(gA.userData.mouth||1)*0.85, by=BREW_BASE_Y+(gB.userData.mouth||1)*0.6;
+  for (let i=0;i<16;i++){ const m=new THREE.Mesh(_brewSparkGeo, new THREE.MeshBasicMaterial({color:hue,transparent:true}));
+    m.scale.setScalar(0.045+Math.random()*0.055); m.position.set(BREW_X[fromStage],ay,0); brewGroup.add(m);
+    _brewTransFX.push({mesh:m, ax:BREW_X[fromStage],ay, bx:BREW_X[toStage],by, t:-i*0.035, dur:1.0+Math.random()*0.35, h:1.1+Math.random()*0.6, sp:(Math.random()-0.5)*0.5, spin:(Math.random()-0.5)*8}); }
+}
+function _brewTransTick(dt){ for (let i=_brewTransFX.length-1;i>=0;i--){ const p=_brewTransFX[i]; p.t+=dt;
+    if (p.t<0) continue;
+    const u=Math.min(1,p.t/p.dur), s=Math.sin(u*Math.PI);
+    p.mesh.position.set(p.ax+(p.bx-p.ax)*u, p.ay+(p.by-p.ay)*u + p.h*s, p.sp*s);
+    p.mesh.rotation.y+=p.spin*dt; p.mesh.material.opacity=u<0.85?1:Math.max(0,1-(u-0.85)/0.15);
+    if (u>=1){ brewGroup.remove(p.mesh); p.mesh.material.dispose(); _brewTransFX.splice(i,1); } } }
 
-// The grindables: a handful of chunky reagent cubes (earthy colours) plus dust-hued lumps, dropped in the
-// mortar bowl for the pestle to crush. Re-seeded each brew from the chosen potion's reagent + powder hue.
+// The grindables: LARGE reagent lumps (in the reagent's shades) to break down, plus fine potion-dust
+// already scattered in the bowl. Crushing a lump FRAGMENTS it into smaller cubes of the SAME colour that
+// PERSIST (a large -> two mediums -> four dust), so the material is visibly reduced, not deleted.
+const BREW_TIER_S=[0.05,0.10,0.17];                   // edge size: 0=dust, 1=medium, 2=large
 function brewSpawnGrind(pt){
   const g=_brewStationG[0]; if (!g) return;
   if (g.userData.ingGroup) g.remove(g.userData.ingGroup);
   const grp=new THREE.Group(); g.add(grp); g.userData.ingGroup=grp;
   const rad=g.userData.rad||0.5, my=g.userData.top||0.9;
-  const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0], dust=H.base, reg=REAGENT_COL[pt.reagent]||0x8a7a5a;
-  const cols=[reg, dust, reg, dust, 0x8a8a86, dust, reg];      // reagent chunks + fine dust lumps
+  const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0], dustCol=H.base;
+  const shades=REAGENT_SHADES[pt.reagent]||[0x8a7a5a];
   const ing=[];
-  for (let i=0;i<cols.length;i++){ const a=i/cols.length*6.283+0.6, r=rad*(0.18+Math.random()*0.42), s0=0.12+Math.random()*0.06;
-    const m=new THREE.Mesh(_brewSparkGeo, new THREE.MeshStandardMaterial({color:cols[i],roughness:0.85,metalness:0.04}));
-    m.scale.setScalar(s0); const x=Math.cos(a)*r, z=Math.sin(a)*r; m.position.set(x, my*0.9, z); grp.add(m);
-    ing.push({mesh:m, x, z, s:s0, s0, col:cols[i]});
-  }
-  g.userData.ing=ing;
+  const add=(x,z,tier,col)=>{ const m=new THREE.Mesh(_brewSparkGeo, new THREE.MeshStandardMaterial({color:col,roughness:0.85,metalness:0.04}));
+    m.scale.setScalar(BREW_TIER_S[tier]); m.position.set(x, my*0.9, z); grp.add(m);
+    ing.push({mesh:m, x, z, tier, col, crush:0}); };
+  for (let i=0;i<6;i++){ const a=i/6*6.283+Math.random()*0.6, r=rad*(0.55+Math.random()*0.33); add(Math.cos(a)*r, Math.sin(a)*r, 2, shades[i%shades.length]); }  // lumps ringed near the wall
+  for (let i=0;i<7;i++){ const a=Math.random()*6.283, r=rad*(0.42+Math.random()*0.46); add(Math.cos(a)*r, Math.sin(a)*r, 0, i%3?dustCol:shades[i%shades.length]); }  // dust already present
+  g.userData.ing=ing; g.userData.ingGrp=grp; g.userData.ingSum0=5*2;   // total coarseness to grind away
 }
 // ---- economy + session ----------------------------------------------------
 function brewCanAfford(pt){ return ingStock(pt.color)>=BREW_COST.powder && ingStock(pt.reagent)>=BREW_COST.reagent && dust>=BREW_COST.dust; }
@@ -8727,14 +8758,19 @@ function brewStart(pt){
   for (const g of _brewStationG){ if (g&&g.userData.core&&g.userData.core.material) g.userData.core.material.color.setHex(H.glow); }
   brewSpawnGrind(pt);                                  // seed the mortar with reagent + dust cubes to crush
   if (_brewStationG[2]&&_brewStationG[2].userData.liquid) _brewStationG[2].userData.liquid.material.color.setHex(H.base);
+  { const cg=_brewStationG[1]; if (cg&&cg.userData.equip&&cg.userData.equip.instanceColor&&cg.userData.heatBase){   // reset the calcinator to cold metal
+    const eq=cg.userData.equip; for (let k=0;k<cg.userData.heatBase.length;k++) eq.setColorAt(k,cg.userData.heatBase[k]); eq.instanceColor.needsUpdate=true; } }
   renderBrewHud();
 }
 function brewScoreAndAdvance(score){
   brew.scores.push(Math.max(0,Math.min(1,score)));
+  const from=brew.stage;
   brew.stage++; brew.tt=0; brew.run=0; brew.armed=false;
   Object.assign(brew,{grinding:false,angDelta:0,lastAng:null,curAng:0,curDist:0,pacer:0,fill:0,inband:0,offband:0,angVel:0,
-    held:false,temp:0,band:0.7,calc:0,scorch:0,ignite:0,collecting:false,heads:0,hearts:0,tails:0,prog:0,coolant:0,purity:0,loopA:0});
-  if (brew.stage>=4) brewFinish(); else renderBrewHud();
+    held:false,temp:0,band:0.7,calc:0,scorch:0,ignite:0,collecting:false,heads:0,hearts:0,tails:0,prog:0,cut:0,level:0,coolant:0,purity:0,loopA:0});
+  if (brew.stage>=4) brewFinish();
+  else { const hue=(CORE_HUES.find(h=>h.key===brew.potion.color)||CORE_HUES[0]).glow;   // sweep the matter on to the next apparatus
+    _brewTrans={from, to:brew.stage, t:0}; brewArcTransfer(from, brew.stage, hue); renderBrewHud(); }
 }
 function brewFinish(){
   const pt=brew.potion;
@@ -8769,7 +8805,9 @@ function brewUp(){ if (!brew) return;
 const _bcPos=new THREE.Vector3(), _bcLook=new THREE.Vector3(); let _bcInit=false;
 function brewCamUpdate(dt){
   const st=brew?brew.stage:-1; const G=(st>=0)?_brewStationG[st]:null, mo=G?G.userData.mouth:0.9; let tp, tl;
-  if (st===0){ tp=[BREW_X[0], BREW_BASE_Y+3.1, 0.55]; tl=[BREW_X[0], BREW_BASE_Y+mo*0.55, 0]; }    // birds-eye over the mortar
+  if (_brewTrans){ const mx=(BREW_X[_brewTrans.from]+BREW_X[_brewTrans.to])/2;          // pull back to frame the sweep across both
+    tp=[mx, BREW_BASE_Y+2.0, 5.6]; tl=[mx, BREW_BASE_Y+0.7, 0]; }
+  else if (st===0){ tp=[BREW_X[0], BREW_BASE_Y+3.1, 0.55]; tl=[BREW_X[0], BREW_BASE_Y+mo*0.55, 0]; }    // birds-eye over the mortar
   else if (st===1){ tp=[BREW_X[1], BREW_BASE_Y+mo*1.9, mo*1.7]; tl=[BREW_X[1], BREW_BASE_Y+mo*0.55, 0]; } // angled TOP view down into the calcinator bowl
   else if (st>=2){ tp=[BREW_X[st], BREW_BASE_Y+mo*0.85, 2.2+mo*1.6]; tl=[BREW_X[st], BREW_BASE_Y+mo*0.48, 0]; } // side-on, pulled back to frame the whole vessel
   else { tp=[0, BREW_BASE_Y+2.1, 7.8]; tl=[0, BREW_BASE_Y+0.5, 0]; }                               // establishing shot of the whole line
@@ -8781,11 +8819,13 @@ function brewCamUpdate(dt){
 
 // ---- the tick: the active station's minigame ------------------------------
 const BREW_GRIND_W=2.2;                                // ideal grind pace, rad/s (gentler than before)
+const _calcHot=new THREE.Color(), _calcScr=new THREE.Color();   // scratch colours for the calcinator radial retint
 function brewTick(dt){
-  brewCamUpdate(dt); _brewFXTick(dt);
+  if (_brewTrans){ _brewTrans.t+=dt; if (_brewTrans.t>1.5) _brewTrans=null; }
+  brewCamUpdate(dt); _brewFXTick(dt); _brewTransTick(dt);
   for (let i=0;i<4;i++){ const g=_brewStationG[i]; if (!g) continue;
-    const on=brew&&brew.stage===i;
-    g.visible = !brew || on;                            // focus on the active apparatus; show the whole line at the picker
+    const on=(brew&&brew.stage===i) || !!(_brewTrans&&(i===_brewTrans.from||i===_brewTrans.to));
+    g.visible = !brew || !!on;                          // focus on the active apparatus (both ends during a sweep); whole line at the picker
     if (g.userData.core&&g.userData.core.material){ const cm=g.userData.core.material;
       cm.opacity = on ? (0.55+0.35*Math.sin(t*5)) : 0.16; }
   }
@@ -8793,30 +8833,43 @@ function brewTick(dt){
   if (!brew) return;
   brew.tt+=dt; if (brew.armed) brew.run+=dt;
   const s=brew.stage, G=_brewStationG[s];
-  if (s===0){                                          // MORTAR — CRUSH the reagent + dust cubes with the pestle
+  if (s===0){                                          // MORTAR — CRUSH lumps into persistent smaller cubes; technique still counts
     const R0=Math.min(innerWidth,innerHeight)*0.24;
-    if (G){ const rad=G.userData.rad, my=G.userData.top, ing=G.userData.ing||[];
+    brew.angVel=brew.angDelta/Math.max(0.001,dt); brew.angDelta=0;
+    const onPace=brew.grinding && brew.angVel>BREW_GRIND_W*0.3 && brew.angVel<BREW_GRIND_W*2.3;   // steady pace
+    if (G){ const rad=G.userData.rad, my=G.userData.top, ing=G.userData.ing||[], grp=G.userData.ingGrp;
       const pr=rad*Math.max(0.10,Math.min(0.98, R0?brew.curDist/R0:0.55));
       const px=Math.cos(brew.curAng)*pr, pz=Math.sin(brew.curAng)*pr;
-      if (G.userData.pacer) G.userData.pacer.visible=false;         // no pacer in the crush design
+      const onEdge=brew.grinding && brew.curDist>R0*0.45;           // work the material against the wall
+      const goodTech=brew.armed && brew.grinding && onPace && onEdge;
+      brew._onEdge=onEdge; brew._onPace=onPace;
+      if (G.userData.pacer) G.userData.pacer.visible=false;
       if (G.userData.fill) G.userData.fill.geometry.setDrawRange(0,0);
-      G.userData.pestle.position.set(px, my*1.02, pz);              // the pestle works in the bowl mouth, under the cursor
+      G.userData.pestle.position.set(px, my*1.02, pz);
       G.userData.pestle.rotation.z=brew.grinding?Math.sin(t*11)*0.14:0;
-      let crush=0, hitting=false;
-      for (const it of ing){ const dx=it.x-px, dz=it.z-pz, d=Math.hypot(dx,dz);
-        if (brew.grinding && brew.armed && d<0.16+it.s){           // pestle on this lump -> grind it down + shove it
-          it.s=Math.max(0.03, it.s-dt*0.55); hitting=true;
-          const push=dt*1.6/(d+0.06); it.x+=dx*push; it.z+=dz*push;
-          const rr=Math.hypot(it.x,it.z), mxr=rad*0.9; if (rr>mxr){ it.x*=mxr/rr; it.z*=mxr/rr; }
-          if (Math.random()<0.55) _brewSpark(BREW_X[0]+it.x, BREW_BASE_Y+my*0.9, it.z, it.col, 0.28, 0.15+Math.random()*0.3);
+      const born=[]; let sum=0;
+      for (const it of ing){ const es=BREW_TIER_S[it.tier], dx=it.x-px, dz=it.z-pz, d=Math.hypot(dx,dz);
+        if (brew.grinding && brew.armed && d<0.16+es){              // pestle on this lump -> grind + shove
+          it.crush += dt*(goodTech?1.6:0.8);                        // good technique grinds faster
+          const push=dt*0.8/(d+0.06); it.x+=dx*push; it.z+=dz*push;
+          const rr=Math.hypot(it.x,it.z), hi=rad*0.9, lo=rad*0.4;   // keep the pieces in the working annulus near the wall
+          if (rr>hi){ it.x*=hi/rr; it.z*=hi/rr; } else if (rr<lo && rr>0.001){ it.x*=lo/rr; it.z*=lo/rr; }
+          if (Math.random()<0.4) _brewSpark(BREW_X[0]+it.x, BREW_BASE_Y+my*0.9, it.z, it.col, 0.25, 0.12+Math.random()*0.25);
+          if (it.tier>0 && it.crush>=0.5 && ing.length+born.length<44){   // FRAGMENT: one lump -> two of the next grade down
+            it.tier--; it.crush=0;
+            const a=Math.random()*6.283; born.push({mesh:null, x:it.x+Math.cos(a)*0.06, z:it.z+Math.sin(a)*0.06, tier:it.tier, col:it.col, crush:0});
+          }
         }
-        it.mesh.scale.setScalar(it.s); it.mesh.position.set(it.x, my*0.9, it.z);
-        crush += Math.min(1,(it.s0-it.s)/(it.s0-0.03));            // 0..1 fully ground
+        const sc=BREW_TIER_S[it.tier]*(1-0.35*Math.min(1,it.crush/0.5));
+        it.mesh.scale.setScalar(sc); it.mesh.position.set(it.x, my*0.9, it.z);
+        sum += it.tier;
       }
-      brew.fill = ing.length? crush/ing.length : 0;
-      if (hitting) brew.inband+=dt; else if (brew.grinding&&brew.armed) brew.offband+=dt*0.3;
+      for (const b of born){ const m=new THREE.Mesh(_brewSparkGeo, new THREE.MeshStandardMaterial({color:b.col,roughness:0.85,metalness:0.04}));
+        m.scale.setScalar(BREW_TIER_S[b.tier]); m.position.set(b.x, my*0.9, b.z); grp.add(m); b.mesh=m; ing.push(b); }
+      brew.fill = Math.max(0, 1 - sum/(G.userData.ingSum0||10));
+      if (goodTech) brew.inband+=dt; else if (brew.grinding&&brew.armed) brew.offband+=dt*0.4;
     }
-    if (brew.fill>=0.92 && brew.run>0.6){ brewScoreAndAdvance(Math.max(0.15, brew.inband/Math.max(0.001,brew.inband+brew.offband))); }
+    if (brew.fill>=0.92 && brew.run>0.6){ brewScoreAndAdvance(0.3+0.7*(brew.inband/Math.max(0.001,brew.inband+brew.offband))); }
 
   } else if (s===1){                                   // CALCINATOR — light it, then hold the heat HIGH and long
     brew.band=0.70+0.16*Math.sin(brew.run*0.5);         // higher on the scale, slower drift
@@ -8825,10 +8878,19 @@ function brewTick(dt){
     const d=Math.abs(brew.temp-brew.band);
     if (brew.armed && brew.ignite>=0.6 && d<0.14) brew.calc=Math.min(1.35, brew.calc+dt*0.3*(1-d/0.14));  // slower -> LONGER
     if (brew.temp>1.06) brew.scorch+=dt*0.3;
-    if (G){ const heat=Math.min(1,brew.temp/1.25); const eq=G.userData.equip;
-      if (eq&&eq.material){ eq.material.emissive.setHex(brew.temp>1.06?0xff4a1e:0xff7a2a); eq.material.emissiveIntensity=heat*1.2*brew.ignite; }
-      const my=G.userData.mouth;
-      if (brew.held && Math.random()<(brew.ignite<1?0.9:0.5)) _brewSpark(BREW_X[1]+(Math.random()-0.5)*0.5, BREW_BASE_Y+my*0.5+Math.random()*0.4, 0, brew.temp>0.9?0xff6a30:0xffb040, 0.4, 0.6+Math.random()*0.7); }
+    if (G){ const heat=Math.min(1,brew.temp/1.25), my=G.userData.mouth, eq=G.userData.equip;
+      // The heat spreads OUT from the core: cubes within the growing front glow, the rest stay cold metal.
+      const front=heat*(G.userData.heatMax||1)*1.2*brew.ignite, step=Math.round(front*40);
+      if (eq && eq.instanceColor && G.userData.heatDist && G.userData.heatBase && step!==brew._hstep){
+        brew._hstep=step; const dist=G.userData.heatDist, base=G.userData.heatBase;
+        _calcHot.setHex(brew.temp>1.06?0xff4a1e:0xff7a2a);
+        for (let k=0;k<dist.length;k++){ const glow=Math.max(0,Math.min(1,(front-dist[k])/0.4));
+          _calcScr.copy(base[k]).lerp(_calcHot, glow*0.9); eq.setColorAt(k,_calcScr); }
+        eq.instanceColor.needsUpdate=true;
+      }
+      if (eq&&eq.material){ eq.material.emissive.setHex(0xff5a1e); eq.material.emissiveIntensity=heat*0.35*brew.ignite; }  // faint overall warmth
+      if (G.userData.core) G.userData.core.material.opacity=0.4+0.55*brew.ignite*(0.7+0.3*Math.sin(t*8));
+      if (brew.held && Math.random()<(brew.ignite<1?0.9:0.5)) _brewSpark(BREW_X[1]+(Math.random()-0.5)*0.4, BREW_BASE_Y+my*0.6+Math.random()*0.4, 0, brew.temp>0.9?0xff6a30:0xffb040, 0.3, 0.6+Math.random()*0.7); }
     if (brew.calc>=1.3){ brewScoreAndAdvance(Math.max(0,Math.min(1,(brew.calc-brew.scorch)/1.3))); }
 
   } else if (s===2){                                   // RETORT — boil the flask; open the TAP as the HEARTS cut reaches the valve
@@ -8908,9 +8970,11 @@ function renderBrewHud(){
   let body='', tip='';
   const s=brew.stage;
   if (s===0){
-    body=_bar('Ground',brew.fill,'#8fe6c8');
-    tip=brew.armed?'Drag the pestle over the reagent + dust lumps to crush them down — grind every piece to powder.'
-                  :'▸ Grab the pestle and drag it over the lumps to grind.';
+    body=_bar('Ground to powder',brew.fill,'#8fe6c8')
+        +`<div style="display:flex;gap:8px"><span style="flex:1">${_bar('Pace',brew._onPace?1:0.15,brew._onPace?'#8fe6c8':'#c98a5a')}</span>`
+        +`<span style="flex:1">${_bar('Against the wall',brew._onEdge?1:0.15,brew._onEdge?'#8fe6c8':'#c98a5a')}</span></div>`;
+    tip=brew.armed?'Circle the pestle over the lumps at a steady pace, working them against the wall — crush every piece down to powder.'
+                  :'▸ Grab the pestle and crush the lumps against the bowl wall.';
   } else if (s===1){
     body=_bar('Heat',brew.temp/1.3,brew.temp>1.06?'#ff5a2a':'#ffb347',brew.band/1.3)+_bar('Calcined',brew.calc/1.3,'#ffd27a');
     tip=!brew.armed?'▸ Press and hold to light the burner.'
@@ -8936,7 +9000,7 @@ function renderBrewHud(){
   }
   el.innerHTML=`<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><b style="color:var(--crystal)">${brew.potion.label}</b><span class="mono" style="color:var(--dim)">${pipe}</span></div>${body}<div class="sub" style="margin-top:5px">${tip}</div>`;
 }
-function enterBrewBench(){ brew=null; brewGroup.rotation.set(0,0,0); _bcInit=false; buildBrewStations(); renderBrewHud(); }
+function enterBrewBench(){ brew=null; _brewTrans=null; for (const p of _brewTransFX){ brewGroup.remove(p.mesh); p.mesh.material.dispose(); } _brewTransFX=[]; brewGroup.rotation.set(0,0,0); _bcInit=false; buildBrewStations(); renderBrewHud(); }
 function leaveBrewBench(){ brew=null; if (_brewHud) _brewHud.style.display='none'; }
 
 function renderBrew(){
