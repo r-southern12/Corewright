@@ -1480,6 +1480,9 @@ const reagents={moss:0,salt:0,clay:0,mica:0,brine:0,cinder:0,rime:0};
    the cores you dig decide the potions you can brew — a colour-driven brewing loop that replaced the
    old moss/salt/clay reagent recipes. Keyed by CORE_HUES.key. */
 const powder={teal:0,amber:0,violet:0,rose:0,azure:0,lime:0};
+// Each hue's dust also carries a GRADE — the mass-weighted average TIER of the cores it was ground from —
+// so higher-tier (harder) roughs make more potent potions. powderGradeMass tracks the weighting total.
+const powderGrade={}, powderGradeMass={};
 const POWDER_K=2;            // powder per unit crystal volume ground: a core grinds to ~25 (≈6 doses); shaping
                              // waste off one gives ~10 as a byproduct — recipes want 3-5 of a colour
 // Which powder colour a removed crystal cell yields: the condensation (secondary) hue at a hot cell,
@@ -2984,7 +2987,10 @@ function planeSplitBoundary(axis,b,levels){
 const PLANE_BASE_POTENCY=1;      // factory solvent strength — brewing quality lifts this in a later phase
 const PLANE_BUDGET_K=0.9;        // world-volume a potency-1 solvent removes at hardness 1 (tuned below)
 function planeCutBudget(){
-  return PLANE_BASE_POTENCY*PLANE_BUDGET_K/Math.max(0.5, coreHardness(activeCore));
+  // The SELECTED potion's brewed potency drives the cut (a factory/unbrewed solvent falls back to base 1).
+  // Divided by the core's hardness, so a weak potion barely dents a hard high-tier core, a potent one cleaves it.
+  const pot=(typeof potionStr!=='undefined'&&potionStr[potion]>0)?potionStr[potion]:PLANE_BASE_POTENCY;
+  return pot*PLANE_BUDGET_K/Math.max(0.5, coreHardness(activeCore));
 }
 function planeVictims(){
   const p=POTIONS[potion], b=planePos(), axis=p.axis;
@@ -8541,7 +8547,7 @@ function forgeQuench(){
 //   Mortar (grind, birds-eye) -> Calcinator (heat, side) -> Retort (steer the distillate) -> Alembic (circulate coolant)
 // Mortar & Calcinator are the player's REAL forged vessels (forgedParts, restored to canonical
 // upright orientation); the Retort & Alembic are factory rigs, cube-built to match, until they are
-// made forgeable. The four skill scores average into the potion's QUALITY, recorded in potionQ.
+// made forgeable. The four skill scores are the CRAFT term of the potion's potency, recorded in potionStr.
 // ============================================================
 const brewGroup=new THREE.Group(); scene.add(brewGroup); brewGroup.visible=false;
 const BREW_X=[-3.9,-1.3,1.3,3.9];            // the four stations, left to right
@@ -8563,7 +8569,7 @@ const BREW_POTIONS=[
 ];
 const BREW_COST={powder:4, reagent:2, dust:3};
 const BREW_STAGE_NAMES=['Grind','Calcine','Distill','Condense'];
-const potionQ={};                                    // best quality (0..1) brewed per potion id -> lifts potency
+const potionStr={};                                  // best POTENCY brewed per potion id (a number ~0.2..3.5), not a %
 let brew=null;                                       // active brew session, or null at the picker
 // The LINE SET-UP: which forged vessel + power core is fitted at each apparatus. null equipment = the best
 // you've forged (auto); null core = an empty seat (the line still runs, just weakly). Better gear raises the
@@ -8809,14 +8815,19 @@ function brewScoreAndAdvance(score){
 }
 function brewFinish(){
   const pt=brew.potion;
-  const skill=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;   // how well you worked the line
-  const Q=skill*brewPotencyMult();                                   // ...capped by the gear you fitted
-  potionQ[pt.id]=Math.max(potionQ[pt.id]||0, Q);
-  if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*Q))); }
+  // POTENCY, not a %: the dust GRADE (tier/hardness of the cores you ground) sets the base, then craft on
+  // the line and the fitted gear lift it. A tier-3 dust, worked well on a kitted line, brews a potent solvent
+  // that can cut hard high-tier crystal; tier-1 dust on a bare line barely bites.
+  const skill=brew.scores.reduce((a,b)=>a+b,0)/brew.scores.length;   // 0..1 craft
+  const grade=Math.max(1, powderGrade[pt.color]!==undefined?powderGrade[pt.color]:1);
+  const gear=brewGearFactor();
+  const potency=grade*(0.4+0.6*skill)*(0.5+0.5*gear);
+  potionStr[pt.id]=Math.max(potionStr[pt.id]||0, potency);
+  if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*skill))); }
   else { potions[pt.id]=(potions[pt.id]||0)+1; }
   updateMeters(); updateStock();
-  say(`${pt.label} brewed — ${Math.round(Q*100)}% strength (${Math.round(skill*100)}% craft × ${Math.round(brewPotencyMult()*100)}% gear).`,'good');
-  floatText(pt.label+' '+Math.round(Q*100)+'%','var(--crystal)');
+  say(`${pt.label} brewed — potency ${potency.toFixed(1)} (grade T${Math.round(grade)} · ${Math.round(skill*100)}% craft · ${Math.round(gear*100)}% gear).`,'good');
+  floatText(pt.label+' ×'+potency.toFixed(1),'var(--crystal)');
   brew=null; renderBrewHud();
 }
 
@@ -8992,7 +9003,7 @@ function renderBrewHud(){
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
   if (!brew){
     const chips=BREW_POTIONS.map(pt=>{ const H=CORE_HUES.find(h=>h.key===pt.color); const ok=adminOn||brewCanAfford(pt);
-      const best=potionQ[pt.id]?` · best ${Math.round(potionQ[pt.id]*100)}%`:'';
+      const best=potionStr[pt.id]?` · best ×${potionStr[pt.id].toFixed(1)}`:'';
       return `<button class="act" data-brew="${pt.id}" ${ok?'':'disabled'} style="text-align:left;opacity:${ok?1:0.5}">`+
         `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">&#8203;</span> `+
         `${pt.label}<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`;
@@ -9059,7 +9070,7 @@ function renderBrewSetup(){
   const el=document.getElementById('brewSetup'); if (!el) return;
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
   const note=document.getElementById('lineStrengthNote');
-  if (note) note.innerHTML=`gear <b style="color:var(--amber)">${Math.round(brewGearFactor()*100)}%</b> · strength ceiling <b style="color:var(--crystal)">${Math.round(brewPotencyMult()*100)}%</b>`;
+  if (note) note.innerHTML=`gear <b style="color:var(--amber)">${Math.round(brewGearFactor()*100)}%</b> <span style="color:var(--dim)">— lifts potion potency (grade × craft × gear)</span>`;
   el.innerHTML=BREW_EQUIP_STATIONS.map(st=>{
     const eq=st.factory?null:brewEquipFitted(st.shape);
     const eqLabel=st.factory?'factory rig':(eq?`${eq.name} · ${Math.round((eq.q||0)*100)}%`:'none forged');
@@ -9107,11 +9118,11 @@ function renderBrewStores(){
   el.innerHTML=BREW_POTIONS.map(pt=>{
     const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
     const held=pt.tank?`${tank[pt.tank]}/${TANKS[pt.tank].cap} in tank`:`× ${potions[pt.id]||0} held`;
-    const strength=potionQ[pt.id]?`best ${Math.round(potionQ[pt.id]*100)}% strength`:'never brewed';
+    const strength=potionStr[pt.id]?`best potency ×${potionStr[pt.id].toFixed(1)}`:'never brewed';
     return `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div class="info"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)};margin-right:6px"></span>${pt.label}
         <div class="sub">${held} · ${strength}</div></div>
-      <div class="mono" style="color:var(--crystal)">${potionQ[pt.id]?Math.round(potionQ[pt.id]*100)+'%':''}</div></div>`;
+      <div class="mono" style="color:var(--crystal)">${potionStr[pt.id]?'×'+potionStr[pt.id].toFixed(1):''}</div></div>`;
   }).join('');
 }
 function renderTx(){
@@ -9452,25 +9463,39 @@ function coreGlowText(core){
 }
 // Grind a WHOLE stored core to coloured POWDER (the potion ingredient), by hue — the hot cells give the
 // condensation hue. This is the bulk route (the shaping benches also grind waste to powder as you cut).
-function grindToPowder(core){
+// Grind a core to coloured dust. Clean cores return full mass; a DIRTY core can be ground straight down
+// at a 20% return (no careful cleaning). The dust remembers its GRADE (the core's tier) so it lifts potency.
+function grindToPowder(core, rate){
   if (core.cells===null) generateCells(core);
+  rate=rate||1;
   const got={};
   for (const c of core.cells){ if (!isCrystal(c)) continue; const cv=c.size*c.size*c.size;
-    const key=cellPowderHue(core,c.conc); const g=cv*POWDER_K; powder[key]+=g; got[key]=(got[key]||0)+g; }
+    const key=cellPowderHue(core,c.conc); const g=cv*POWDER_K*rate;
+    powder[key]+=g; got[key]=(got[key]||0)+g;
+    const old=powderGradeMass[key]||0;                    // mass-weighted running average of the source tier
+    powderGrade[key]=((powderGrade[key]!==undefined?powderGrade[key]:core.tier)*old + core.tier*g)/(old+g||1);
+    powderGradeMass[key]=old+g;
+  }
   if (!removeCore(core)) return;
   const parts=Object.entries(got).map(([k,v])=>`+${Math.round(v)} ${k}`);
   const total=Object.values(got).reduce((a,b)=>a+b,0);
   floatText('+'+Math.round(total)+' powder','var(--crystal)');
-  say(`${core.name} ground to powder — ${parts.join(', ')||'nothing (barren)'}.`,'good');
+  say(`${core.name} ground${rate<1?` (dirty — ${Math.round(rate*100)}% return)`:''} to powder — ${parts.join(', ')||'nothing (barren)'}.`,'good');
   updateMeters(); renderLapidary();
 }
 // Raw cleaned cores are the LAB-POWER fuel now — not finished power cells. A cell you shaped and seated
 // is a permanent part; grinding one down for 5 minutes to get 20 seconds of bench power made no sense.
 // Burning a rough is quick power at the cost of a core you didn't invest in. Scaled by tier (rougher
 // cores from deeper tiers carry more charge). Sealed power cells are excluded in the card UI.
-const CORE_BURN_POWER=tier=>Math.round(45*tier);          // 45 / 90 / 135 by tier
+// A core's usable crystal MASS — the sum of its shard volumes. A carelessly cleaned rough (crystal lost to
+// the dissolve) carries less, so it yields less power and less dust: this is the honest basis for both.
+function coreCrystalMass(core){ if (core.cells===null) generateCells(core); let m=0; for (const c of core.cells) if (isCrystal(c)) m+=c.size*c.size*c.size; return m; }
+// Burning a rough for lab power is now MASS-based (was a flat 45/tier), with a tier bonus for the denser deep
+// cores, so a well-cleaned core is worth more than a hacked-up one of the same tier.
+const CORE_BURN_K=4;   // tuned so a well-cleaned tier-II core ≈ 90⚡ (its old flat value); a hacked-up one, less
+function coreBurnPower(core){ return Math.max(1, Math.round(coreCrystalMass(core)*CORE_BURN_K*(0.5+0.5*core.tier))); }
 function burnCoreForPower(core){
-  const gain=CORE_BURN_POWER(core.tier);
+  const gain=coreBurnPower(core);
   if (!removeCore(core)) return;
   powerBank+=gain;
   floatText('+'+gain+'⚡','var(--violet)');
@@ -9526,11 +9551,18 @@ function coreCard(core,clean){
     // stay permanent. A sealed cell is a permanent part and is never offered up to the burn.
     if (!core.sealed){
       const burn=document.createElement('button');
-      burn.className='tiny'; burn.textContent='Burn → ⚡'+CORE_BURN_POWER(core.tier);
-      burn.title='Burn this rough for lab power';
+      burn.className='tiny'; burn.textContent='Burn → ⚡'+coreBurnPower(core);
+      burn.title='Burn this rough for lab power — scales with the crystal mass left in it';
       burn.onclick=()=>burnCoreForPower(core);
       btns.appendChild(burn);
     }
+  } else {
+    // a DIRTY rough can be dumped straight to dust at a 20% return — no careful cleaning, most is lost
+    const gd=document.createElement('button');
+    gd.className='tiny'; gd.textContent='Grind → dust (20%)';
+    gd.title='Grind this dirty core straight to powder at a 20% return — skips cleaning';
+    gd.onclick=()=>grindToPowder(core,0.2);
+    btns.appendChild(gd);
   }
   const del=document.createElement('button');
   del.className='tiny danger'; del.textContent='✕';
@@ -10234,7 +10266,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=16;  // v16: brewing-line setup (brewEquip/brewCore) + recorded potion strength (potionQ)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=17;  // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -10279,7 +10311,7 @@ function saveGame(){
       alt, seenBits,
       dust:q3(dust), hp:q3(hp), air:q3(air), maxAir,
       hardcore, metals:{...metals}, reagents:{...reagents}, powder:{...powder}, potions:{...potions},
-      potionQ:{...potionQ}, brewEquip:{...brewEquip}, brewCore:{...brewCore},
+      potionStr:{...potionStr}, powderGrade:{...powderGrade}, powderGradeMass:{...powderGradeMass}, brewEquip:{...brewEquip}, brewCore:{...brewCore},
       drill:{frame:drill.frame,bit:drill.bit,core:drill.core,power:drill.power},
       equip:{coil:equip.coil,forgePrism:equip.forgePrism,alembic:equip.alembic},
       powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
@@ -10321,7 +10353,9 @@ function loadGame(){
     Object.assign(metals,d.metals); Object.assign(reagents,d.reagents);
     if (d.powder) Object.assign(powder,d.powder);            // graceful: pre-powder saves start with an empty larder
     Object.assign(potions,d.potions);
-    if (d.potionQ) Object.assign(potionQ,d.potionQ);         // best-brewed strength per potion
+    if (d.potionStr) Object.assign(potionStr,d.potionStr);   // best-brewed potency per potion
+    if (d.powderGrade) Object.assign(powderGrade,d.powderGrade);
+    if (d.powderGradeMass) Object.assign(powderGradeMass,d.powderGradeMass);
     if (d.brewEquip) Object.assign(brewEquip,d.brewEquip);   // the fitted brewing vessels + cores
     if (d.brewCore) Object.assign(brewCore,d.brewCore);
     drill.frame=d.drill.frame; drill.bit=d.drill.bit;
