@@ -1479,10 +1479,11 @@ const reagents={moss:0,salt:0,clay:0,mica:0,brine:0,cinder:0,rime:0};
    the condensation gives the SECONDARY hue instead. Each potion family wants a particular colour, so
    the cores you dig decide the potions you can brew — a colour-driven brewing loop that replaced the
    old moss/salt/clay reagent recipes. Keyed by CORE_HUES.key. */
-const powder={teal:0,amber:0,violet:0,rose:0,azure:0,lime:0};
+const powder={teal:10,amber:10,violet:10,rose:10,azure:10,lime:10};   // a fresh larder starts with 10 dust of each colour
 // Each hue's dust also carries a GRADE — the mass-weighted average TIER of the cores it was ground from —
 // so higher-tier (harder) roughs make more potent potions. powderGradeMass tracks the weighting total.
-const powderGrade={}, powderGradeMass={};
+const powderGrade={teal:1,amber:1,violet:1,rose:1,azure:1,lime:1},
+      powderGradeMass={teal:10,amber:10,violet:10,rose:10,azure:10,lime:10};
 const POWDER_K=2;            // powder per unit crystal volume ground: a core grinds to ~25 (≈6 doses); shaping
                              // waste off one gives ~10 as a byproduct — recipes want 3-5 of a colour
 // Which powder colour a removed crystal cell yields: the condensation (secondary) hue at a hot cell,
@@ -9786,15 +9787,23 @@ function newRun(){
   dust=0; powerBank=0; hp=100; maxAir=120; air=120;
   corpse=null; hardcore=true;
   nextId=1;
-  metals.copper=0; metals.iron=0; metals.vst=0;
-  for (const k in reagents) reagents[k]=0; for (const k in powder) powder[k]=0;
+  for (const k in metals) metals[k]=0;
+  for (const k in reagents) reagents[k]=0;
+  for (const k in powder){ powder[k]=10; powderGrade[k]=1; powderGradeMass[k]=10; }   // fresh larder: 10 dust of each colour, tier-I grade
   for (const k in potions) delete potions[k];
   potions.h=3; potions.v=3; potions.jet=2; potions.blast=2;
+  // brewing progress does NOT carry into a new run: recorded potency, the fitted line, the dust grade, tanks
+  for (const k in potionStr) delete potionStr[k];
+  for (const k in brewEquip) brewEquip[k]=null;
+  for (const k in brewCore) brewCore[k]=null;
+  for (const k in tank) tank[k]=0;
 
   // equipment back to factory
   drill.frame={name:'Crude copper frame',tier:1,q:0.3};
   drill.bit={name:'Crude copper bit',tier:1,q:0.3};
   drill.core=null; drill.power=null; forgeAnvil=null;
+  forgedParts=[];                                        // the forged-parts shelf starts empty
+  for (const k in suitFrames) suitFrames[k]=null;
   equip.coil=null; equip.forgePrism=null; equip.alembic=null;
   for (const k in MACHINES) MACHINES[k].unlocked=(k==='dig'||k==='cleave'||k==='brute');
 
