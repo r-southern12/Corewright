@@ -876,6 +876,7 @@
       <button class="act" id="fbRoll" title="Roll (Z +90°)">↻</button>
       <button class="act" id="fbReset" title="Reset to lying/upright">⌂</button>
     </span>
+    <button class="act" id="fbPair" style="display:none">⇄ Pestle</button>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -1790,13 +1791,17 @@ const RECIPES={
 const FORGE_TEMPLATES=[
   {id:'drillFrame', part:'frame',    shape:'box',        label:'Drill Frame',          desc:'the drill body — the core is housed inside it'},
   {id:'drillBit',   part:'bit',      shape:'bit',        label:'Drill Bit',            desc:'the cutting edge that bites the stone'},
-  {id:'mortar',     part:'brew',     shape:'mortar',     label:'Mortar & Pestle',      desc:'a brewing vessel — houses a power core in its bowl'},
+  {id:'mortar',     part:'brew',     shape:'mortar',     pair:'pestle', label:'Mortar & Pestle',      desc:'a brewing vessel — houses a power core. Two parts: forge the cup AND the pestle (toggle in the press)'},
   {id:'calcinator', part:'brew',     shape:'calcinator', label:'Calcinator',           desc:'a brewing dish — houses a power core'},
   {id:'wardFrame',  part:'suitFrame', system:'forgePrism', label:'Elemental Ward Frame', desc:'a suit frame carrying the elemental ward'},
   {id:'aegisFrame', part:'suitFrame', system:'alembic',    label:'Aegis Plate Frame',    desc:'a suit frame — the armour plating'},
   {id:'scanFrame',  part:'suitFrame', system:'coil',       label:'Scanner Frame',        desc:'a suit frame to mount the scanning coil'},
   {id:'lifeFrame',  part:'suitFrame', system:'life',       label:'Life Frame',           desc:'a suit frame for the air system'}
 ];
+// The pestle is the mortar's partner part. It isn't its own menu card — you reach it by TOGGLING in the
+// press while forging the Mortar & Pestle. Both are required for a working mortar at the brewing bench.
+const PESTLE_PART={id:'pestle', part:'brew', shape:'pestle', pair:'mortar', label:'Pestle', desc:'the grinding rod — forged separately from the cup'};
+function forgePairPart(shape){ return shape==='pestle' ? PESTLE_PART : FORGE_TEMPLATES.find(t=>t.shape==='mortar'); }
 // Named alloys, keyed by the sorted pair of structural metals in the cast. An unlisted pair
 // falls back to "<primary>–<secondary>". Only the historically-real ones get proper names.
 const ALLOY_NAMES={ 'copper+tin':'Bronze', 'iron+vst':'Darksteel', 'copper+vst':'Aegissteel',
@@ -6710,17 +6715,19 @@ const _mortPestle=(px,py,pz)=>{
   let t=((px-ax)*dx+(py-ay)*dy)/L2; t=Math.max(0,Math.min(1,t));
   return Math.hypot(px-(ax+dx*t),py-(ay+dy*t),pz)<=2.5;
 };
-const _mortBodyP=(px,py,pz)=>{
-  if (py>=-MORT_HY-0.01 && py<=MORT_RIM+0.01 && Math.hypot(px,pz)<=_vprof(MORT_OUT,py)+0.4) return true;   // the cup
-  if (py>=1.5 && py<=13.2 && _mortPestle(px,py,pz)) return true;                                           // the pestle
-  return false;
-};
+// The MORTAR is now the CUP alone — the pestle is a separate forged part (toggle in the press), so
+// each is its own model. The player forges both to complete a Mortar & Pestle for brewing.
+const _mortBodyP=(px,py,pz)=> (py>=-MORT_HY-0.01 && py<=MORT_RIM+0.01 && Math.hypot(px,pz)<=_vprof(MORT_OUT,py)+0.4);   // the cup only
 const _mortSeat=(px,py,pz)=>{
-  if (_mortPestle(px,py,pz)) return false;                                                    // the pestle is SOLID, never void
   if (py>=3 && py<=MORT_RIM+0.6 && Math.hypot(px,pz)<=_vprof(MORT_BOWL,py)) return true;        // open grinding bowl
   if (px>=-0.2 && Math.hypot(py-MORT_SOCK_PY,pz)<=_MORT_THROAT_R) return true;                  // horizontal +x insert bore to the side face
   return false;
 };
+// PESTLE — a standalone grinding rod: a heavy bulb head, a tapered shaft, a small knob to grip.
+// Forged on its own (no core seat — it houses nothing), lathe-revolved so a turn never sheds it.
+const PEST_HY=8;
+const PEST_OUT=[[-8,3.9],[-6.2,4.5],[-3.6,3.1],[-1,2.3],[4.5,2.1],[7,3.0],[8,2.3]];   // bulb head (bottom) -> shaft -> grip knob (top)
+const _pestBodyP=(px,py,pz)=> py>=-PEST_HY-0.01 && py<=8.0+0.01 && Math.hypot(px,pz)<=_vprof(PEST_OUT,py)+0.3;
 // CALCINATOR — a wide bowl on a chunky banded pedestal; the core sits in the bowl (a little proud, brazier-like).
 const CALC_HY=9;
 const CALC_OUT=[[-9,5.2],[-7.4,7.2],[-6.4,4.0],[-1,4.2],[-0.4,5.6],[0.6,7.0],[8,10.3],[8.6,9.2]];      // foot -> stem -> band -> bowl -> rim
@@ -6740,15 +6747,17 @@ const FORGE_SHAPES={
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', bowlDrop:0.6,
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6,   // the drill-bit throat
     insert:{c:[0,FORGE_BIT_HY,0], axis:[0,1,0], r:_BIT_SOCK_R, depth:FORGE_BIT_HY-FORGE_BIT_SEAT_PY-_BIT_SOCK_R}},   // core drops in the TOP
-  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:13.5, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, pestle:{a:[0.5,3.2,0], b:[4.2,10.6,0], r:2.5}, oreFixed:10, bowlDrop:0.6, yHi:13.2,
+  mortar:{hx:9, hy:MORT_HY, hz:9, castHx:9.2, castHy:9.2, castHz:9.2, bodyP:_mortBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:MORT_SOCK_PY, seatExtra:_mortSeat, ghost:'lathe', ghostP:MORT_OUT, oreFixed:10, bowlDrop:0.6,
     insert:{c:[_vprof(MORT_OUT,MORT_SOCK_PY),MORT_SOCK_PY,0], axis:[1,0,0], r:_MORT_THROAT_R, depth:_vprof(MORT_OUT,MORT_SOCK_PY)-VCORE_R}},   // core slides in the +x SIDE
-  calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT, oreVoid:200},
+  pestle:{hx:5, hy:PEST_HY, hz:5, castHx:5.4, castHy:8.4, castHz:5.4, bodyP:_pestBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:-100, noSeat:true, ghost:'lathe', ghostP:PEST_OUT, oreFixed:4, bowlDrop:0.6},
+  calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT, oreFixed:7, oreVoid:200},
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
 // Socket test in the PART frame: the core's own component inside() (so a sphere/cube drops in as data),
 // unioned with the shape's optional seatExtra void (the bit throat, a vessel bowl).
 function forgeSeatInsideP(px,py,pz){
   const s=forgeShape();
+  if (s.noSeat) return false;                          // e.g. the pestle houses no core — a solid cast, no void
   const inSocket=COMPONENTS[s.socketComp].inside(px/s.socketPer,(py-s.socketPy)/s.socketPer,pz/s.socketPer);
   return inSocket || (s.seatExtra ? s.seatExtra(px,py,pz) : false);
 }
@@ -7032,6 +7041,7 @@ function forgeSyncGhostGeo(){
   forgeSeatFill.geometry.dispose(); forgeSeatWire.geometry.dispose();
   forgeSeatFill.geometry=sg; forgeSeatWire.geometry=new THREE.EdgesGeometry(sg);
   forgeSeatFill.scale.setScalar(s.socketPer*FVOX); forgeSeatWire.scale.setScalar(s.socketPer*FVOX);
+  forgeSeatFill.visible=forgeSeatWire.visible=!s.noSeat;   // the pestle has no core seat to show
 }
 // Position + rotate the body and seat ghosts to match the current orientation. The box body
 // is a unit cube scaled to the box's grid dims (rotating the extent vector); a cone body is
@@ -8105,6 +8115,7 @@ function enterForge(){
   forgeActive=true; forgeDirty=true;
   if (forgePowerLevel>FORGE_MAX_POWER) forgePowerLevel=FORGE_MAX_POWER; if (forgePowerLevel<1) forgePowerLevel=1;
   renderForgePower();                          // the 3-level torch dial (base mechanic)
+  if (typeof renderForgePairToggle==='function') renderForgePairToggle();   // show the mortar<->pestle toggle for the pair
   syncForgeMesh(); updateForgeHud();
 }
 // Turn the template between poses (lying <-> standing) at ANY time. Gravity stays grid
@@ -8564,9 +8575,11 @@ function _brewForgeCubes(part, targetH){
     const p=invRot(R, ix-cx, iy-cyy, iz-cz); pts.push([p[0],p[1],p[2], f.metal[k]]);
     for (let a=0;a<3;a++){ if(p[a]<mn[a])mn[a]=p[a]; if(p[a]>mx[a])mx[a]=p[a]; } }
   const ext=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])+1, scl=targetH/ext;
-  const ctr=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2];
+  // Vessels are LATHE-turned about the part axis (px=pz=0). Centre X/Z on that axis, not the bounding box,
+  // so the mortar's +x core-insert bore doesn't shove the bowl (and the ring guide) off-centre. Y rests on the box.
+  const ctr=[0,(mn[1]+mx[1])/2,0];
   const list=pts.map(p=>[(p[0]-ctr[0])*scl,(p[1]-ctr[1])*scl,(p[2]-ctr[2])*scl, scl, MET_ICON[p[3]]!==undefined?MET_ICON[p[3]]:0x137a63]);
-  return {list, scl, top:(mx[1]-ctr[1])*scl, bot:(mn[1]-ctr[1])*scl, rad:Math.max(mx[0]-ctr[0],mx[2]-ctr[2])*scl};
+  return {list, scl, top:(mx[1]-ctr[1])*scl, bot:(mn[1]-ctr[1])*scl, rad:Math.max(mx[0]-ctr[0],-mn[0],mx[2]-ctr[2],-mn[2])*scl};
 }
 function _latticeList(rx,ry,rz, keep, hex){ const L=[]; for (let x=-rx;x<=rx;x++) for (let y=-ry;y<=ry;y++) for (let z=-rz;z<=rz;z++) if (keep(x,y,z)) L.push([x,y,z,hex]); return L; }
 function _finishFactory(cells, targetH){
@@ -8579,14 +8592,15 @@ function _finishFactory(cells, targetH){
   return {list, scl, top:(mx[1]-ctr[1])*scl, bot:(mn[1]-ctr[1])*scl, rad:Math.max(mx[0]-ctr[0],mx[2]-ctr[2])*scl};
 }
 // Factory fallbacks + the two non-forgeable vessels, all cube-built so the whole line reads as one material.
-function _factoryMortar(targetH){ const brass=0xc9a24a;
-  let cells=_latticeList(6,5,6,(x,y,z)=>{ const bowl=Math.sqrt(x*x+(y+1)*(y+1)*1.25+z*z); const d=Math.sqrt(x*x+z*z);
-    return (bowl>3.3&&bowl<=4.6&&y<=2) || (y<-2&&d<3.6); }, brass);
-  return _finishFactory(cells,targetH); }
-function _factoryCalcinator(targetH){ const brass=0xc9a24a, cop=0xb5713a;
-  let cells=_latticeList(5,6,4,(x,y,z)=> (y<-1 && Math.abs(x)<4 && Math.abs(z)<3), brass);
-  cells=cells.concat(_latticeList(4,4,4,(x,y,z)=>{ const d=Math.sqrt(x*x+z*z); return d>2.3&&d<=3.4&&y>=-1&&y<3; }, cop));
-  return _finishFactory(cells,targetH); }
+// The mortar/calcinator fallbacks voxelise the SAME lathe profiles the forge casts, so an un-forged vessel
+// still reads as the right shape (a cup vs a pedestal bowl) instead of a generic blob.
+function _profileCubes(profile, hex){
+  const yLo=profile[0][0], yHi=profile[profile.length-1][0], cells=[];
+  for (let y=Math.floor(yLo); y<=Math.ceil(yHi); y++){ const r=_vprof(profile,y), ri=Math.ceil(r);
+    for (let x=-ri;x<=ri;x++) for (let z=-ri;z<=ri;z++) if (Math.hypot(x,z)<=r) cells.push([x,y,z,hex]); }
+  return cells; }
+function _factoryMortar(targetH){ return _finishFactory(_profileCubes(MORT_OUT,0xc9a24a), targetH); }
+function _factoryCalcinator(targetH){ return _finishFactory(_profileCubes(CALC_OUT,0xb5713a), targetH); }
 function _factoryRetort(targetH){ const glass=0x9fd8ff, brass=0xc9a24a; let cells=[];
   cells=cells.concat(_latticeList(5,5,5,(x,y,z)=>{ const d=Math.sqrt(x*x+y*y+z*z); return d>3.5&&d<=5 && y<4; }, glass));   // round flask shell
   for (let i=0;i<8;i++){ const x=1+Math.round(i*0.8), y=4+Math.round(i*0.55)-(i>4?(i-4)*0.8:0); cells.push([x,y,0,glass]); cells.push([x,y,1,glass]); }  // neck bends over
@@ -8610,7 +8624,7 @@ function _coreGlowMesh(){ const list=[]; for (let x=-1;x<=1;x++) for (let y=-1;y
 function buildBrewStations(){
   for (let i=0;i<4;i++){ if (_brewStationG[i]){ brewGroup.remove(_brewStationG[i]); _brewStationG[i]=null; } }
   const targetH=1.25;
-  const mortarPart=_bestForged('mortar'), calcPart=_bestForged('calcinator');
+  const mortarPart=_bestForged('mortar'), calcPart=_bestForged('calcinator'), pestlePart=_bestForged('pestle');
   const models=[
     mortarPart?_brewForgeCubes(mortarPart,targetH):_factoryMortar(targetH),
     calcPart?_brewForgeCubes(calcPart,targetH):_factoryCalcinator(targetH),
@@ -8631,7 +8645,11 @@ function buildBrewStations(){
     const ring=new THREE.Line(_circleGeo(rad, my0+0.04, 64), new THREE.LineBasicMaterial({color:0x5a7a90})); g.add(ring);
     const fill=new THREE.Line(_circleGeo(rad, my0+0.05, 64), new THREE.LineBasicMaterial({color:0x8fe6c8})); fill.geometry.setDrawRange(0,0); g.add(fill);
     const pacer=_tm(new THREE.SphereGeometry(0.08,12,10), new THREE.MeshBasicMaterial({color:0x8fe6c8}), rad,my0+0.05,0); g.add(pacer);
-    const pestle=_tm(new THREE.BoxGeometry(0.11,0.28,0.11), _steelM.clone(), rad,my0+0.16,0); g.add(pestle);
+    // the swinging tool is the player's REAL forged pestle (cube-built); a plain rod stands in until one exists
+    let pestle;
+    if (pestlePart){ const pm=_brewForgeCubes(pestlePart,0.5); pestle=_brewInst(pm,_brewMetalMat.clone()); pestle.userData.h=(pm.top-pm.bot); }
+    else pestle=_tm(new THREE.BoxGeometry(0.11,0.3,0.11), _steelM.clone(), 0,0,0);
+    pestle.position.set(rad,my0+0.16,0); g.add(pestle);
     const core=_coreGlowMesh(); core.position.set(0,my0*0.5,0); g.add(core);
     g.userData.ring=ring; g.userData.fill=fill; g.userData.pacer=pacer; g.userData.pestle=pestle; g.userData.core=core; g.userData.rad=rad; g.userData.top=my0; }
   // CALCINATOR: a housed core that brightens with power, and the metal heats (retinted in the tick).
@@ -9694,6 +9712,17 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 // The hand-forge: enter the 3D press to shape a copper frame by placing and
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
+// Mortar & Pestle are two separate models forged in the same press — this toggles which one you're on,
+// rebuilding the mould for it. Both must be forged to complete the pair.
+document.getElementById('fbPair').onclick=()=>{
+  if (!forgePart||!forgePart.pair) return;
+  forgePart=forgePairPart(forgePart.pair);      // hop to the partner model (mortar <-> pestle)
+  forgeActive=false; enterForge(); renderForgePairToggle();
+  say(`Forging the ${forgePart.shape==='pestle'?'pestle':'mortar cup'} — toggle to switch.`,'good');
+};
+function renderForgePairToggle(){ const b=document.getElementById('fbPair'); if (!b) return;
+  if (forgePart&&forgePart.pair){ b.style.display=''; b.textContent = forgePart.shape==='mortar'?'⇄ Pestle':'⇄ Mortar'; }
+  else b.style.display='none'; }
 document.getElementById('fbTurn').onclick=forgeToggleOrient;
 document.getElementById('fbTurnBack').onclick=forgeTurnBack;
 document.getElementById('fbRoll').onclick=forgeRollOrient;
