@@ -6392,7 +6392,7 @@ function renderForge(){
     btn.textContent='Forge at the press ⚒';
     // Every template opens the flux press to forge by hand. The material, tier and fit are
     // decided in finishForge from the ores actually cast — the pour is what counts.
-    btn.onclick=()=>{ forgePart=m; forgeActive=false; showView('forgeb'); };
+    btn.onclick=()=>{ forgePart=m; forgeActive=false; _forgeStash={}; showView('forgeb'); };
     div.appendChild(btn);
     list.appendChild(div);
   }
@@ -6705,7 +6705,7 @@ const VCORE_R=1.2*SEAT_PER;                        // sphere power-core radius i
 const MORT_HY=9;                                                     // = cup-bottom depth, so the cup rests on the floor
 const MORT_RIM=7;                                                    // rim height
 const MORT_OUT=[[-9,4.6],[-8,6.9],[-6,8.6],[5.5,8.6],[7,7.7]];        // rounded base -> straight wall -> rolled rim
-const MORT_BOWL=[[2,0],[3,5.0],[4.5,6.6],[5.5,7.1],[7.1,7.4]];       // the OPEN grinding bowl — WIDE + thin-walled (r 7.4 inside an 8.6 rim). Floor sits above the core seat.
+const MORT_BOWL=[[2,0],[3,5.2],[4.5,6.0],[5.5,6.3],[7.1,6.3]];       // the OPEN grinding bowl — WIDE (r 6.3, up from 4.9) but leaving a solid ~1.4-cell rim so it doesn't gap at the quadrants.
 const MORT_SOCK_PY=-3.4;                                              // core sphere centre — housed low in the BODY, loaded from the +x SIDE
 const _MORT_THROAT_R=VCORE_R+0.2;                                    // side insert bore radius (core width)
 // A BOLD, LONG pestle standing in the bowl and leaning up-and-out — stays ABOVE the mortar. Kept within
@@ -8226,7 +8226,9 @@ function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false;
 // flat indices + small ints, it rides straight through the save with the part.
 function forgeSnapshot(){
   const cells=[], metal=[];
-  for (let id=0; id<FG_N; id++) if (fgFill[id]){ cells.push(id); metal.push(fgMetal[id]); }
+  // Only the metal that filled the MOULD is the part — leftover nuggets hanging in the chamber and any
+  // flash that overran outside the cavity are NOT captured, so they don't ride through to the brewing bench.
+  for (let id=0; id<FG_N; id++) if (fgFill[id] && fgMould[id]){ cells.push(id); metal.push(fgMetal[id]); }
   return { W:FGW, H:FGH, D:FGD, rot:forgeRot.slice(), seat:forgeShape().socketComp, cells, metal };
 }
 // How much ALLOY lines the core seat: of the frame cells touching the seat void, the fraction
@@ -8297,6 +8299,7 @@ function finishForge(){
   floatText('★ '+Math.round(q*100)+'%','var(--amber)');
   const alloyNote = made.alloySeat>0.02 ? ` Alloy lines ${Math.round(made.alloySeat*100)}% of the seat — it resonates with a matching core.` : '';
   say(`${made.name} forged at ${Math.round(q*100)}% (T${mat.tier}). ${better?'Fitted — and on':'On'} the Forged-parts shelf to install.`+alloyNote,'good');
+  if (typeof _forgeStash!=='undefined') _forgeStash={};   // the pair session is over once a part is finished
   updateMeters(); showView('forge');
 }
 // Install a forged part into its slot (drill frame/bit or a suit-system frame). The shelf entry
@@ -9863,11 +9866,29 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 document.getElementById('fbFinish').onclick=finishForge;
 // Mortar & Pestle are two separate models forged in the same press — this toggles which one you're on,
 // rebuilding the mould for it. Both must be forged to complete the pair.
+// Toggling mortar<->pestle KEEPS each part's in-progress pour, so switching to build its partner doesn't
+// wipe your work. We stash the cast + feed + crucible per shape and restore it on the way back.
+let _forgeStash={};
+function forgeStashSave(shape){ _forgeStash[shape]={
+  fill:fgFill.slice(), temp:fgTemp.slice(), metal:fgMetal.slice(), locked:fgLocked.slice(),
+  nug:forgeNugUsed, feed:forgeFeed.map(f=>({...f})),
+  cruc:forgeCrucLoad.slice(), crucH:forgeCrucHeat, crucB:forgeCrucBudget, crucS:forgeCrucSpent, rot:forgeRot.slice() }; }
+function forgeStashRestore(shape){ const s=_forgeStash[shape]; if (!s) return false;
+  forgeRot=s.rot.slice(); forgeSyncGhostGeo(); forgeBuildMould(); forgePlaceGhosts();
+  fgFill.set(s.fill); fgTemp.set(s.temp); fgMetal.set(s.metal); fgLocked.set(s.locked);
+  forgeNugUsed=s.nug; forgeFeed=s.feed.map(f=>({...f}));
+  forgeCrucLoad=s.cruc.slice(); forgeCrucHeat=s.crucH; forgeCrucBudget=s.crucB; forgeCrucSpent=s.crucS;
+  forgePhase='flux'; fluxOn=false; forgeTool='torch'; forgeActive=true; forgeDirty=true;
+  forgeSyncPalette(); renderForgePower(); renderForgeFeed(); syncForgeMesh(); updateForgeHud();
+  return true; }
 document.getElementById('fbPair').onclick=()=>{
   if (!forgePart||!forgePart.pair) return;
+  forgeStashSave(forgePart.shape);              // keep the current part's pour
   forgePart=forgePairPart(forgePart.pair);      // hop to the partner model (mortar <-> pestle)
-  forgeActive=false; enterForge(); renderForgePairToggle();
-  say(`Forging the ${forgePart.shape==='pestle'?'pestle':'mortar cup'} — toggle to switch.`,'good');
+  forgeActive=false;
+  if (!forgeStashRestore(forgePart.shape)) enterForge();   // restore the partner's pour, or start it fresh
+  renderForgePairToggle();
+  say(`Forging the ${forgePart.shape==='pestle'?'pestle':'mortar cup'} — your other part is kept; toggle to switch back.`,'good');
 };
 function renderForgePairToggle(){ const b=document.getElementById('fbPair'); if (!b) return;
   if (forgePart&&forgePart.pair){ b.style.display=''; b.textContent = forgePart.shape==='mortar'?'⇄ Pestle':'⇄ Mortar'; }
@@ -9879,7 +9900,7 @@ document.getElementById('fbRollBack').onclick=forgeRollBack;
 document.getElementById('fbReset').onclick=forgeResetOrient;
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbPower').onclick=forgeCyclePower;
-document.getElementById('fbLeave').onclick=()=>showView('forge');
+document.getElementById('fbLeave').onclick=()=>{ _forgeStash={}; showView('forge'); };
 document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
 // ---------- shared ui glue ----------
