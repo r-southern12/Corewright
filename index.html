@@ -8648,13 +8648,22 @@ function _finishFactory(cells, targetH){
 // Factory fallbacks + the two non-forgeable vessels, all cube-built so the whole line reads as one material.
 // The mortar/calcinator fallbacks voxelise the SAME lathe profiles the forge casts, so an un-forged vessel
 // still reads as the right shape (a cup vs a pedestal bowl) instead of a generic blob.
-function _profileCubes(profile, hex){
+// `cavity` is an optional carve predicate: cells inside it are subtracted, so the fallback is HOLLOW like the
+// forged part. Without it the mortar/calcinator poured as a SOLID lump (no bowl) — the "extra mass" bug, since
+// _profileCubes only ever knew the OUTER profile and never the forge's seat/bowl void.
+function _profileCubes(profile, hex, cavity){
   const yLo=profile[0][0], yHi=profile[profile.length-1][0], cells=[];
-  for (let y=Math.floor(yLo); y<=Math.ceil(yHi); y++){ const r=_vprof(profile,y), ri=Math.ceil(r);
-    for (let x=-ri;x<=ri;x++) for (let z=-ri;z<=ri;z++) if (Math.hypot(x,z)<=r) cells.push([x,y,z,hex]); }
+  // Clamp to the profile's REAL span (ceil→floor). ceil(yHi) added a phantom row above the top point — for the
+  // calcinator (yHi 8.6) that was a solid y=9 lid sealing the open well, past where the cavity carve reached.
+  for (let y=Math.ceil(yLo); y<=Math.floor(yHi); y++){ const r=_vprof(profile,y), ri=Math.ceil(r);
+    for (let x=-ri;x<=ri;x++) for (let z=-ri;z<=ri;z++) if (Math.hypot(x,z)<=r && !(cavity&&cavity(x,y,z))) cells.push([x,y,z,hex]); }
   return cells; }
-function _factoryMortar(targetH){ return _finishFactory(_profileCubes(MORT_OUT,0xc9a24a), targetH); }
-function _factoryCalcinator(targetH){ return _finishFactory(_profileCubes(CALC_OUT,0xb5713a), targetH); }
+// Carve the SAME wells the forge seat digs (MORT_BOWL grinding cup / CALC_CAV brazier well) so the un-forged
+// vessel is an open bowl, not a filled puck. Bounds mirror _mortSeat / _calcSeat.
+function _factoryMortar(targetH){ return _finishFactory(_profileCubes(MORT_OUT,0xc9a24a,
+  (x,y,z)=> y>=3 && y<=MORT_RIM+0.6 && Math.hypot(x,z)<=_vprof(MORT_BOWL,y)), targetH); }
+function _factoryCalcinator(targetH){ return _finishFactory(_profileCubes(CALC_OUT,0xb5713a,
+  (x,y,z)=> y>=-1 && y<=8.7 && Math.hypot(x,z)<=_vprof(CALC_CAV,y)), targetH); }
 // A ROUND-BOTTOM FLASK held in a wooden ring-stand — the real retort silhouette. Bulb + short neck,
 // a timber band round the belly and three splayed legs. The liquid, heat glow and the tap/valve are
 // dynamic meshes added in the station build so they can bubble, glow and open.
