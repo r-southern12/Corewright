@@ -3847,21 +3847,41 @@ const sandSelected=()=>potion==='sand';
 // ---------- bruting wheel: crude preform ----------
 // Bruting knocks the rough into a basic outline. It does NOT refine grain —
 // that's the saw's work. HARD vs LIGHT decides the bite:
-//   Hard  — a fat 0.80 bite. Rips the shape out. Fast, wasteful.
-//   Light — a 0.30 nibble. Slow, careful, safe near the template wall.
+//   Hard  — a fat bite (~2 cubes across). Rips the shape out. Fast, wasteful.
+//   Light — a single-cube nibble. Slow, careful, safe against the interior.
 let brutePower=0;                  // 0 = light tap, 1 = full hard strike
-const BRUTE_LIGHT=0.30, BRUTE_HARD=0.80;
-function bruteRadius(){ return BRUTE_LIGHT+(BRUTE_HARD-BRUTE_LIGHT)*brutePower; }
+// The bite is measured RELATIVE to the struck cube and from ITS centre, not as an absolute
+// world radius off the surface hit. The old absolute 0.30–0.80 over-reached: aimed at a fine
+// waste speck, a 0.30 sphere reached past it and swallowed the fat interior cube it merely
+// touched — so even "light" tore out the core. Scaling by the cube's own size makes light take
+// essentially just the cube you clicked (as small as the finest T1 grain) whatever the tier.
+const BRUTE_LIGHT_K=0.55, BRUTE_HARD_K=2.1;   // × the struck cube's size
+function bruteBiteK(){ return BRUTE_LIGHT_K+(BRUTE_HARD_K-BRUTE_LIGHT_K)*brutePower; }
 let grinding=false, lastGrind=0;
 function grindAt(x,y,now){
-  const r=bruteRadius();
   const cd=(60+140*brutePower)*(activeCore?TIERS[activeCore.tier].durability:1);
   if (now-lastGrind<cd) return;
   const hit=castAt(x,y);
   if (!hit) return;
-  let out=new Set();
   const lh=hitToCore(hit);
-  for (const v of voxels){ if (cellDist(v.cell,lh)<=r) out.add(v.mesh); }
+  // The cube actually under the cursor — anchor the bite here, on its centre.
+  let v0=null, bestD=Infinity;
+  for (const v of voxels){ const d=cellDist(v.cell,lh); if (d<bestD){ bestD=d; v0=v; } }
+  if (!v0) return;
+  const r=v0.cell.size*bruteBiteK();
+  const p0={x:v0.cell.px,y:v0.cell.py,z:v0.cell.pz};   // anchor point (cellDist wants an {x,y,z}, not a cell)
+  // CONNECTED bite only: flood out from the struck cube through cubes whose FACES meet, staying within
+  // r of the anchor. A separate core section that happens to fall inside r but does not touch the struck
+  // cube is left alone — bruting one island must never decimate another across an empty gap the player
+  // carved on purpose. Face adjacency (not edge/corner) is the strict sense that a real gap severs.
+  let out=new Set(); const seen=new Set([v0]); const stack=[v0];
+  while (stack.length){ const a=stack.pop(); out.add(a.mesh);
+    for (const b of voxels){ if (seen.has(b)) continue;
+      if (cellDist(b.cell,p0)>r) continue;                          // inside the bite sphere
+      const gap=Math.hypot(a.cell.px-b.cell.px,a.cell.py-b.cell.py,a.cell.pz-b.cell.pz);
+      if (gap<=(a.cell.size+b.cell.size)*0.5*1.15){ seen.add(b); stack.push(b); }  // faces meet → connected
+    }
+  }
   if (out.size===0) return;
   if (tut.protect){ out=tutAllow(out); if (out.size===0) return; }   // grind the waste around the guarded core; never abort the hold
   if (!tut.on&&!drawPower(0.12+0.3*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
@@ -10072,7 +10092,7 @@ document.getElementById('scribeSlider').oninput=e=>{
 document.getElementById('bruteSlider').oninput=e=>{
   brutePower=parseFloat(e.target.value);
   document.getElementById('bruteLbl').textContent=brutePower>0.66?'Hard':brutePower>0.33?'Medium':'Light';
-  document.getElementById('bruteVal').textContent='bite '+bruteRadius().toFixed(2);
+  document.getElementById('bruteVal').textContent='bite ×'+bruteBiteK().toFixed(1);
 };
 document.getElementById('sawAxisBtn').onclick=()=>{
   sawAxis=sawAxis==='x'?'y':'x';
