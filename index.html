@@ -3064,6 +3064,22 @@ function tutBlocks(set){
   }
   return false;
 }
+// The HELD tools' version of tutBlocks: instead of ABORTING the whole hold the instant the sweep
+// grazes a protected shard (which forced a maddening re-click every time), quietly DROP the guarded
+// shards from the removal set and let the stroke carry on eroding the rest. The core visibly staying
+// intact while everything around it clears IS the feedback, so no nagging message. Same protection
+// predicate as tutBlocks. Returns the allowed subset (may be empty — caller then just skips the tick).
+function tutAllow(set){
+  if (!tut.protect) return set;
+  const out=new Set();
+  for (const v of voxels){
+    if (!set.has(v.mesh)) continue;
+    if (isMatrix(v.cell)) { out.add(v.mesh); continue; }   // dirt/stone: never protected
+    if (!(view==='dig'||inTemplate(v.cell))) out.add(v.mesh); // crystal OUTSIDE the template is waste — fair to trim
+    // else: crystal inside the template (or any crystal at the dig bench) — protected, omit it
+  }
+  return out;
+}
 function spendPotion(verb){
   if (tutBlocks(preview)) return;
   const shed=dissolve(preview);
@@ -3356,7 +3372,7 @@ function sawTick(dt,now){
     const fine=workable.filter(o=>o.v.cell.size<=grainFloor());
     fine.sort((a,b)=>(b.e-a.e)||(b.d-a.d));
     const take=Math.max(SAW_WEAR_MIN,Math.min(SAW_WEAR_MAX,Math.ceil(fine.length*SAW_WEAR_FRAC)));
-    const doomed=fine.slice(0,take).map(o=>o.v.mesh);
+    let doomed=fine.slice(0,take).map(o=>o.v.mesh);
     if (!doomed.length){
       // Distinguish a genuinely empty path from a full voxel budget — the old
       // message blamed the player's aim for what was really an internal cap.
@@ -3365,12 +3381,17 @@ function sawTick(dt,now){
         : 'Nothing in the blade\'s path. Close it further.','warn');
       sawClosing=false; return;                 // no power spent on a whiff
     }
+    // Tutorial guard: the blade may refine the protected core's grain (splitting loses nothing) but must
+    // never WEAR it away. Drop guarded shards from this stroke and keep the blade closing — if that leaves
+    // nothing to wear, just skip the tick rather than aborting the hold (no re-click, no nagging message).
+    if (tut.protect){ const ok=tutAllow(new Set(doomed)); doomed=doomed.filter(m=>ok.has(m)); if (!doomed.length) return; }
     // Shake means DAMAGE. Trimming waste outside the template is the whole point
     // of the bench, so only crystal lost from INSIDE it is worth feeling. Tested
     // before the cut, since those cells are gone afterwards.
+    const doomedSet=new Set(doomed);
     const cutKeeper=fine.slice(0,take)
-      .some(o=>isCrystal(o.v.cell)&&inTemplate(o.v.cell));
-    const worn=dissolve(new Set(doomed));
+      .some(o=>doomedSet.has(o.v.mesh)&&isCrystal(o.v.cell)&&inTemplate(o.v.cell));
+    const worn=dissolve(doomedSet);
     if (!worn){ sawClosing=false; return; }
     drawPower(SAW_POWER);                        // charged: material was worn off
     lastSawCut=now;                             // start the cooldown
@@ -3637,7 +3658,7 @@ function jetAt(x,y,now){
   if (!hit) return;
   const digOnly=(view==='dig');
   const spread=JET_SPREAD[jetTankId()]||0;
-  const inReach=[];
+  let inReach=[];
   if (spread<=0){
     // single-cube rinse: take only the nearest eligible cube to the strike
     let best=null, bestD=Infinity;
@@ -3656,7 +3677,7 @@ function jetAt(x,y,now){
     }
   }
   if (!inReach.length) return;
-  if (tutBlocks(new Set(inReach.map(v=>v.mesh)))){ jetting=false; return; }
+  if (tut.protect){ const ok=tutAllow(new Set(inReach.map(v=>v.mesh))); inReach=inReach.filter(v=>ok.has(v.mesh)); if (!inReach.length) return; }   // rinse the matrix, spare the guarded crystal, keep the hose flowing
   lastJet=now;
   // PASS 1 — tough-but-brittle stone shatters rather than shifting. It survives
   // this hit as fragments; the charge buys the break, not the removal.
@@ -3777,7 +3798,7 @@ function sandAt(cx,cy,now){
   const v=voxels.find(x=>x.mesh===targetMesh);
   if (!v) return;
   const one=new Set([targetMesh]);
-  if (tutBlocks(one)){ sanding=false; return; }
+  if (tut.protect && tutAllow(one).size===0) return;   // guarded cube: skip it but KEEP blasting the rest of the sweep
   const infinite=tut.on||adminOn;
   if (!infinite && tank.sand<=0){
     sanding=false; updateSandBar();
@@ -3838,11 +3859,11 @@ function grindAt(x,y,now){
   if (now-lastGrind<cd) return;
   const hit=castAt(x,y);
   if (!hit) return;
-  const out=new Set();
+  let out=new Set();
   const lh=hitToCore(hit);
   for (const v of voxels){ if (cellDist(v.cell,lh)<=r) out.add(v.mesh); }
   if (out.size===0) return;
-  if (tutBlocks(out)){ grinding=false; return; }
+  if (tut.protect){ out=tutAllow(out); if (out.size===0) return; }   // grind the waste around the guarded core; never abort the hold
   if (!tut.on&&!drawPower(0.12+0.3*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
   lastGrind=now;
   const shed=dissolve(out);
