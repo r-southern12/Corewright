@@ -1518,7 +1518,7 @@ const REAGENT_INFO={
   clay:{label:'Binding clay',depth:'topsoil',note:'grips dirt and lifts it away'},
   salt:{label:'Void salt',depth:'mid seams',note:'stands in columns'},
   mica:{label:'Splitting mica',depth:'mid seams',note:'sheets apart along a plane'},
-  brine:{label:'Deep brine',depth:'deep strata',note:'eats stone, ignores crystal'},
+  brine:{label:'Deep brine',depth:'tier-II band',note:'eats stone, ignores crystal'},
   cinder:{label:'Cinder scale',depth:'fire zones',note:'holds a burn; the ice-ward is forged from it'},
   rime:{label:'Rime salt',depth:'ice zones',note:'drinks heat; only the warded may harvest it'}
 };
@@ -5046,8 +5046,11 @@ function hardnessSpectrum(){
    bonus-cleared. */
 const TILE_TIER={
   [T_DIRT]:1,[T_CLAY]:1,[T_MOSS]:1,[T_COPPER]:1,[T_NODE1]:1,[T_S1]:1,[T_ORE]:1,
-  [T_IRON]:2,[T_MICA]:2,[T_SALT]:2,[T_NODE2]:2,[T_S2]:2,[T_TIN]:2,
-  [T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_S3]:3,[T_RIME]:3
+  [T_IRON]:2,[T_MICA]:2,[T_SALT]:2,[T_NODE2]:2,[T_S2]:2,[T_TIN]:2,[T_BRINE]:2,
+  // Brine is a TIER-II material: it seams the banded-stone (T2) band, so a T2 core set's beyond-100%
+  // bonuses bite it. It was tier 3 while spawning up in the T2 band — a mismatch where the bonus that
+  // should have covered it never did.
+  [T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_S3]:3,[T_RIME]:3
 };
 const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
 // The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
@@ -5147,13 +5150,12 @@ const PLANET_TERRA={
 
     [0.062, d=> d<26 ? T_NODE1 : d<52 ? T_NODE2 : T_NODE3],
     [0.085, d=> d<26 ? T_MOSS : T_SALT],
-    // Deep brine starts at the TOP of the tier-II stone band, not below it — it
-    // was gated on b.s2 (52), which is where tier-III begins, so brine only ever
-    // appeared a whole band deeper than intended. Mica keeps a seam of its own
-    // in the upper half of that band; handing the whole slot to brine would have
-    // removed mica from this planet altogether.
-    [0.10,  d=> d<26 ? T_CLAY : d<39 ? T_MICA : T_BRINE],
-    [0.05,  d=> d<26 ? T_CLAY : T_BRINE],
+    // Brine seams the whole TIER-II stone band and STOPS there: it opens right at the T2 top (26, just
+    // below the T1 soft-stone band) and doesn't spill into the T3 deep-stone band (>=52). It used to only
+    // appear from 39 down — a band and a half too deep. Mica keeps its own thinner seam through the band so
+    // it isn't lost. Below 52 both rolls fall back to the base stone (`base`), keeping the T3 band clean.
+    [0.10,  (d,r,base)=> d<26 ? T_CLAY : d<52 ? T_BRINE : base],
+    [0.05,  (d,r,base)=> d<26 ? T_CLAY : d<52 ? T_MICA  : base],
   ],
   // a Tier-II curtain seals the voidsteel deep: you must forge iron gear to pass
   gates:[ { atDepth:50, tier:2 } ],
@@ -5201,7 +5203,8 @@ const PLANET_FERRIC={
     [0.075, d=> d<46 ? T_IRON : T_VST],
     [0.055, d=> d<24 ? T_NODE1 : d<46 ? T_NODE2 : T_NODE3],
     [0.10,  d=> d<24 ? T_SALT : T_MICA],
-    [0.10,  d=> d<20 ? T_MICA : T_BRINE],
+    // Brine fills the TIER-II band (20..46) and stops at the T3 band, matching its tier-II tag.
+    [0.10,  (d,r,base)=> d<20 ? T_MICA : d<46 ? T_BRINE : base],
   ],
   biomes:[
     // FIRE zone: rare blobs of cinder-rich, brutally hard, damaging rock. Not
