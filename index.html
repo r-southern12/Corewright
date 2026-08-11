@@ -5031,6 +5031,10 @@ const TILE_TIER={
   [T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_S3]:3,[T_RIME]:3
 };
 const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
+// The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
+// these: it calls out the core tier you're set up for and the one rung up, so you can steer toward the
+// cores worth digging rather than being swamped by a ping on every scrap of ore.
+const NODE_TILE={[T_NODE1]:1,[T_NODE2]:2,[T_NODE3]:3};
 const RESOURCE=new Set([T_ORE,T_NODE1,T_NODE2,T_NODE3,T_MOSS,T_SALT,T_CINDER,T_RIME,T_COPPER,T_IRON,T_VST,
   T_CLAY,T_MICA,T_BRINE,T_TIN]);
 // rolled fresh for a new run; loaded from the save when one exists
@@ -6158,6 +6162,11 @@ function drawWorld(now){
 
   const sRange=scanRange();
   if (sRange>0){
+    // The scanner is a CORE finder, not an everything finder. It grades its ping by the drill core's tier:
+    // the tier you're set up to mine reads as a bright crystal signal, the next rung up as a distinct violet
+    // one (so you can see where to grow), and all other ore — off-tier cores and every metal/reagent seam —
+    // gets only a faint dot so it informs without drowning the two signals that matter.
+    const curT=drill.core?drill.core.tier:1, nxtT=curT+1;
     const pxT=Math.floor(player.x), pyT=Math.floor(player.y-0.5);
     const R=Math.ceil(sRange);
     for (let dx=-R;dx<=R;dx++) for (let dy=-R;dy<=R;dy++){
@@ -6168,10 +6177,20 @@ function drawWorld(now){
       if (!RESOURCE.has(t)) continue;
       if (getSeen(x,y)&&SELF_LIT.has(t)) continue;
       const px2=x*TS-camX, py2=y*TS-camY;
-      const ping=0.25+0.35*Math.abs(Math.sin(now*0.004+(x+y)*0.7));
-      ctx.strokeStyle=`rgba(139,124,246,${ping})`;
-      ctx.lineWidth=2;
-      ctx.strokeRect(px2+TS*0.3,py2+TS*0.3,TS*0.4,TS*0.4);
+      const nodeTier=NODE_TILE[t];
+      if (nodeTier===curT || nodeTier===nxtT){
+        // a core worth steering to: a bright, pulsing box, its colour saying WHICH tier
+        const ping=0.4+0.4*Math.abs(Math.sin(now*0.004+(x+y)*0.7));
+        ctx.strokeStyle = nodeTier===curT ? `rgba(79,227,193,${ping})` : `rgba(181,139,246,${ping})`;
+        ctx.lineWidth=2;
+        ctx.strokeRect(px2+TS*0.25,py2+TS*0.25,TS*0.5,TS*0.5);
+        ctx.fillStyle = nodeTier===curT ? `rgba(79,227,193,${ping*0.5})` : `rgba(181,139,246,${ping*0.5})`;
+        ctx.fillRect(px2+TS*0.42,py2+TS*0.42,TS*0.16,TS*0.16);
+      } else {
+        // everything else: a faint, steady speck — present, but not shouting
+        ctx.fillStyle='rgba(150,160,190,0.18)';
+        ctx.fillRect(px2+TS*0.44,py2+TS*0.44,TS*0.12,TS*0.12);
+      }
     }
   }
 
