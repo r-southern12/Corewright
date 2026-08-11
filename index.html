@@ -5045,14 +5045,16 @@ function hardnessSpectrum(){
 /* Which strata tier a tile belongs to — the refinement ladder is TIER-LOCKED:
    a matched pair of cores only ever grants its bonuses against its own tier's
    stone. Gate walls and bedrock carry no tier on purpose; they must never be
-   bonus-cleared. */
+   bonus-cleared.
+   The ladder is DIRT-then-STONE: T1 is the dirt level ONLY (topsoil + its ores),
+   T2 is the first/soft-stone band, and T3 is the banded + deep stone below it. So
+   a T1 set's beyond-100% multi-break clears dirt but NOT stone; you need a T2 set
+   to chew the soft stone, a T3 set for the hard stone. Each band's cores, metals
+   and reagents carry the band's tier so the bonus lands on everything in reach. */
 const TILE_TIER={
-  [T_DIRT]:1,[T_CLAY]:1,[T_MOSS]:1,[T_COPPER]:1,[T_NODE1]:1,[T_S1]:1,[T_ORE]:1,
-  [T_IRON]:2,[T_MICA]:2,[T_SALT]:2,[T_NODE2]:2,[T_S2]:2,[T_TIN]:2,[T_BRINE]:2,
-  // Brine is a TIER-II material: it seams the banded-stone (T2) band, so a T2 core set's beyond-100%
-  // bonuses bite it. It was tier 3 while spawning up in the T2 band — a mismatch where the bonus that
-  // should have covered it never did.
-  [T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_S3]:3,[T_RIME]:3
+  [T_DIRT]:1,[T_CLAY]:1,[T_MOSS]:1,[T_COPPER]:1,[T_NODE1]:1,[T_ORE]:1,
+  [T_S1]:2,[T_IRON]:2,[T_SALT]:2,[T_NODE2]:2,[T_TIN]:2,
+  [T_S2]:3,[T_S3]:3,[T_MICA]:3,[T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_RIME]:3
 };
 const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
 // The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
@@ -5145,19 +5147,20 @@ const PLANET_TERRA={
     [0.155, T_MOSS,   0],
     [0.20,  T_CLAY,   0],
   ],
+  // TIER BANDS: T1 = dirt (0..7, topsoil rolls above). T2 = the SOFT-STONE band (7..26): iron, tin, node2,
+  // salt. T3 = the banded (26..52) + deep (52+) stone: voidsteel, node3, mica, and brine. Every roll is keyed
+  // so a material's tier matches the band it sits in — a T1 set only multi-breaks dirt, T2 the soft stone, T3
+  // the hard stone. (T1 cores come from the topsoil node1 seam; they don't seam the stone.)
   deep:[
     [0.035, oreVein(0.035)],
-    [0.055, d=> d<52 ? T_IRON : T_VST],
-    [0.028, d=> (d>=26&&d<52) ? T_TIN : T_S2],   // tin runs with iron in the T2 band
-
-    [0.062, d=> d<26 ? T_NODE1 : d<52 ? T_NODE2 : T_NODE3],
-    [0.085, d=> d<26 ? T_MOSS : T_SALT],
-    // Brine seams the whole TIER-II stone band and STOPS there: it opens right at the T2 top (26, just
-    // below the T1 soft-stone band) and doesn't spill into the T3 deep-stone band (>=52). It used to only
-    // appear from 39 down — a band and a half too deep. Mica keeps its own thinner seam through the band so
-    // it isn't lost. Below 52 both rolls fall back to the base stone (`base`), keeping the T3 band clean.
-    [0.10,  (d,r,base)=> d<26 ? T_CLAY : d<52 ? T_BRINE : base],
-    [0.05,  (d,r,base)=> d<26 ? T_CLAY : d<52 ? T_MICA  : base],
+    [0.055, d=> d<26 ? T_IRON  : T_VST],                    // iron seams the soft-stone (T2) band; voidsteel below (T3)
+    [0.028, (d,r,base)=> d<26 ? T_TIN : base],              // tin runs with iron in the T2 band
+    [0.062, d=> d<26 ? T_NODE2 : T_NODE3],                  // T2 cores in the soft stone, T3 cores in the hard stone
+    [0.085, d=> d<26 ? T_SALT  : T_MICA],                   // salt (T2) up top; mica (T3) in the hard stone
+    // Brine opens JUST BELOW the soft-stone (T2) level and seams the banded (T3) band, stopping at the deep
+    // band. A tier-III material in a tier-III band — right where "just after the stone level" put it.
+    [0.10,  (d,r,base)=> (d>=26 && d<52) ? T_BRINE : base],
+    [0.05,  (d,r,base)=> (d>=26 && d<52) ? T_MICA  : base],
   ],
   // a Tier-II curtain seals the voidsteel deep: you must forge iron gear to pass
   gates:[ { atDepth:50, tier:2 } ],
@@ -5200,13 +5203,16 @@ const PLANET_FERRIC={
     [0.09,  T_NODE1, 2],
     [0.16,  T_CLAY,  0],
   ],
+  // TIER BANDS: T1 = dirt (0..5). T2 = soft stone (5..20): iron, node2, salt. T3 = banded (20..46) + deep
+  // stone: voidsteel, node3, mica, brine. (Iron also seams the topsoil here — the iron-rich crust — but the
+  // deep progression follows the bands.)
   deep:[
     [0.045, oreVein(0.045)],
-    [0.075, d=> d<46 ? T_IRON : T_VST],
-    [0.055, d=> d<24 ? T_NODE1 : d<46 ? T_NODE2 : T_NODE3],
-    [0.10,  d=> d<24 ? T_SALT : T_MICA],
-    // Brine fills the TIER-II band (20..46) and stops at the T3 band, matching its tier-II tag.
-    [0.10,  (d,r,base)=> d<20 ? T_MICA : d<46 ? T_BRINE : base],
+    [0.075, d=> d<20 ? T_IRON  : T_VST],                    // iron in the soft-stone (T2) band; voidsteel below (T3)
+    [0.055, d=> d<20 ? T_NODE2 : T_NODE3],                  // T2 cores in the soft stone, T3 cores deeper
+    [0.10,  d=> d<20 ? T_SALT  : T_MICA],                   // salt (T2) up top; mica (T3) in the hard stone
+    // Brine opens just below the soft-stone (T2) level and seams the banded (T3) band.
+    [0.10,  (d,r,base)=> (d>=20 && d<46) ? T_BRINE : base],
   ],
   biomes:[
     // FIRE zone: rare blobs of cinder-rich, brutally hard, damaging rock. Not
