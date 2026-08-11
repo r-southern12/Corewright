@@ -1932,6 +1932,11 @@ function loadCore(core){
   clearBench();
   mineral.rotation.set(0,0,0); mineral.position.set(0,0,0);
   gx=0; gy=0; gz=0;
+  // Bring back the template THIS core was shaped toward, so clamping a different core doesn't leave the
+  // previous core's template selected (the reported bug). Alignment is keyed per-core-per-template, so
+  // restoreAlign() pulls the right offset/orientation only once comp matches the core again.
+  if (core.comp) comp=core.comp;
+  { const cc=document.querySelector('#compChip b'); if (cc) cc.textContent=COMPONENTS[comp].label; }
   restoreAlign();                          // bring back this core's saved offset + socket orientation
   for (const c of core.cells) addVoxelMesh(c,core.polish);
   voxelizeTemplate(); buildGhost(); buildOcc(); cullInterior(); setPreview(new Set());
@@ -10180,6 +10185,9 @@ document.getElementById('cleaveBtn').onclick=()=>{
 };
 document.getElementById('compChip').onclick=()=>{
   comp=COMP_ORDER[(COMP_ORDER.indexOf(comp)+1)%COMP_ORDER.length];
+  // Pin the choice to the core so it's remembered next time this core is clamped in. A CLEAN core's
+  // silhouette is already committed (it gates seating), so cycling only previews it — don't re-tag it.
+  if (activeCore && !activeCore.clean) activeCore.comp=comp;
   restoreAlign();                    // this template's own saved offset + orientation (or centred, upright)
   document.querySelector('#compChip b').textContent=COMPONENTS[comp].label;
   voxelizeTemplate(); buildGhost(); placeGizmo(); applyCorePivot(); refreshTint(); liveOutput();
