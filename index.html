@@ -849,7 +849,7 @@
         <button id="glowBtn">off</button></div>
       <div class="card"><div class="info">Protect template<div class="sub">shield crystal inside the template from every tool, as in the tutorial</div></div>
         <button id="protectBtn">off</button></div>
-      <div class="card"><div class="info">Super sandblast<div class="sub">the sandblast blows away a whole scoop per hit instead of refining one cube</div></div>
+      <div class="card"><div class="info">Super sandblast<div class="sub">the sandblast works a whole scoop per hit — breaks coarse grain down, blows away the finest — instead of one cube</div></div>
         <button id="superSandBtn">off</button></div>
       <div class="card"><div class="info">Unlock everything<div class="sub">all machines, 9999 dust, full reagents &amp; metals</div></div>
         <button id="unlockBtn">apply</button></div>
@@ -3810,19 +3810,26 @@ function sandAt(cx,cy,now){
   if (!v) return;
   const one=new Set([targetMesh]);
   if (protectOn() && tutAllow(one).size===0) return;   // guarded cube: skip it but KEEP blasting the rest of the sweep
-  // ADMIN super-sand: instead of refining a single cube, blow away a whole scoop around the strike — fast
-  // cleanup for testing. Still spares protected template crystal (so it pairs with the protect toggle) and
-  // obeys the same cooldown. Reach scales with the tier's grain so the cube count stays roughly comparable.
+  // ADMIN super-sand: the SAME sandblast mechanic (refine coarse grain a step finer; only grain already at
+  // the floor is worn away) applied to a whole scoop at once, not a single cube — fast cleanup for testing.
+  // It must NOT act like the brute: it never dissolves coarse crystal, it breaks it down first. Still spares
+  // protected template crystal so it pairs with the protect toggle. Reach scales with the tier's grain.
   if (adminSuperSand){
     const reach=(activeCore?TIERS[activeCore.tier].vox:0.55)*3;
     const p0={x:v.cell.px,y:v.cell.py,z:v.cell.pz};
-    let blast=new Set();
-    for (const vv of voxels){ if (cellDist(vv.cell,p0)<=reach) blast.add(vv.mesh); }
-    if (protectOn()) blast=tutAllow(blast);
-    if (blast.size){ lastSand=now; const shed=dissolve(blast);
-      if (shed>0){ targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,6,0.18);
-        refreshTint(); liveOutput(); updateGrainHud(); updateSandBar();
-        say(`Super-sand — ${shed} shard${shed>1?'s':''} blasted away.`); } }
+    let scoop=[]; for (const vv of voxels){ if (cellDist(vv.cell,p0)<=reach) scoop.push(vv); }
+    if (protectOn()){ const ok=tutAllow(new Set(scoop.map(s=>s.mesh))); scoop=scoop.filter(s=>ok.has(s.mesh)); }
+    if (!scoop.length) return;
+    lastSand=now;
+    const gf=grainFloor();
+    const fine=scoop.filter(s=>s.cell.size<=gf);      // at the floor → worn away, exactly as a single hit would
+    const coarse=scoop.filter(s=>s.cell.size>gf);     // above the floor → SPLIT a step finer, not removed
+    const blown=fine.length ? dissolve(new Set(fine.map(s=>s.mesh))) : 0;
+    let refined=0;
+    for (const s of coarse){ if (voxels.length+7>MAX_VOXELS) break; if (!s.mesh.parent) continue; splitOneCube(s); refined++; }
+    targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,6,0.16);
+    cullInterior(); refreshTint(); liveOutput(); updateGrainHud(); updateSandBar();
+    say(`Super-sand — ${refined} broken down, ${blown} of the finest blown away.`);
     return;
   }
   const infinite=tut.on||adminOn;
@@ -9717,7 +9724,7 @@ document.getElementById('protectBtn').onclick=()=>{
 document.getElementById('superSandBtn').onclick=()=>{
   adminSuperSand=!adminSuperSand;
   _adminToggleStyle(document.getElementById('superSandBtn'),adminSuperSand);
-  say(adminSuperSand?'Super sandblast ON — each hit blasts a whole scoop away.'
+  say(adminSuperSand?'Super sandblast ON — each hit works a whole scoop: coarse grain broken down, finest blown away.'
                     :'Sandblast back to normal — one cube refined per hit.');
 };
 function adminSpawn(tier){
