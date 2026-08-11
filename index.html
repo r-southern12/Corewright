@@ -4745,8 +4745,10 @@ function seatCore(){
     return;                                  // core is NOT consumed
   }
   // It fit its template and was finished — from here it belongs in WROUGHT storage (and stays wrought even
-  // if later cuts leave a stray cube outside), until it's seated into equipment.
+  // if later cuts leave a stray cube outside), until it's seated into equipment. Record the template it was
+  // finished/seated with so clamping it back restores THAT template, not the Power Cell default.
   activeCore.wrought=true;
+  activeCore.comp=comp;
   const pct=Math.round(s.output*100), tier=activeCore.tier;
   const el=t=>document.getElementById(t);
   el('seatPct').textContent=pct+'%';
@@ -10227,9 +10229,11 @@ document.getElementById('cleaveBtn').onclick=()=>{
 };
 document.getElementById('compChip').onclick=()=>{
   comp=COMP_ORDER[(COMP_ORDER.indexOf(comp)+1)%COMP_ORDER.length];
-  // Pin the choice to the core so it's remembered next time this core is clamped in. A CLEAN core's
-  // silhouette is already committed (it gates seating), so cycling only previews it — don't re-tag it.
-  if (activeCore && !activeCore.clean) activeCore.comp=comp;
+  // Pin the choice to the core so it's remembered next time it's clamped in. This MUST record on clean
+  // cores too — you pick a core's template AFTER cleaning it (cleaning is the dig bench; shaping is here),
+  // so gating this on !clean meant an anvil/drill core never recorded its template and fell back to the
+  // Power Cell default. The template is a free choice until the core is seated; re-picking just re-tags it.
+  if (activeCore) activeCore.comp=comp;
   restoreAlign();                    // this template's own saved offset + orientation (or centred, upright)
   document.querySelector('#compChip b').textContent=COMPONENTS[comp].label;
   voxelizeTemplate(); buildGhost(); placeGizmo(); applyCorePivot(); refreshTint(); liveOutput();
