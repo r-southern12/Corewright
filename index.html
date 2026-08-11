@@ -847,6 +847,10 @@
         </div></div>
       <div class="card"><div class="info">Guaranteed glow<div class="sub">spawned cores always carry a centred hotspot</div></div>
         <button id="glowBtn">off</button></div>
+      <div class="card"><div class="info">Protect template<div class="sub">shield crystal inside the template from every tool, as in the tutorial</div></div>
+        <button id="protectBtn">off</button></div>
+      <div class="card"><div class="info">Super sandblast<div class="sub">the sandblast blows away a whole scoop per hit instead of refining one cube</div></div>
+        <button id="superSandBtn">off</button></div>
       <div class="card"><div class="info">Unlock everything<div class="sub">all machines, 9999 dust, full reagents &amp; metals</div></div>
         <button id="unlockBtn">apply</button></div>
       <div class="card"><div class="info">Strip matrix<div class="sub">clears the host rock off the clamped core</div></div>
@@ -2591,6 +2595,10 @@ let devOn=false;
    untouched when it's off.
    ============================================================ */
 let adminOn=false, adminGlow=false;
+// adminProtect: force the "protect crystal inside the template" guard on even outside the tutorial, so a
+// carve can be tested with the core shielded. adminSuperSand: the sandblast blows away a big scoop of cubes
+// per hit instead of refining one, for fast cleanup. Both are admin-only test switches.
+let adminProtect=false, adminSuperSand=false;
 function devTick(){
   if (!devOn) return;
   const el=document.getElementById('dev');
@@ -3042,10 +3050,13 @@ function dissolve(set){
   }
   return beforeN-voxels.length;
 }
-// During the tutorial, a cut that would eat template material is REFUSED.
+// Whether template-crystal protection is currently active: on during the tutorial, or forced on by the
+// admin toggle for testing a shielded carve.
+function protectOn(){ return tut.protect || adminProtect; }
+// During the tutorial (or with the admin guard on), a cut that would eat template material is REFUSED.
 // Returns true if the action should be blocked.
 function tutBlocks(set){
-  if (!tut.protect) return false;
+  if (!protectOn()) return false;
   // The tutorial guards the CRYSTAL from careless cuts, but host matrix (dirt
   // and stone) is always fair game — that's the whole point of the excavation
   // bench. At the bench the template is irrelevant; anywhere else, protect
@@ -3070,7 +3081,7 @@ function tutBlocks(set){
 // intact while everything around it clears IS the feedback, so no nagging message. Same protection
 // predicate as tutBlocks. Returns the allowed subset (may be empty — caller then just skips the tick).
 function tutAllow(set){
-  if (!tut.protect) return set;
+  if (!protectOn()) return set;
   const out=new Set();
   for (const v of voxels){
     if (!set.has(v.mesh)) continue;
@@ -3384,7 +3395,7 @@ function sawTick(dt,now){
     // Tutorial guard: the blade may refine the protected core's grain (splitting loses nothing) but must
     // never WEAR it away. Drop guarded shards from this stroke and keep the blade closing — if that leaves
     // nothing to wear, just skip the tick rather than aborting the hold (no re-click, no nagging message).
-    if (tut.protect){ const ok=tutAllow(new Set(doomed)); doomed=doomed.filter(m=>ok.has(m)); if (!doomed.length) return; }
+    if (protectOn()){ const ok=tutAllow(new Set(doomed)); doomed=doomed.filter(m=>ok.has(m)); if (!doomed.length) return; }
     // Shake means DAMAGE. Trimming waste outside the template is the whole point
     // of the bench, so only crystal lost from INSIDE it is worth feeling. Tested
     // before the cut, since those cells are gone afterwards.
@@ -3436,7 +3447,7 @@ function scribeAt(x,y,now){
   const crystal=struck.filter(v=>isCrystal(v.cell));
   // In the tutorial the crystal is protected: if the strike would hit crystal,
   // block it and don't shatter anything. Matrix is always free to chip.
-  if (crystal.length && tut.protect){
+  if (crystal.length && protectOn()){
     tutBlocks(new Set(crystal.map(v=>v.mesh)));   // shows the "aim for the rock" hint
     if (matrix.length){                            // still clear any matrix in reach
       lastScribe=now;
@@ -3677,7 +3688,7 @@ function jetAt(x,y,now){
     }
   }
   if (!inReach.length) return;
-  if (tut.protect){ const ok=tutAllow(new Set(inReach.map(v=>v.mesh))); inReach=inReach.filter(v=>ok.has(v.mesh)); if (!inReach.length) return; }   // rinse the matrix, spare the guarded crystal, keep the hose flowing
+  if (protectOn()){ const ok=tutAllow(new Set(inReach.map(v=>v.mesh))); inReach=inReach.filter(v=>ok.has(v.mesh)); if (!inReach.length) return; }   // rinse the matrix, spare the guarded crystal, keep the hose flowing
   lastJet=now;
   // PASS 1 — tough-but-brittle stone shatters rather than shifting. It survives
   // this hit as fragments; the charge buys the break, not the removal.
@@ -3798,7 +3809,22 @@ function sandAt(cx,cy,now){
   const v=voxels.find(x=>x.mesh===targetMesh);
   if (!v) return;
   const one=new Set([targetMesh]);
-  if (tut.protect && tutAllow(one).size===0) return;   // guarded cube: skip it but KEEP blasting the rest of the sweep
+  if (protectOn() && tutAllow(one).size===0) return;   // guarded cube: skip it but KEEP blasting the rest of the sweep
+  // ADMIN super-sand: instead of refining a single cube, blow away a whole scoop around the strike — fast
+  // cleanup for testing. Still spares protected template crystal (so it pairs with the protect toggle) and
+  // obeys the same cooldown. Reach scales with the tier's grain so the cube count stays roughly comparable.
+  if (adminSuperSand){
+    const reach=(activeCore?TIERS[activeCore.tier].vox:0.55)*3;
+    const p0={x:v.cell.px,y:v.cell.py,z:v.cell.pz};
+    let blast=new Set();
+    for (const vv of voxels){ if (cellDist(vv.cell,p0)<=reach) blast.add(vv.mesh); }
+    if (protectOn()) blast=tutAllow(blast);
+    if (blast.size){ lastSand=now; const shed=dissolve(blast);
+      if (shed>0){ targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,6,0.18);
+        refreshTint(); liveOutput(); updateGrainHud(); updateSandBar();
+        say(`Super-sand — ${shed} shard${shed>1?'s':''} blasted away.`); } }
+    return;
+  }
   const infinite=tut.on||adminOn;
   if (!infinite && tank.sand<=0){
     sanding=false; updateSandBar();
@@ -3883,7 +3909,7 @@ function grindAt(x,y,now){
     }
   }
   if (out.size===0) return;
-  if (tut.protect){ out=tutAllow(out); if (out.size===0) return; }   // grind the waste around the guarded core; never abort the hold
+  if (protectOn()){ out=tutAllow(out); if (out.size===0) return; }   // grind the waste around the guarded core; never abort the hold
   if (!tut.on&&!drawPower(0.12+0.3*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
   lastGrind=now;
   const shed=dissolve(out);
@@ -9679,6 +9705,20 @@ document.getElementById('glowBtn').onclick=()=>{
   adminGlow=!adminGlow;
   document.getElementById('glowBtn').textContent=adminGlow?'ON':'off';
   say(adminGlow?'Spawned cores will carry a centred glow.':'Spawned cores roll their glow normally.');
+};
+function _adminToggleStyle(btn,on){ btn.textContent=on?'ON':'off'; btn.style.borderColor=on?'var(--amber)':''; btn.style.color=on?'var(--amber)':''; }
+document.getElementById('protectBtn').onclick=()=>{
+  adminProtect=!adminProtect;
+  _adminToggleStyle(document.getElementById('protectBtn'),adminProtect);
+  if (view==='cleave'||view==='brute'||view==='facet'||view==='polish'||view==='dig') refreshTint();
+  say(adminProtect?'Template protection ON — every tool spares crystal inside the template.'
+                  :'Template protection off — tools cut freely again.');
+};
+document.getElementById('superSandBtn').onclick=()=>{
+  adminSuperSand=!adminSuperSand;
+  _adminToggleStyle(document.getElementById('superSandBtn'),adminSuperSand);
+  say(adminSuperSand?'Super sandblast ON — each hit blasts a whole scoop away.'
+                    :'Sandblast back to normal — one cube refined per hit.');
 };
 function adminSpawn(tier){
   const core=makeCore((Math.random()*2**31)|0,tier);
