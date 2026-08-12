@@ -1288,6 +1288,12 @@ const CORE_HUES=[
   {key:'lime',   base:0x6fae2f, glow:0x9fe04c}
 ];
 function coreHue(core){ return CORE_HUES[core.hueIdx||0]; }
+// A world crystal IS the core you will mine out of it: the cell fixes a
+// deterministic seed, so the hue in the wall is the hue that lands in your pack.
+function nodeCoreSeed(x,y){ let h=(Math.imul(x,73856093)^Math.imul(y,19349663)^WORLD_SEED)|0; h=Math.imul(h^h>>>15,2246822519); h^=h>>>13; return h>>>0; }
+// The hue index a core with this seed resolves to. MUST mirror generateCells:
+// mulberry32(seed) burns two draws (the hotspot seedA/seedB) before the hue draw.
+function worldCoreHueIdx(seed){ const r=mulberry32(seed>>>0); r(); r(); return Math.floor(r()*CORE_HUES.length); }
 function generateCells(core){
   const T=TIERS[core.tier], rnd=mulberry32(core.seed);
   const vox=T.vox, half=T.halfN, R=half*vox;
@@ -5867,8 +5873,8 @@ function breakTile(tx,ty,t,silent){
   for (let i=0;i<8;i++)
     particles.push({x:tx+0.5,y:ty+0.5,vx:(Math.random()-0.5)*0.16,
       vy:-Math.random()*0.14,life:26,col});
-  tileYield(t,silent);
-  // 200% rung: matching-tier material gives up a second yield
+  tileYield(t,silent,nodeCoreSeed(tx,ty));    // a node yields the very core drawn in the wall
+  // 200% rung: matching-tier material gives up a second yield (a fresh, distinct core)
   if (setChargeFor(t)>=SET_YIELD) tileYield(t,true);
 }
 /* Toughness -> yield. A soft bronze bit (low tin) shatters ore less and gives a
@@ -5879,7 +5885,7 @@ function bitYieldChance(){
   if (!b||b.tin===undefined) return 0;
   return (1-tinHardness(b.tin))*0.5;      // up to +50% chance at min tin
 }
-function tileYield(t,silent){
+function tileYield(t,silent,coreSeed){
   if (t===T_WALL){ if(!silent) say('The gate-wall gives way. The path below opens.','good'); }
   else if (t===T_ORE){ dust+=4; updateMeters(); if(!silent) say('Ore seam crushed to dust. +4◈'); }
   else if (t===T_COPPER){ metals.copper+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Copper ore pried loose.'); }
@@ -5888,7 +5894,7 @@ function tileYield(t,silent){
   else if (t===T_VST){ metals.vst++; dust+=2; updateMeters(); say('Voidsteel. The pack feels heavier than it should.','good'); }
   else if (t>=T_NODE1&&t<=T_NODE3){
     const tier=t-T_NODE1+1;
-    inventory.push(makeCore((Math.random()*2**31)|0,tier));
+    inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
     say(`Raw core recovered — ${TIERS[tier].name}. It hums in the pack.`,'good');
   }
   else if (t===T_MOSS){ reagents.moss++; if(!silent) say('Lumen moss gathered.'); }
@@ -6226,6 +6232,48 @@ function tileBaseFor(x,y,t,TS){
   }
   return e.cv;
 }
+// ---------- world crystal core (live over the baked rock) ----------
+// An unwrought gemstone grown INTO the host rock: a faceted cluster sitting in a
+// dark socket, its bloom bleeding into the surrounding stone. Drawn live (not
+// baked) so the halo spills across tile borders and can breathe. Tier sets the
+// size, shard count and brilliance; the cell seed sets the arrangement (variation)
+// and the hue. Ported from docs/overworld-overhaul/mockups/cores.html.
+function coreFacetPalette(H){
+  const clamp=v=>Math.max(0,Math.min(255,v|0));
+  const gr=H.glow>>16&255, gg=H.glow>>8&255, gb=H.glow&255, br=H.base>>16&255, bg=H.base>>8&255, bb=H.base&255;
+  const hx=(r,q,z)=>'#'+((1<<24)|(clamp(r)<<16)|(clamp(q)<<8)|clamp(z)).toString(16).slice(1);
+  return [ hx(gr+(255-gr)*0.75,gg+(255-gg)*0.75,gb+(255-gb)*0.75),   // WHT bright highlight
+           hx(gr,gg,gb),                                             // BRT lit facet (glow)
+           hx(br,bg,bb),                                             // MID body (base)
+           hx(br*0.42,bg*0.42,bb*0.42),                              // DK shadow facet
+           gr+','+gg+','+gb ];                                       // rgb for the bloom
+}
+function coreXtal(cx,cy,r,rot,P){const WHT=P[0],BRT=P[1],MID=P[2],DK=P[3];
+  const lp=[[0,-1.0],[0.58,-0.45],[0.62,0.4],[0,1.0],[-0.62,0.4],[-0.58,-0.45]];
+  const Q=lp.map(([lx,ly])=>{const rx=lx*r*0.9,ry=ly*r;return[cx+Math.cos(rot)*rx-Math.sin(rot)*ry,cy+Math.sin(rot)*rx+Math.cos(rot)*ry];});
+  ctx.fillStyle=BRT;ctx.beginPath();ctx.moveTo(Q[0][0],Q[0][1]);ctx.lineTo(Q[5][0],Q[5][1]);ctx.lineTo(Q[4][0],Q[4][1]);ctx.lineTo(Q[3][0],Q[3][1]);ctx.closePath();ctx.fill();
+  ctx.fillStyle=DK;ctx.beginPath();ctx.moveTo(Q[0][0],Q[0][1]);ctx.lineTo(Q[1][0],Q[1][1]);ctx.lineTo(Q[2][0],Q[2][1]);ctx.lineTo(Q[3][0],Q[3][1]);ctx.closePath();ctx.fill();
+  ctx.fillStyle=WHT;ctx.beginPath();ctx.moveTo(Q[0][0],Q[0][1]);ctx.lineTo(Q[5][0],Q[5][1]);ctx.lineTo(Q[1][0],Q[1][1]);ctx.closePath();ctx.fill();
+  ctx.fillStyle=MID;ctx.globalAlpha=0.5;ctx.beginPath();ctx.moveTo(Q[4][0],Q[4][1]);ctx.lineTo(Q[3][0],Q[3][1]);ctx.lineTo(Q[2][0],Q[2][1]);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+  ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.lineWidth=Math.max(1,r*0.05);ctx.beginPath();ctx.moveTo(Q[0][0],Q[0][1]);ctx.lineTo(Q[3][0],Q[3][1]);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1;ctx.beginPath();Q.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0],p[1]));ctx.closePath();ctx.stroke();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(Q[0][0],Q[0][1],r*0.09,0,7);ctx.fill();}
+function drawWorldCore(px,py,TS,tier,H,seed,now){
+  const rng=terrMul((seed*2654435761)>>>0), P=coreFacetPalette(H), RGB=P[4];
+  const cfg={1:{main:0.22,n:1,glow:0.34},2:{main:0.27,n:3,glow:0.48},3:{main:0.31,n:6,glow:0.62}}[tier];
+  const main=TS*cfg.main, cx=px+TS/2, cy=py+TS/2, pulse=0.82+0.18*Math.sin(now*0.004+seed*0.11);
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,main*1.9);            // bloom, bleeds into neighbours
+  gl.addColorStop(0,`rgba(${RGB},${cfg.glow*pulse})`); gl.addColorStop(1,`rgba(${RGB},0)`);
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,main*1.9,0,7); ctx.fill(); ctx.restore();
+  ctx.fillStyle='rgba(6,8,16,0.5)'; ctx.beginPath(); ctx.arc(cx,cy,main*1.12,0,7); ctx.fill();   // dark socket -> reads embedded
+  const shards=[];
+  for (let i=0;i<cfg.n;i++){const an=rng()*6.28,d=main*(0.55+rng()*0.55),sz=main*(0.34+rng()*0.32),ro=(rng()-0.5)*1.6;shards.push([cx+Math.cos(an)*d,cy+Math.sin(an)*d,sz,ro]);}
+  shards.sort((a,b)=>a[1]-b[1]);
+  for (const s of shards) if (s[1]<cy) coreXtal(s[0],s[1],s[2],s[3],P);
+  coreXtal(cx,cy,main,(rng()-0.5)*0.5,P);                               // the dominant central stone
+  for (const s of shards) if (s[1]>=cy) coreXtal(s[0],s[1],s[2],s[3],P);
+  if (tier>=3){ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=`rgba(255,255,255,${0.5*pulse})`;for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(cx+(rng()-0.5)*main,cy+(rng()-0.5)*main,Math.max(1,TS*0.04),0,7);ctx.fill();}ctx.restore();}
+}
 function drawWorld(now){
   vpSize();
   const w=world2d.width=Math.round(VW), h=world2d.height=Math.round(VH);
@@ -6292,26 +6340,8 @@ function drawWorld(now){
         ctx.arc(px+ox-TS*0.03,py+oy-TS*0.03,TS*0.03,0,7); ctx.fill();
       }
     } else if (t>=T_NODE1&&t<=T_NODE3){
-      const i=t-T_NODE1, c=['#4FE3C1','#8B7CF6','#F5C86A'][i], dc=['#1f9c86','#5b4bb0','#c99a3c'][i],
-            rgb=['79,227,193','139,124,246','245,200,106'][i];
-      const pulse=0.55+0.35*Math.sin(now*0.005+x*2), mx=px+TS/2, my=py+TS/2;
-      // bloom halo — the crystal lights the rock around it
-      const bl=ctx.createRadialGradient(mx,my,TS*0.05,mx,my,TS*0.62);
-      bl.addColorStop(0,`rgba(${rgb},${0.45*pulse})`); bl.addColorStop(1,`rgba(${rgb},0)`);
-      ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=bl;
-      ctx.beginPath(); ctx.arc(mx,my,TS*0.62,0,7); ctx.fill(); ctx.restore();
-      // faceted gem: a lit-to-shadow gradient across the diamond
-      const gg=ctx.createLinearGradient(px+TS*0.2,py+TS*0.14,px+TS*0.8,py+TS*0.86);
-      gg.addColorStop(0,'#ffffff'); gg.addColorStop(0.32,c); gg.addColorStop(1,dc);
-      ctx.save(); ctx.globalAlpha=0.85+0.15*pulse; ctx.fillStyle=gg;
-      ctx.beginPath(); ctx.moveTo(mx,py+TS*0.1); ctx.lineTo(px+TS*0.84,my); ctx.lineTo(mx,py+TS*0.9); ctx.lineTo(px+TS*0.16,my); ctx.closePath(); ctx.fill();
-      // refraction facets + a moving specular glint
-      ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=Math.max(1,TS*0.02);
-      ctx.beginPath(); ctx.moveTo(mx,py+TS*0.1); ctx.lineTo(mx,py+TS*0.9); ctx.moveTo(px+TS*0.16,my); ctx.lineTo(px+TS*0.84,my); ctx.stroke();
-      const gl=0.5+0.5*Math.sin(now*0.004+x*3);
-      ctx.fillStyle=`rgba(255,255,255,${0.35+0.5*gl})`;
-      ctx.beginPath(); ctx.arc(px+TS*(0.36+0.1*gl),py+TS*0.34,TS*0.05,0,7); ctx.fill();
-      ctx.restore();
+      const seed=nodeCoreSeed(x,y);
+      drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now);
     } else if (t===T_MOSS){
       ctx.fillStyle='#6fdc8f';
       for (let s=0;s<3;s++)
