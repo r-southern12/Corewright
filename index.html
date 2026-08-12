@@ -6196,12 +6196,14 @@ function drawWorld(now){
     ctx.fillRect(px,py,TS,TS);
     ctx.fillStyle=`rgba(255,255,255,${0.02+j*0.05})`;
     ctx.fillRect(px,py,TS,TS);
-    ctx.fillStyle='rgba(255,255,255,0.07)';
-    ctx.fillRect(px,py,TS,2);
-    ctx.fillStyle='rgba(0,0,0,0.25)';
-    ctx.fillRect(px,py+TS-2,TS,2);
-    if (tileAt(x+0.5,y-0.5)===T_AIR&&y-surfaceY[x]<3){
-      ctx.fillStyle='#3f7d63'; ctx.fillRect(px,py,TS,Math.max(3,TS*0.18));
+    // CARVED-STONE BEVEL: a milled top-left highlight and bottom-right shadow so each block reads as CUT,
+    // not painted flat. A tile with open air above additionally catches a warm rim of light on its top face.
+    const bev=Math.max(2,TS*0.08);
+    ctx.fillStyle='rgba(255,255,255,0.07)'; ctx.fillRect(px,py,TS,bev); ctx.fillRect(px,py,bev,TS);
+    ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(px,py+TS-bev,TS,bev); ctx.fillRect(px+TS-bev,py,bev,TS);
+    if (getTile(x,y-1)===T_AIR){
+      ctx.fillStyle='rgba(255,238,205,0.26)'; ctx.fillRect(px,py,TS,Math.max(2,TS*0.13));      // lit exposed edge
+      if (y-surfaceY[x]<3){ ctx.fillStyle='#3f7d63'; ctx.fillRect(px,py,TS,Math.max(3,TS*0.18)); }  // topsoil crust
     }
     if (t===T_ORE){
       ctx.fillStyle='#E8A33D';
@@ -6210,21 +6212,33 @@ function drawWorld(now){
         ctx.fillRect(px+ox,py+oy,TS*0.12,TS*0.12);
       }
     } else if (t===T_COPPER||t===T_IRON||t===T_VST||t===T_TIN){
-      ctx.fillStyle=t===T_COPPER?'#c97a4a':t===T_IRON?'#aeb8cc':t===T_TIN?'#cdd2dc':'#7a6ad0';
+      const mc=t===T_COPPER?'#c97a4a':t===T_IRON?'#aeb8cc':t===T_TIN?'#cdd2dc':'#7a6ad0';
       for (let s=0;s<3;s++){
         const ox=(hash2(x*3+s,y)*0.6+0.2)*TS, oy=(hash2(x,y*3+s)*0.6+0.2)*TS;
-        ctx.beginPath();
-        ctx.arc(px+ox,py+oy,TS*0.09,0,7); ctx.fill();
+        ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(px+ox,py+oy,TS*0.1,0,7); ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.beginPath();          // metallic specular
+        ctx.arc(px+ox-TS*0.03,py+oy-TS*0.03,TS*0.03,0,7); ctx.fill();
       }
     } else if (t>=T_NODE1&&t<=T_NODE3){
-      const cols=['#4FE3C1','#8B7CF6','#F5C86A'];
-      const c=cols[t-T_NODE1], pulse=0.55+0.35*Math.sin(now*0.005+x*2);
-      ctx.save(); ctx.globalAlpha=pulse;
-      ctx.fillStyle=c;
-      ctx.beginPath();
-      ctx.moveTo(px+TS/2,py+TS*0.12); ctx.lineTo(px+TS*0.82,py+TS/2);
-      ctx.lineTo(px+TS/2,py+TS*0.88); ctx.lineTo(px+TS*0.18,py+TS/2);
-      ctx.closePath(); ctx.fill();
+      const i=t-T_NODE1, c=['#4FE3C1','#8B7CF6','#F5C86A'][i], dc=['#1f9c86','#5b4bb0','#c99a3c'][i],
+            rgb=['79,227,193','139,124,246','245,200,106'][i];
+      const pulse=0.55+0.35*Math.sin(now*0.005+x*2), mx=px+TS/2, my=py+TS/2;
+      // bloom halo — the crystal lights the rock around it
+      const bl=ctx.createRadialGradient(mx,my,TS*0.05,mx,my,TS*0.62);
+      bl.addColorStop(0,`rgba(${rgb},${0.45*pulse})`); bl.addColorStop(1,`rgba(${rgb},0)`);
+      ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=bl;
+      ctx.beginPath(); ctx.arc(mx,my,TS*0.62,0,7); ctx.fill(); ctx.restore();
+      // faceted gem: a lit-to-shadow gradient across the diamond
+      const gg=ctx.createLinearGradient(px+TS*0.2,py+TS*0.14,px+TS*0.8,py+TS*0.86);
+      gg.addColorStop(0,'#ffffff'); gg.addColorStop(0.32,c); gg.addColorStop(1,dc);
+      ctx.save(); ctx.globalAlpha=0.85+0.15*pulse; ctx.fillStyle=gg;
+      ctx.beginPath(); ctx.moveTo(mx,py+TS*0.1); ctx.lineTo(px+TS*0.84,my); ctx.lineTo(mx,py+TS*0.9); ctx.lineTo(px+TS*0.16,my); ctx.closePath(); ctx.fill();
+      // refraction facets + a moving specular glint
+      ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=Math.max(1,TS*0.02);
+      ctx.beginPath(); ctx.moveTo(mx,py+TS*0.1); ctx.lineTo(mx,py+TS*0.9); ctx.moveTo(px+TS*0.16,my); ctx.lineTo(px+TS*0.84,my); ctx.stroke();
+      const gl=0.5+0.5*Math.sin(now*0.004+x*3);
+      ctx.fillStyle=`rgba(255,255,255,${0.35+0.5*gl})`;
+      ctx.beginPath(); ctx.arc(px+TS*(0.36+0.1*gl),py+TS*0.34,TS*0.05,0,7); ctx.fill();
       ctx.restore();
     } else if (t===T_MOSS){
       ctx.fillStyle='#6fdc8f';
@@ -6308,7 +6322,10 @@ function drawWorld(now){
     if (depthT>1&&!SELF_LIT.has(t)){
       const d=Math.hypot(x+0.5-player.x,y+0.5-(player.y-0.5));
       const dark=Math.min(0.93,Math.max(0,(d-2.2)/6)+Math.min(0.55,depthT*0.012));
-      ctx.fillStyle=`rgba(4,6,14,${dark})`;
+      // the deep fog takes a cool TIER hue, so descending through the bands shifts the mood: neutral T1
+      // topsoil, a cool cast through the T2 soft-stone band, a deep indigo through the T3 hard stone.
+      const ti=TILE_TIER[t]||1;
+      ctx.fillStyle = ti>=3 ? `rgba(11,7,24,${dark})` : ti>=2 ? `rgba(6,10,22,${dark})` : `rgba(4,6,14,${dark})`;
       ctx.fillRect(px,py,TS,TS);
     }
   }
