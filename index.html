@@ -6047,105 +6047,118 @@ function _rr(c,x,y,w,h,r){ r=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
 // a chest phial, a headlamp beam thrown into the dark, rim light, and a contact shadow. Everything is drawn
 // in a feet-anchored, forward-facing local frame (mirror for facing) so the animation stays cheap. Replaces
 // the five flat placeholder rectangles.
+/* The explorer. Drawn with the feet at py and the helmet crown at about -0.92·S,
+   so the whole figure fits INSIDE one block instead of towering ~1.3 blocks over
+   its own collision box (which is what read as "too tall"). A chunky hardsuit with
+   a slightly oversized dome — bigger head reads far better than realistic
+   proportions at ~30px. No idle bob (the old breathing sine looked like a nervous
+   twitch); only a tiny per-step bounce while walking. */
 function drawHero(px,py,now){
   const S=TS, f=player.frame, face=player.face;
-  const walking=player.anim==='walk', mining=player.anim==='mine', hovering=(player.anim==='hoverUp'||keys.jump);
-  const bob = walking?(f%2?1:-1)*S*0.03 : Math.sin(now*0.003)*S*0.02;
+  const walking=player.anim==='walk', mining=player.anim==='mine';
+  const thrusting=(player.anim==='hoverUp'||keys.jump);     // actively firing feet jets
+  const airborne=!player.onGround;                          // off the floor at all
+  const step=walking?(f%2?1:-1):0;
+  const bob=walking?step*S*0.02:0;                          // tiny walk-step bounce ONLY — no idle breathing
+  const stride=walking?step*S*0.05:0;
   const flick=(player.iFrames>0&&Math.floor(player.iFrames*10)%2)?0.4:1;
   const pulse=0.5+0.5*Math.sin(now*0.004);
-  const stride=walking?(f%2?1:-1)*S*0.07:0;
   const coreCol=pulse>0.5?'#4FE3C1':'#8B7CF6';
   const STEEL_D='#1b2133', STEEL='#333d5a', STEEL_L='#6b779e', TRIM='#4FE3C1', BRASS='#E8A33D';
   ctx.save(); ctx.globalAlpha=flick;
 
-  // contact shadow (screen space, not mirrored)
-  ctx.save(); ctx.translate(px,py); ctx.scale(1,0.34);
-  ctx.fillStyle='rgba(0,0,0,0.42)'; ctx.beginPath(); ctx.arc(0,0,S*0.36,0,7); ctx.fill(); ctx.restore();
+  // ---- contact shadow: a soft radial pool cast on the floor the feet rest on.
+  //      Only when GROUNDED — a shadow under a hovering figure read as if it were
+  //      still stuck to the ground. Screen space (not mirrored, doesn't bob). ----
+  if (!airborne){
+    ctx.save(); ctx.translate(px,py+S*0.02); ctx.scale(1,0.26);
+    const sh=ctx.createRadialGradient(0,0,1,0,0,S*0.30);
+    sh.addColorStop(0,'rgba(0,0,0,0.5)'); sh.addColorStop(0.7,'rgba(0,0,0,0.26)'); sh.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sh; ctx.beginPath(); ctx.arc(0,0,S*0.30,0,7); ctx.fill(); ctx.restore();
+  }
 
   ctx.translate(px,py+bob);
   if (face<0) ctx.scale(-1,1);   // draw facing +x, mirror for left
 
   // ---- headlamp beam thrown forward into the dark ----
-  const lampX=S*0.14, lampY=-S*1.28;
-  const beam=ctx.createLinearGradient(lampX,lampY,lampX+S*2.6,lampY+S*0.4);
+  const lampX=S*0.13, lampY=-S*0.80;
+  const beam=ctx.createLinearGradient(lampX,lampY,lampX+S*2.4,lampY);
   beam.addColorStop(0,'rgba(255,240,205,0.30)'); beam.addColorStop(0.5,'rgba(255,236,190,0.10)'); beam.addColorStop(1,'rgba(255,236,190,0)');
   ctx.fillStyle=beam; ctx.beginPath();
-  ctx.moveTo(lampX,lampY); ctx.lineTo(lampX+S*2.6,lampY-S*0.55); ctx.lineTo(lampX+S*2.6,lampY+S*1.15); ctx.closePath(); ctx.fill();
+  ctx.moveTo(lampX,lampY); ctx.lineTo(lampX+S*2.4,lampY-S*0.5); ctx.lineTo(lampX+S*2.4,lampY+S*1.0); ctx.closePath(); ctx.fill();
 
   // ---- back reactor (behind torso) ----
-  const rgx=-S*0.02, rgy=-S*0.82;
-  const rg=ctx.createRadialGradient(rgx,rgy,1,rgx,rgy,S*0.5);
+  const rgx=-S*0.06, rgy=-S*0.44;
+  const rg=ctx.createRadialGradient(rgx,rgy,1,rgx,rgy,S*0.36);
   rg.addColorStop(0,coreCol); rg.addColorStop(0.4,'rgba(120,220,200,0.22)'); rg.addColorStop(1,'rgba(120,220,200,0)');
-  ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rgx,rgy,S*0.5,0,7); ctx.fill();
-  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.36,-S*0.98,S*0.2,S*0.5,S*0.05); ctx.fill();       // canister
-  ctx.fillStyle=coreCol; ctx.beginPath(); ctx.arc(-S*0.26,-S*0.78,S*0.06+S*0.015*pulse,0,7); ctx.fill();  // core orb
-  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=Math.max(1,S*0.02);
-  for (let i=0;i<2;i++){ ctx.beginPath(); ctx.moveTo(-S*0.33,-S*0.9+i*S*0.12); ctx.lineTo(-S*0.21,-S*0.9+i*S*0.12); ctx.stroke(); }
+  ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rgx,rgy,S*0.36,0,7); ctx.fill();
+  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.30,-S*0.58,S*0.13,S*0.30,S*0.04); ctx.fill();     // canister
+  ctx.fillStyle=coreCol; ctx.beginPath(); ctx.arc(-S*0.235,-S*0.45,S*0.045+S*0.012*pulse,0,7); ctx.fill();  // core orb
 
   // ---- legs / boots ----
-  for (const [lx,dir] of [[-S*0.11,-1],[S*0.06,1]]){
+  for (const [lx,dir] of [[-S*0.12,-1],[S*0.005,1]]){
     ctx.fillStyle=STEEL_D;
-    _rr(ctx,lx+dir*stride*0.5,-S*0.52,S*0.15,S*0.4,S*0.05); ctx.fill();      // greave
+    _rr(ctx,lx+dir*stride*0.5,-S*0.30,S*0.13,S*0.22,S*0.045); ctx.fill();      // greave
     ctx.fillStyle=STEEL;
-    _rr(ctx,lx+dir*stride*0.5-S*0.01,-S*0.16,S*0.19,S*0.16,S*0.05); ctx.fill(); // boot
+    _rr(ctx,lx+dir*stride*0.5-S*0.01,-S*0.10,S*0.16,S*0.10,S*0.045); ctx.fill(); // boot
     ctx.fillStyle=TRIM; ctx.globalAlpha=flick*0.7;
-    _rr(ctx,lx+dir*stride*0.5-S*0.01,-S*0.05,S*0.19,S*0.03,S*0.015); ctx.fill(); ctx.globalAlpha=flick;  // sole glow
+    _rr(ctx,lx+dir*stride*0.5-S*0.01,-S*0.03,S*0.16,S*0.025,S*0.012); ctx.fill(); ctx.globalAlpha=flick;  // sole glow
   }
-  // hover thruster plumes
-  if (hovering){ for (const lx of [-S*0.05,S*0.13]){
-    const pl=ctx.createLinearGradient(lx,-S*0.02,lx,S*0.4*(0.7+0.3*(f%2)));
+  // hover thruster plumes — only while actively thrusting
+  if (thrusting){ for (const lx of [-S*0.06,S*0.07]){
+    const plen=S*0.34*(0.7+0.3*(f%2));
+    const pl=ctx.createLinearGradient(lx,0,lx,plen);
     pl.addColorStop(0,'rgba(255,200,120,0.85)'); pl.addColorStop(1,'rgba(232,120,50,0)');
-    ctx.fillStyle=pl; ctx.beginPath(); ctx.moveTo(lx-S*0.06,0); ctx.lineTo(lx+S*0.08,0);
-    ctx.lineTo(lx+S*0.01,S*0.4*(0.7+0.3*(f%2))); ctx.closePath(); ctx.fill(); } }
+    ctx.fillStyle=pl; ctx.beginPath(); ctx.moveTo(lx-S*0.05,0); ctx.lineTo(lx+S*0.07,0);
+    ctx.lineTo(lx+S*0.01,plen); ctx.closePath(); ctx.fill(); } }
 
   // ---- torso (hardsuit chest) ----
-  const tg=ctx.createLinearGradient(0,-S*1.04,0,-S*0.5);
+  const tg=ctx.createLinearGradient(0,-S*0.58,0,-S*0.26);
   tg.addColorStop(0,STEEL_L); tg.addColorStop(0.4,STEEL); tg.addColorStop(1,STEEL_D);
-  ctx.fillStyle=tg; _rr(ctx,-S*0.22,-S*1.04,S*0.44,S*0.56,S*0.13); ctx.fill();
-  ctx.strokeStyle=TRIM; ctx.lineWidth=Math.max(1,S*0.025); ctx.globalAlpha=flick*0.8;
-  ctx.beginPath(); ctx.moveTo(0,-S*1.0); ctx.lineTo(0,-S*0.56); ctx.stroke(); ctx.globalAlpha=flick;  // spine seam
+  ctx.fillStyle=tg; _rr(ctx,-S*0.20,-S*0.58,S*0.40,S*0.34,S*0.11); ctx.fill();
+  ctx.strokeStyle=TRIM; ctx.lineWidth=Math.max(1,S*0.022); ctx.globalAlpha=flick*0.8;
+  ctx.beginPath(); ctx.moveTo(0,-S*0.56); ctx.lineTo(0,-S*0.30); ctx.stroke(); ctx.globalAlpha=flick;  // spine seam
   // chest phial gauge
-  ctx.fillStyle='rgba(10,14,26,0.9)'; _rr(ctx,S*0.03,-S*0.92,S*0.12,S*0.2,S*0.04); ctx.fill();
-  const ph=ctx.createLinearGradient(0,-S*0.74,0,-S*0.9); ph.addColorStop(0,BRASS); ph.addColorStop(1,'#ffe08a');
-  ctx.fillStyle=ph; _rr(ctx,S*0.05,-S*0.74-S*0.12,S*0.08,S*0.12,S*0.03); ctx.fill();
+  ctx.fillStyle='rgba(10,14,26,0.9)'; _rr(ctx,S*0.02,-S*0.52,S*0.11,S*0.16,S*0.035); ctx.fill();
+  const ph=ctx.createLinearGradient(0,-S*0.50,0,-S*0.38); ph.addColorStop(0,'#ffe08a'); ph.addColorStop(1,BRASS);
+  ctx.fillStyle=ph; _rr(ctx,S*0.04,-S*0.49,S*0.07,S*0.10,S*0.025); ctx.fill();
 
   // ---- back arm ----
-  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.24,-S*0.98,S*0.11,S*0.4,S*0.05); ctx.fill();
+  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.22,-S*0.55,S*0.10,S*0.26,S*0.045); ctx.fill();
   // ---- shoulder ----
-  ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(S*0.04,-S*1.0,S*0.13,0,7); ctx.fill();
-  ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(S*0.04,-S*1.0,S*0.1,0,7); ctx.fill();
+  ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.12,0,7); ctx.fill();
+  ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.09,0,7); ctx.fill();
 
   // ---- tool arm + drill ----
-  const reach=mining?(0.30+(f%3)*0.08):0.24;
-  const hx=S*(0.14+reach), hy=-S*0.62;
-  ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.12; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(S*0.1,-S*0.92); ctx.lineTo(hx,hy); ctx.stroke();
-  ctx.strokeStyle='#8a93b8'; ctx.lineWidth=S*0.09;                                 // drill shaft
-  ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(hx+S*0.26,hy+S*0.04); ctx.stroke();
+  const reach=mining?(0.28+(f%3)*0.07):0.22;
+  const hx=S*(0.12+reach), hy=-S*0.40;
+  ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.11; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(S*0.08,-S*0.52); ctx.lineTo(hx,hy); ctx.stroke();
+  ctx.strokeStyle='#8a93b8'; ctx.lineWidth=S*0.08;                                 // drill shaft
+  ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(hx+S*0.22,hy+S*0.03); ctx.stroke();
   ctx.fillStyle=BRASS; ctx.beginPath();                                            // drill bit
-  ctx.moveTo(hx+S*0.26,hy-S*0.06); ctx.lineTo(hx+S*0.42,hy+S*0.04); ctx.lineTo(hx+S*0.26,hy+S*0.14); ctx.closePath(); ctx.fill();
-  if (mining){ ctx.fillStyle=`rgba(255,220,140,${0.4+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(hx+S*0.42,hy+S*0.04,S*0.1,0,7); ctx.fill(); }
+  ctx.moveTo(hx+S*0.22,hy-S*0.05); ctx.lineTo(hx+S*0.36,hy+S*0.03); ctx.lineTo(hx+S*0.22,hy+S*0.12); ctx.closePath(); ctx.fill();
+  if (mining){ ctx.fillStyle=`rgba(255,220,140,${0.4+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(hx+S*0.36,hy+S*0.03,S*0.09,0,7); ctx.fill(); }
   ctx.lineCap='butt';
 
   // ---- head: helmet dome + visor + face glow ----
-  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.06,-S*1.08,S*0.12,S*0.1,S*0.03); ctx.fill();   // neck
+  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.05,-S*0.62,S*0.10,S*0.08,S*0.025); ctx.fill();   // neck
   // helmet shell
-  ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(0,-S*1.2,S*0.2,Math.PI,0); ctx.lineTo(S*0.2,-S*1.06); ctx.lineTo(-S*0.2,-S*1.06); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(0,-S*0.70,S*0.22,Math.PI,0); ctx.lineTo(S*0.22,-S*0.58); ctx.lineTo(-S*0.22,-S*0.58); ctx.closePath(); ctx.fill();
   // glass dome
-  ctx.fillStyle='rgba(150,215,235,0.16)'; ctx.beginPath(); ctx.arc(0,-S*1.2,S*0.17,Math.PI,0); ctx.lineTo(S*0.17,-S*1.08); ctx.lineTo(-S*0.17,-S*1.08); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(150,215,235,0.16)'; ctx.beginPath(); ctx.arc(0,-S*0.70,S*0.185,Math.PI,0); ctx.lineTo(S*0.185,-S*0.585); ctx.lineTo(-S*0.185,-S*0.585); ctx.closePath(); ctx.fill();
   // inner face glow
-  const fg=ctx.createRadialGradient(S*0.05,-S*1.16,1,S*0.05,-S*1.16,S*0.16);
+  const fg=ctx.createRadialGradient(S*0.05,-S*0.68,1,S*0.05,-S*0.68,S*0.17);
   fg.addColorStop(0,'rgba(126,240,218,0.55)'); fg.addColorStop(1,'rgba(126,240,218,0)');
-  ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(S*0.05,-S*1.16,S*0.16,0,7); ctx.fill();
+  ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(S*0.05,-S*0.68,S*0.17,0,7); ctx.fill();
   // visor crescent
-  ctx.fillStyle='#7ef0da'; ctx.beginPath(); ctx.ellipse(S*0.06,-S*1.17,S*0.09,S*0.05,-0.3,0,7); ctx.fill();
+  ctx.fillStyle='#7ef0da'; ctx.beginPath(); ctx.ellipse(S*0.06,-S*0.70,S*0.10,S*0.055,-0.3,0,7); ctx.fill();
   // headlamp emitter
-  ctx.fillStyle='#fff4d0'; ctx.beginPath(); ctx.arc(lampX,lampY,S*0.045,0,7); ctx.fill();
+  ctx.fillStyle='#fff4d0'; ctx.beginPath(); ctx.arc(lampX,lampY,S*0.05,0,7); ctx.fill();
 
   // ---- rim light (top edge, cheap approximation) ----
   ctx.strokeStyle='rgba(180,220,255,0.5)'; ctx.lineWidth=Math.max(1,S*0.03);
-  ctx.beginPath(); ctx.arc(0,-S*1.2,S*0.2,Math.PI*1.05,Math.PI*1.5); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-S*0.2,-S*1.02); ctx.lineTo(-S*0.12,-S*1.03); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,-S*0.70,S*0.22,Math.PI*1.05,Math.PI*1.5); ctx.stroke();
 
   ctx.restore();
 }
