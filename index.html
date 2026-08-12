@@ -6129,40 +6129,49 @@ function drawHero(px,py,now){
   ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.12,0,7); ctx.fill();
   ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.09,0,7); ctx.fill();
 
-  // ---- tool arm + MINING DRILL: a chunky motor housing carrying a fat conical
-  //      auger bit with spiral flutes — a drill, not a stick. The whole assembly
-  //      plunges a little on each mining frame instead of the arm telescoping. ----
-  const plunge=mining?(f%3)*S*0.04:0;
-  const ax=S*0.13, ay=-S*0.40;                                    // gripping hand
+  // ---- tool arm + MINING DRILL: chunky motor housing + fat fluted auger bit —
+  //      a drill, not a stick. It PIVOTS at the fist to point at the tile being
+  //      mined (down/up/forward), plunging along that axis; the hot bite-point and
+  //      debris are drawn in the drill's own rotated frame so they stay pinned to
+  //      the tip whatever direction it faces. ----
+  const ax=S*0.13, ay=-S*0.40;                                    // gripping fist = pivot
   ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.12; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(S*0.06,-S*0.52); ctx.lineTo(ax,ay); ctx.stroke(); ctx.lineCap='butt';
   ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(ax,ay,S*0.08,0,7); ctx.fill();  // fist
-  const dx=ax+S*0.02+plunge, dcy=ay+S*0.03;                       // drill axis start / centreline
-  // motor housing (fat cylinder with a cap band)
-  const hg=ctx.createLinearGradient(dx,dcy-S*0.12,dx,dcy+S*0.12);
+  // aim toward the mined tile; face flips x so the local (possibly mirrored) frame agrees
+  let drillAng=0.12;
+  if (mining && mine){
+    const dxm=(mine.tx+0.5)-player.x, dym=(mine.ty+0.5)-(player.y-0.45);
+    drillAng=Math.max(-1.55,Math.min(1.55,Math.atan2(dym,dxm*(face||1))));
+  }
+  const plunge=mining?(f%3)*S*0.045:0;
+  ctx.save(); ctx.translate(ax,ay); ctx.rotate(drillAng);
+  const d0=S*0.02+plunge;                                         // housing start along the drill axis (centreline y=0)
+  const hg=ctx.createLinearGradient(d0,-S*0.12,d0,S*0.12);
   hg.addColorStop(0,'#9aa3bd'); hg.addColorStop(0.45,STEEL); hg.addColorStop(1,STEEL_D);
-  ctx.fillStyle=hg; _rr(ctx,dx,dcy-S*0.12,S*0.22,S*0.24,S*0.06); ctx.fill();
+  ctx.fillStyle=hg; _rr(ctx,d0,-S*0.12,S*0.22,S*0.24,S*0.06); ctx.fill();
   ctx.strokeStyle=TRIM; ctx.lineWidth=Math.max(1,S*0.02); ctx.globalAlpha=flick*0.7;
-  ctx.beginPath(); ctx.moveTo(dx+S*0.06,dcy-S*0.10); ctx.lineTo(dx+S*0.06,dcy+S*0.10); ctx.stroke(); ctx.globalAlpha=flick;  // motor vent
-  ctx.fillStyle=STEEL_D; ctx.fillRect(dx+S*0.22,dcy-S*0.11,S*0.035,S*0.22);       // chuck collar
+  ctx.beginPath(); ctx.moveTo(d0+S*0.06,-S*0.10); ctx.lineTo(d0+S*0.06,S*0.10); ctx.stroke(); ctx.globalAlpha=flick;  // motor vent
+  ctx.fillStyle=STEEL_D; ctx.fillRect(d0+S*0.22,-S*0.11,S*0.035,S*0.22);         // chuck collar
   // conical fluted auger bit
-  const bx=dx+S*0.255, tip=bx+S*0.40, bh=S*0.115;
-  const bg=ctx.createLinearGradient(bx,dcy-bh,bx,dcy+bh);
+  const bx=d0+S*0.255, tip=bx+S*0.40, bh=S*0.115;
+  const bg=ctx.createLinearGradient(bx,-bh,bx,bh);
   bg.addColorStop(0,'#ffe0a0'); bg.addColorStop(0.5,BRASS); bg.addColorStop(1,'#7d4a12');
-  ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(bx,dcy-bh); ctx.lineTo(tip,dcy); ctx.lineTo(bx,dcy+bh); ctx.closePath(); ctx.fill();
-  // spiral flutes across the cone read it as a screw; they travel while drilling
+  ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(bx,-bh); ctx.lineTo(tip,0); ctx.lineTo(bx,bh); ctx.closePath(); ctx.fill();
+  // travelling spiral flutes read it as a turning screw
   ctx.strokeStyle='rgba(60,35,10,0.85)'; ctx.lineWidth=Math.max(1,S*0.022);
   const sp=mining?((now*0.006)%0.25):0;
   for (let i=0;i<4;i++){ let u=(i/4)+sp; if(u>0.97) u-=1; if(u<0.03) continue;
     const cxp=bx+(tip-bx)*u, sh=bh*(1-u), off=(tip-bx)*0.10;
-    ctx.beginPath(); ctx.moveTo(cxp+off,dcy-sh); ctx.lineTo(cxp-off,dcy+sh); ctx.stroke(); }
-  ctx.fillStyle='rgba(255,248,215,0.9)'; ctx.beginPath(); ctx.arc(bx+S*0.05,dcy-bh*0.45,S*0.022,0,7); ctx.fill();  // catch-light
-  // mining: hot bite point + debris flung off the tip
+    ctx.beginPath(); ctx.moveTo(cxp+off,-sh); ctx.lineTo(cxp-off,sh); ctx.stroke(); }
+  ctx.fillStyle='rgba(255,248,215,0.9)'; ctx.beginPath(); ctx.arc(bx+S*0.05,-bh*0.45,S*0.022,0,7); ctx.fill();  // catch-light
+  // mining: hot bite point + chips sprayed BACK off the tip, all in the drill frame
   if (mining){
-    ctx.fillStyle=`rgba(255,220,140,${0.5+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(tip,dcy,S*0.075,0,7); ctx.fill();
-    for (let i=0;i<5;i++){ const a=(Math.random()-0.5)*1.3, d=S*(0.06+Math.random()*0.22);
-      ctx.fillStyle=`rgba(200,160,95,0.75)`; ctx.fillRect(tip+Math.cos(a)*d,dcy+Math.sin(a)*d,S*0.05,S*0.05); }
+    ctx.fillStyle=`rgba(255,220,140,${0.5+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(tip,0,S*0.075,0,7); ctx.fill();
+    for (let i=0;i<5;i++){ const a=Math.PI+(Math.random()-0.5)*1.8, dd=S*(0.05+Math.random()*0.22);
+      ctx.fillStyle='rgba(200,160,95,0.75)'; ctx.fillRect(tip+Math.cos(a)*dd,Math.sin(a)*dd,S*0.05,S*0.05); }
   }
+  ctx.restore();
 
   // ---- head: helmet dome + visor + face glow ----
   ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.05,-S*0.62,S*0.10,S*0.08,S*0.025); ctx.fill();   // neck
@@ -6252,12 +6261,12 @@ function bakeMetal(c,TS,M,seed){
   // Larger, fewer chunks placed on a jittered 3x3 grid inside an inset margin:
   // spread across the whole interior, held OFF the tile edge, and never bunched
   // in the middle (one chunk per cell, so they can't all pile up centrally).
-  const m=TS*0.22, span=TS-2*m, G=3, cell=span/G;
+  const m=TS*0.20, span=TS-2*m, G=3, cell=span/G;
   for(let gy=0;gy<G;gy++) for(let gx=0;gx<G;gx++){
-    if (rng()<0.18) continue;                                                   // drop a couple -> ~7-9 chunks
+    if (rng()<0.45) continue;                                                   // keep ~4-5 of the 9 cells
     const cx=m+(gx+0.5)*cell+(rng()-0.5)*cell*0.7;
     const cy=m+(gy+0.5)*cell+(rng()-0.5)*cell*0.7;
-    metalChunk(c,cx,cy,TS*(0.09+rng()*0.055),rng()*6.28,M);
+    metalChunk(c,cx,cy,TS*(0.10+rng()*0.06),rng()*6.28,M);                      // a touch larger
   }
 }
 function bakeTile(x,y,t,TS){
@@ -6273,7 +6282,8 @@ function bakeTile(x,y,t,TS){
     const patch=0.82+terrPatch(wx*0.018,wy*0.018)*0.4;      // LARGE regions -> kills copy-paste
     const cr=terrCrack(wx*0.9,wy*0.9), crack=(cr>0.30&&cr<0.345)?0.6:1;   // veins cross borders
     let mm=grain*patch*crack;
-    if (m===2) mm*=0.9+0.1*Math.sin(wy*0.5+terrPatch(wx*0.02,0)*3);       // banded strata (soft stone)
+    // (no periodic strata banding — a sin(wy) term read as ruled lines across the
+    //  stone; the grain+patch fields already give organic, line-free variation)
     let R=base[0]*mm, G=base[1]*mm, B=base[2]*mm;
     if (m===3&&terrFleck(wx*3.5,wy*3.5)>0.83){R+=55;G+=38;B+=105;}        // crystalline flecks (hard rock)
     if (m===1&&terrGrain(wx*3,wy*3+5)>0.82){R*=0.72;G*=0.72;B*=0.72;}     // pebbles (dirt)
@@ -6287,7 +6297,7 @@ function bakeTile(x,y,t,TS){
   const mu=matClass(getTile(x,y-1)), md=matClass(getTile(x,y+1)),
         ml=matClass(getTile(x-1,y)), mr=matClass(getTile(x+1,y));
   if (mu===0){ c.fillStyle='rgba(255,236,205,0.32)'; c.fillRect(0,0,TS,Math.max(3,TS*0.15)); }
-  else if (mu!==m){ c.fillStyle='rgba(0,0,0,0.16)'; c.fillRect(0,0,TS,2); }
+  else if (mu!==m){ c.fillStyle='rgba(0,0,0,0.10)'; c.fillRect(0,0,TS,1); }   // faint tier seam, not a ruled line
   if (md===0){ c.fillStyle='rgba(0,0,0,0.34)'; c.fillRect(0,TS-Math.max(3,TS*0.14),TS,Math.max(3,TS*0.14)); }
   if (ml===0){ c.fillStyle='rgba(255,255,255,0.10)'; c.fillRect(0,0,Math.max(2,TS*0.09),TS); }
   if (mr===0){ c.fillStyle='rgba(0,0,0,0.2)'; c.fillRect(TS-Math.max(2,TS*0.09),0,Math.max(2,TS*0.09),TS); }
