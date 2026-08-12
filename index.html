@@ -5101,7 +5101,7 @@ function column(x){
   return c;
 }
 function getTile(x,y){ if(y<0||y>=WH) return T_S3; return column(x).tiles[y]; }
-function setTile(x,y,v){ if(y<0||y>=WH) return; column(x).tiles[y]=v; }
+function setTile(x,y,v){ if(y<0||y>=WH) return; column(x).tiles[y]=v; invalidateBake(x,y); }  // drop the cell's baked base (and its neighbours' borders)
 function getSeen(x,y){ if(y<0||y>=WH) return 0; return column(x).seen[y]; }
 function setSeen(x,y,v){ if(y<0||y>=WH) return; column(x).seen[y]=v?1:0; }
 function getGate(x,y){ if(y<0||y>=WH) return 0; return column(x).gate[y]; }
@@ -6143,6 +6143,50 @@ function drawHero(px,py,now){
 
   ctx.restore();
 }
+// ---------- overworld tile bake cache ----------
+// The frozen base of every dug tile — flat fill, milled noise, carved bevel, the
+// lit exposed edge and topsoil crust — is deterministic from the cell's type and
+// world coords, so it is baked to a small offscreen canvas ONCE and blitted, not
+// redrawn with a dozen fillRects every frame. Only the STILL parts are cached;
+// animated overlays (crystal pulse, brine, cinder, rime, gate lock), the biome
+// tint, depth fog, scanner and the mine cursor all still draw live on top. This
+// is the scaffold the approved baked-texture terrain grows into: keyed by absolute
+// cell, so mining one tile invalidates that cell, not the whole field.
+// `var` (not const) on purpose: setTile is defined far earlier in the file and
+// calls invalidateBake; a hoisted var reads as undefined before first bake instead
+// of throwing from the const temporal dead zone during world-gen.
+var tileBake=null, tileBakeTS=0;
+function invalidateBake(x,y){
+  if (!tileBake) return;                       // not baked yet (early world-gen)
+  // this cell AND the four around it: a neighbour's exposed-edge/topsoil crust
+  // depends on whether THIS cell is air, so opening one tile restyles its borders
+  tileBake.delete(x+','+y);
+  tileBake.delete((x+1)+','+y); tileBake.delete((x-1)+','+y);
+  tileBake.delete(x+','+(y+1)); tileBake.delete(x+','+(y-1));
+}
+function bakeTile(x,y,t,TS){
+  const cv=document.createElement('canvas'); cv.width=TS; cv.height=TS;
+  const c=cv.getContext('2d'); const j=hash2(x,y);
+  c.fillStyle=TILE_INFO[t].col; c.fillRect(0,0,TS,TS);
+  c.fillStyle=`rgba(255,255,255,${0.02+j*0.05})`; c.fillRect(0,0,TS,TS);
+  const bev=Math.max(2,TS*0.08);
+  c.fillStyle='rgba(255,255,255,0.07)'; c.fillRect(0,0,TS,bev); c.fillRect(0,0,bev,TS);
+  c.fillStyle='rgba(0,0,0,0.28)'; c.fillRect(0,TS-bev,TS,bev); c.fillRect(TS-bev,0,bev,TS);
+  if (getTile(x,y-1)===T_AIR){
+    c.fillStyle='rgba(255,238,205,0.26)'; c.fillRect(0,0,TS,Math.max(2,TS*0.13));      // lit exposed edge
+    if (y-surfaceY[x]<3){ c.fillStyle='#3f7d63'; c.fillRect(0,0,TS,Math.max(3,TS*0.18)); }  // topsoil crust
+  }
+  return cv;
+}
+function tileBaseFor(x,y,t,TS){
+  if (!tileBake||TS!==tileBakeTS){ tileBake=new Map(); tileBakeTS=TS; }  // resize rebakes all
+  const k=x+','+y; let e=tileBake.get(k);
+  if (!e||e.t!==t){                            // cell newly seen or its material changed
+    if (tileBake.size>4000) tileBake.clear();  // infinite world: bound the cache, rebake lazily
+    e={cv:bakeTile(x,y,t,TS),t}; tileBake.set(k,e);
+  }
+  return e.cv;
+}
 function drawWorld(now){
   vpSize();
   const w=world2d.width=Math.round(VW), h=world2d.height=Math.round(VH);
@@ -6191,20 +6235,9 @@ function drawWorld(now){
       continue;
     }
     if (t===T_AIR) continue;
-    const j=hash2(x,y);
-    ctx.fillStyle=TILE_INFO[t].col;
-    ctx.fillRect(px,py,TS,TS);
-    ctx.fillStyle=`rgba(255,255,255,${0.02+j*0.05})`;
-    ctx.fillRect(px,py,TS,TS);
-    // CARVED-STONE BEVEL: a milled top-left highlight and bottom-right shadow so each block reads as CUT,
-    // not painted flat. A tile with open air above additionally catches a warm rim of light on its top face.
-    const bev=Math.max(2,TS*0.08);
-    ctx.fillStyle='rgba(255,255,255,0.07)'; ctx.fillRect(px,py,TS,bev); ctx.fillRect(px,py,bev,TS);
-    ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(px,py+TS-bev,TS,bev); ctx.fillRect(px+TS-bev,py,bev,TS);
-    if (getTile(x,y-1)===T_AIR){
-      ctx.fillStyle='rgba(255,238,205,0.26)'; ctx.fillRect(px,py,TS,Math.max(2,TS*0.13));      // lit exposed edge
-      if (y-surfaceY[x]<3){ ctx.fillStyle='#3f7d63'; ctx.fillRect(px,py,TS,Math.max(3,TS*0.18)); }  // topsoil crust
-    }
+    // Frozen base (fill, milled noise, carved bevel, lit edge, topsoil crust) is
+    // baked per-cell and blitted; the animated overlays below still draw live.
+    ctx.drawImage(tileBaseFor(x,y,t,TS),px,py);
     if (t===T_ORE){
       ctx.fillStyle='#E8A33D';
       for (let s=0;s<4;s++){
