@@ -6247,10 +6247,18 @@ function metalChunk(c,cx,cy,r,rot,M){const WH=M[0],BR=M[1],MD=M[2],DK=M[3];const
 // many small chunks (rng*rng keeps most tiny with the odd catch-light nugget).
 function bakeMetal(c,TS,M,seed){
   const rng=terrMul(seed>>>0);
-  c.strokeStyle='rgba(0,0,0,0.22)'; c.lineWidth=Math.max(1,TS*0.02);
-  for(let v=0;v<3;v++){let px=rng()*TS,py=-4;c.beginPath();c.moveTo(px,py);for(let k=0;k<6;k++){px+=(rng()-0.5)*TS*0.32;py+=TS/5;c.lineTo(px,py);}c.stroke();}
-  const n=22+((rng()*14)|0);
-  for(let i=0;i<n;i++){const cx=rng()*TS,cy=rng()*TS,r=TS*(0.035+rng()*rng()*0.12);metalChunk(c,cx,cy,r,rng()*6.28,M);}
+  c.strokeStyle='rgba(0,0,0,0.16)'; c.lineWidth=Math.max(1,TS*0.02);            // faint host vein, kept subtle
+  for(let v=0;v<2;v++){let px=rng()*TS,py=-4;c.beginPath();c.moveTo(px,py);for(let k=0;k<6;k++){px+=(rng()-0.5)*TS*0.3;py+=TS/5;c.lineTo(px,py);}c.stroke();}
+  // Larger, fewer chunks placed on a jittered 3x3 grid inside an inset margin:
+  // spread across the whole interior, held OFF the tile edge, and never bunched
+  // in the middle (one chunk per cell, so they can't all pile up centrally).
+  const m=TS*0.22, span=TS-2*m, G=3, cell=span/G;
+  for(let gy=0;gy<G;gy++) for(let gx=0;gx<G;gx++){
+    if (rng()<0.18) continue;                                                   // drop a couple -> ~7-9 chunks
+    const cx=m+(gx+0.5)*cell+(rng()-0.5)*cell*0.7;
+    const cy=m+(gy+0.5)*cell+(rng()-0.5)*cell*0.7;
+    metalChunk(c,cx,cy,TS*(0.09+rng()*0.055),rng()*6.28,M);
+  }
 }
 function bakeTile(x,y,t,TS){
   const cv=document.createElement('canvas'); cv.width=TS; cv.height=TS;
