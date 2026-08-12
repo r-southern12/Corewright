@@ -6168,6 +6168,14 @@ const terrGrain=terrNoise(2),terrPatch=terrNoise(6),terrCrack=terrNoise(9),terrF
 // tier table falls back to tier 1 and is covered by its own overlay anyway.
 const TERR_TINT={1:[122,92,58],2:[92,104,132],3:[52,54,92]};
 function matClass(t){ return t===T_AIR ? 0 : (TILE_TIER[t]||1); }
+// Ore metals read as faceted metallic flecks spread THROUGHOUT the host rock (no
+// single nugget, no dust). Four-stop palette per metal: [highlight, lit, body, shadow].
+const METAL_PAL={
+  [T_COPPER]:['#ffd8b0','#d98a52','#a85f30','#5f3418'],
+  [T_TIN]   :['#f4f7fc','#d4d9e2','#a2aab8','#646b7a'],
+  [T_IRON]  :['#e6ebf4','#aab4c8','#6f7a92','#3a4356'],
+  [T_VST]   :['#c9b8ff','#8b7cd0','#5a4b90','#2a2148']
+};
 
 // ---------- overworld tile bake cache ----------
 // The frozen base of every dug tile — flat fill, milled noise, carved bevel, the
@@ -6189,6 +6197,24 @@ function invalidateBake(x,y){
   tileBake.delete(x+','+y);
   tileBake.delete((x+1)+','+y); tileBake.delete((x-1)+','+y);
   tileBake.delete(x+','+(y+1)); tileBake.delete(x+','+(y-1));
+}
+// One faceted metallic chunk: a 6-sided nugget with a lit top facet, a diagonal
+// body gradient and a specular pip on the larger ones. Draws into the passed tile
+// context (metal is baked, not live). Ported from mockups/resources.html chunk().
+function metalChunk(c,cx,cy,r,rot,M){const WH=M[0],BR=M[1],MD=M[2],DK=M[3];const P=[];
+  for(let a=0;a<6;a++){const an=rot+a/6*6.28,rr=r*(0.78+0.28*Math.sin(a*2.3+rot));P.push([cx+Math.cos(an)*rr,cy+Math.sin(an)*rr]);}
+  const g=c.createLinearGradient(cx-r,cy-r,cx+r,cy+r);g.addColorStop(0,BR);g.addColorStop(0.6,MD);g.addColorStop(1,DK);
+  c.fillStyle=g;c.beginPath();P.forEach((p,i)=>c[i?'lineTo':'moveTo'](p[0],p[1]));c.closePath();c.fill();
+  c.fillStyle=WH;c.globalAlpha=0.7;c.beginPath();c.moveTo(cx,cy-r*0.1);c.lineTo(P[4][0],P[4][1]);c.lineTo(P[5][0],P[5][1]);c.closePath();c.fill();c.globalAlpha=1;
+  if(r>2){c.fillStyle='rgba(255,255,255,0.9)';c.beginPath();c.arc(cx-r*0.3,cy-r*0.32,Math.max(1,r*0.18),0,7);c.fill();}}
+// Seed a tile with metal flecks THROUGHOUT: faint dark veins the ore follows, then
+// many small chunks (rng*rng keeps most tiny with the odd catch-light nugget).
+function bakeMetal(c,TS,M,seed){
+  const rng=terrMul(seed>>>0);
+  c.strokeStyle='rgba(0,0,0,0.22)'; c.lineWidth=Math.max(1,TS*0.02);
+  for(let v=0;v<3;v++){let px=rng()*TS,py=-4;c.beginPath();c.moveTo(px,py);for(let k=0;k<6;k++){px+=(rng()-0.5)*TS*0.32;py+=TS/5;c.lineTo(px,py);}c.stroke();}
+  const n=22+((rng()*14)|0);
+  for(let i=0;i<n;i++){const cx=rng()*TS,cy=rng()*TS,r=TS*(0.035+rng()*rng()*0.12);metalChunk(c,cx,cy,r,rng()*6.28,M);}
 }
 function bakeTile(x,y,t,TS){
   const cv=document.createElement('canvas'); cv.width=TS; cv.height=TS;
@@ -6221,6 +6247,9 @@ function bakeTile(x,y,t,TS){
   if (md===0){ c.fillStyle='rgba(0,0,0,0.34)'; c.fillRect(0,TS-Math.max(3,TS*0.14),TS,Math.max(3,TS*0.14)); }
   if (ml===0){ c.fillStyle='rgba(255,255,255,0.10)'; c.fillRect(0,0,Math.max(2,TS*0.09),TS); }
   if (mr===0){ c.fillStyle='rgba(0,0,0,0.2)'; c.fillRect(TS-Math.max(2,TS*0.09),0,Math.max(2,TS*0.09),TS); }
+  // metal ore: faceted flecks baked THROUGHOUT the host rock (static, no glow, so
+  // baking into the tile is correct — nothing to bleed past the edge).
+  if (METAL_PAL[t]) bakeMetal(c,TS,METAL_PAL[t],(Math.imul(x,131)^Math.imul(y,17))>>>0);
   return cv;
 }
 function tileBaseFor(x,y,t,TS){
@@ -6335,14 +6364,6 @@ function drawWorld(now){
       for (let s=0;s<4;s++){
         const ox=(hash2(x*4+s,y)*0.7+0.15)*TS, oy=(hash2(x,y*4+s)*0.7+0.15)*TS;
         ctx.fillRect(px+ox,py+oy,TS*0.12,TS*0.12);
-      }
-    } else if (t===T_COPPER||t===T_IRON||t===T_VST||t===T_TIN){
-      const mc=t===T_COPPER?'#c97a4a':t===T_IRON?'#aeb8cc':t===T_TIN?'#cdd2dc':'#7a6ad0';
-      for (let s=0;s<3;s++){
-        const ox=(hash2(x*3+s,y)*0.6+0.2)*TS, oy=(hash2(x,y*3+s)*0.6+0.2)*TS;
-        ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(px+ox,py+oy,TS*0.1,0,7); ctx.fill();
-        ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.beginPath();          // metallic specular
-        ctx.arc(px+ox-TS*0.03,py+oy-TS*0.03,TS*0.03,0,7); ctx.fill();
       }
     } else if (t>=T_NODE1&&t<=T_NODE3){
       const seed=nodeCoreSeed(x,y);
