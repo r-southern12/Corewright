@@ -1,0 +1,63 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05070f}</style></head>
+<body><canvas id="c" width="880" height="260"></canvas>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+function mul(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const CS=180,GAP=8,X0=14;
+function rock(x,y,s){ctx.fillStyle='#12141c';ctx.fillRect(x,y,s,s);const rr=mul(x*131+y*17);for(let i=0;i<90;i++){const cx=x+rr()*s,cy=y+rr()*s,r=3+rr()*5,sh=0.6+rr()*0.5;ctx.fillStyle=`rgb(${40*sh|0},${42*sh|0},${58*sh|0})`;ctx.beginPath();for(let a=0;a<5;a++){const an=a/5*6.28+rr(),rad=r*(0.7+rr()*0.5);ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad);}ctx.closePath();ctx.fill();}}
+function bolt(cx,cy,r,worn){const g=ctx.createRadialGradient(cx-1,cy-1,0.5,cx,cy,r);g.addColorStop(0,worn?'#6a5a44':'#8a94a8');g.addColorStop(1,'#241d16');ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.fill();ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.stroke();}
+function iris(cx,cy,R,TC,RGB,num,s){const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,R);gl.addColorStop(0,`rgba(${RGB},0.9)`);gl.addColorStop(0.5,`rgba(${RGB},0.25)`);gl.addColorStop(1,`rgba(${RGB},0)`);ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2;for(let a=0;a<6;a++){const an=a/6*6.28;ctx.beginPath();ctx.moveTo(cx+Math.cos(an)*R*0.3,cy+Math.sin(an)*R*0.3);ctx.lineTo(cx+Math.cos(an+0.5)*R*0.8,cy+Math.sin(an+0.5)*R*0.8);ctx.stroke();}
+  ctx.font=`bold ${s*0.16}px 'Courier New',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='rgba(0,0,0,0.8)';ctx.fillText(num,cx+1,cy+1);ctx.fillStyle=TC;ctx.fillText(num,cx,cy);ctx.textBaseline='alphabetic';ctx.textAlign='start';}
+function rust(x,y,s,cx,cy,R,seed){const rr=mul(seed);for(let i=0;i<14;i++){const an=rr()*6.28,r0=R*0.5+rr()*R*0.4;ctx.strokeStyle=`rgba(${120+rr()*60|0},${60+rr()*30|0},30,0.5)`;ctx.lineWidth=1+rr()*2;ctx.beginPath();ctx.moveTo(cx+Math.cos(an)*r0,cy+Math.sin(an)*r0);ctx.lineTo(cx+Math.cos(an)*(r0+8+rr()*20),cy+Math.sin(an)*(r0+8+rr()*20));ctx.stroke();}}
+// A) VAULT HATCH — corroded iron blast-door, rust streaks, worn bolts, cracked, glowing tier iris
+function vault(x,y,s,TC,RGB,num){rock(x,y,s);const cx=x+s/2,cy=y+s/2,R=s*0.42;
+  const g=ctx.createRadialGradient(cx-R*0.3,cy-R*0.3,4,cx,cy,R);g.addColorStop(0,'#585047');g.addColorStop(0.5,'#39332c');g.addColorStop(1,'#221e18');ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();
+  ctx.strokeStyle='#181410';ctx.lineWidth=4;ctx.stroke();
+  rust(x,y,s,cx,cy,R,num*7);
+  for(let a=0;a<12;a++){const an=a/12*6.28;bolt(cx+Math.cos(an)*R*0.86,cy+Math.sin(an)*R*0.86,4,true);}
+  ctx.strokeStyle='rgba(0,0,0,0.6)';ctx.lineWidth=2;for(let a=0;a<4;a++){const an=a/4*6.28+0.4;ctx.beginPath();ctx.moveTo(cx+Math.cos(an)*R*0.28,cy+Math.sin(an)*R*0.28);let px=cx,py=cy;for(let k=1;k<=3;k++){px=cx+Math.cos(an+(k%2?0.2:-0.2))*R*0.28*k*1.1;py=cy+Math.sin(an+(k%2?0.2:-0.2))*R*0.28*k*1.1;ctx.lineTo(px,py);}ctx.stroke();}
+  ctx.fillStyle='#14110d';ctx.beginPath();ctx.arc(cx,cy,R*0.3,0,7);ctx.fill();iris(cx,cy,R*0.3,TC,RGB,num,s);}
+// B) GLYPH SLAB — weathered ancient slab carved with dead circuitry glyphs, one live tier rune
+function glyph(x,y,s,TC,RGB,num){rock(x,y,s);const cx=x+s/2,cy=y+s/2;
+  const g=ctx.createLinearGradient(x,y,x+s,y+s);g.addColorStop(0,'#2f3444');g.addColorStop(1,'#161a24');ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(x+s*0.14,y+s*0.1);ctx.lineTo(x+s*0.9,y+s*0.08);ctx.lineTo(x+s*0.88,y+s*0.9);ctx.lineTo(x+s*0.1,y+s*0.92);ctx.closePath();ctx.fill();
+  const rr=mul(num*13);ctx.strokeStyle='rgba(90,100,120,0.6)';ctx.lineWidth=2;for(let i=0;i<7;i++){let px=x+s*(0.2+rr()*0.6),py=y+s*(0.2+rr()*0.6);ctx.beginPath();ctx.moveTo(px,py);for(let k=0;k<3;k++){px+=(rr()<0.5?1:-1)*s*0.12;ctx.lineTo(px,py);py+=(rr()<0.5?1:-1)*s*0.1;ctx.lineTo(px,py);}ctx.stroke();ctx.fillStyle='rgba(120,130,150,0.5)';ctx.beginPath();ctx.arc(px,py,2.5,0,7);ctx.fill();}
+  // chips/cracks
+  ctx.strokeStyle='rgba(0,0,0,0.6)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x+s*0.3,y+s*0.1);ctx.lineTo(x+s*0.42,y+s*0.5);ctx.lineTo(x+s*0.34,y+s*0.9);ctx.stroke();
+  // live central rune
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,s*0.22);gl.addColorStop(0,`rgba(${RGB},0.85)`);gl.addColorStop(1,`rgba(${RGB},0)`);ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,s*0.22,0,7);ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2.5;ctx.beginPath();for(let a=0;a<3;a++){const an=a/3*6.28-1.57;ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*s*0.14,cy+Math.sin(an)*s*0.14);}ctx.closePath();ctx.stroke();ctx.beginPath();ctx.arc(cx,cy,s*0.06,0,7);ctx.stroke();
+  ctx.font=`bold ${s*0.13}px 'Courier New',monospace`;ctx.textAlign='center';ctx.fillStyle=TC;ctx.fillText(num,cx,cy+s*0.30);ctx.textAlign='start';}
+// C) BROKEN MACHINE — exposed decrepit mechanism, dead gauges, rust, one live tier power-cell
+function machine(x,y,s,TC,RGB,num){rock(x,y,s);
+  const g=ctx.createLinearGradient(x,y,x,y+s);g.addColorStop(0,'#39404e');g.addColorStop(1,'#191d26');ctx.fillStyle=g;ctx.fillRect(x+s*0.08,y+s*0.08,s*0.84,s*0.84);
+  ctx.strokeStyle='#0e1118';ctx.lineWidth=3;ctx.strokeRect(x+s*0.08,y+s*0.08,s*0.84,s*0.84);
+  // pipes/conduits
+  ctx.strokeStyle='#4a5162';ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(x+s*0.08,y+s*0.28);ctx.lineTo(x+s*0.3,y+s*0.28);ctx.lineTo(x+s*0.3,y+s*0.5);ctx.stroke();ctx.beginPath();ctx.moveTo(x+s*0.92,y+s*0.7);ctx.lineTo(x+s*0.72,y+s*0.7);ctx.stroke();
+  // dead gauges
+  for(const[gx,gy]of[[0.72,0.26],[0.26,0.74]]){ctx.fillStyle='#0a0d13';ctx.beginPath();ctx.arc(x+gx*s,y+gy*s,s*0.08,0,7);ctx.fill();ctx.strokeStyle='#4a5162';ctx.lineWidth=2;ctx.stroke();ctx.strokeStyle='rgba(90,100,120,0.5)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x+gx*s,y+gy*s);ctx.lineTo(x+gx*s+4,y+gy*s-6);ctx.stroke();}
+  rust(x,y,s,x+s*0.5,y+s*0.5,s*0.3,num*3);
+  // cracked grille over a glowing power cell
+  const cx=x+s/2,cy=y+s/2;const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,s*0.2);gl.addColorStop(0,`rgba(${RGB},0.95)`);gl.addColorStop(0.6,`rgba(${RGB},0.2)`);gl.addColorStop(1,`rgba(${RGB},0)`);ctx.fillStyle=gl;ctx.fillRect(cx-s*0.16,cy-s*0.2,s*0.32,s*0.4);
+  ctx.fillStyle=TC;ctx.fillRect(cx-s*0.09,cy-s*0.16,s*0.18,s*0.32);
+  ctx.fillStyle='#0e1118';for(let i=0;i<5;i++)ctx.fillRect(cx-s*0.16,cy-s*0.2+i*s*0.09,s*0.32,s*0.03);  // grille bars
+  ctx.font=`bold ${s*0.13}px 'Courier New',monospace`;ctx.textAlign='center';ctx.fillStyle='#0a0d13';ctx.fillText(num,cx,cy+s*0.02);ctx.textAlign='start';}
+// D) RECLAIMED — ancient metal ring overgrown with mineral crust + rust, tier crystal grown in as the seal
+function reclaimed(x,y,s,TC,RGB,num){rock(x,y,s);const cx=x+s/2,cy=y+s/2,R=s*0.4;
+  const g=ctx.createRadialGradient(cx,cy,R*0.5,cx,cy,R);g.addColorStop(0,'#2a2018');g.addColorStop(0.7,'#40342a');g.addColorStop(1,'#241c16');ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();ctx.strokeStyle='#5a4a3a';ctx.lineWidth=6;ctx.stroke();
+  rust(x,y,s,cx,cy,R,num*5);
+  // mineral crust lumps around the ring
+  const rr=mul(num*9);for(let i=0;i<10;i++){const an=rr()*6.28,d=R*(0.7+rr()*0.3);ctx.fillStyle=`rgba(${90+rr()*40|0},${110+rr()*30|0},${90+rr()*30|0},0.8)`;ctx.beginPath();ctx.arc(cx+Math.cos(an)*d,cy+Math.sin(an)*d,4+rr()*5,0,7);ctx.fill();}
+  // a tier-coloured crystal grown into the centre
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,R*0.5);gl.addColorStop(0,`rgba(${RGB},0.85)`);gl.addColorStop(1,`rgba(${RGB},0)`);ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,R*0.5,0,7);ctx.fill();
+  const r=R*0.34;const cg=ctx.createLinearGradient(cx-r,cy-r,cx+r,cy+r);cg.addColorStop(0,'#fff');cg.addColorStop(0.4,TC);cg.addColorStop(1,`rgba(${RGB},0.4)`);ctx.fillStyle=cg;ctx.beginPath();ctx.moveTo(cx,cy-r);ctx.lineTo(cx+r*0.6,cy);ctx.lineTo(cx,cy+r);ctx.lineTo(cx-r*0.6,cy);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,cy-r);ctx.lineTo(cx,cy+r);ctx.stroke();
+  ctx.font=`bold ${s*0.12}px 'Courier New',monospace`;ctx.textAlign='center';ctx.fillStyle=TC;ctx.fillText(num,cx,cy+s*0.34);ctx.textAlign='start';}
+ctx.fillStyle='#0a0d16';ctx.fillRect(0,0,W,H);
+const T=['#4FE3C1','79,227,193'],A=['#E8A33D','232,163,61'],V=['#8B7CF6','139,124,246'];
+const items=[['A · Vault hatch',vault,A,'II'],['B · Glyph slab',glyph,V,'III'],['C · Broken machine',machine,T,'I'],['D · Reclaimed ring',reclaimed,A,'II']];
+ctx.font='14px Georgia';ctx.textAlign='center';
+const GAP2=32,X02=20,GY=48;
+items.forEach((o,i)=>{const x=X02+i*(CS+GAP2),y=GY;o[1](x,y,CS,o[2][0],o[2][1],o[3]);ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.strokeRect(x,y,CS,CS);ctx.font='14px Georgia';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='rgba(235,240,250,0.95)';ctx.fillText(o[0],x+CS/2,y-12);});
+ctx.textAlign='start';window.__done=true;
+</script></body></html>

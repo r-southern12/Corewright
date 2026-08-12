@@ -1,0 +1,76 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05070f}</style></head>
+<body><canvas id="c" width="700" height="860"></canvas>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+function mul(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const TS=150,GAP=14,X0=160,Y0=50,ROWH=TS+46;
+// chunky stone tile (the material being mined)
+function rock(x,y,s,seed){ctx.fillStyle='#181a24';ctx.fillRect(x,y,s,s);const rr=mul(seed);
+  for(let i=0;i<80;i++){const cx=x+rr()*s,cy=y+rr()*s,r=3+rr()*6,sh=0.6+rr()*0.5;ctx.fillStyle=`rgb(${52*sh|0},${54*sh|0},${72*sh|0})`;
+    ctx.beginPath();for(let a=0;a<5;a++){const an=a/5*6.28+rr(),rad=r*(0.7+rr()*0.5);ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad);}ctx.closePath();ctx.fill();
+    ctx.fillStyle='rgba(150,165,200,0.14)';ctx.beginPath();ctx.arc(cx-r*0.25,cy-r*0.3,r*0.4,3.4,5.9);ctx.fill();}}
+// ---- A · FRACTURE: spreading cracks + chips flaking off, no ring ----
+function fracture(cx,cy,s,p,seed){const rr=mul(seed);const n=6;
+  ctx.strokeStyle='rgba(10,10,16,0.85)';for(let k=0;k<n;k++){const an=k/n*6.28+rr()*0.3;const len=s*0.5*p;
+    ctx.lineWidth=1+2.5*p;ctx.beginPath();ctx.moveTo(cx,cy);let px=cx,py=cy;const steps=4;
+    for(let j=1;j<=steps;j++){const jl=len*j/steps,ja=an+(rr()-0.5)*0.5;px=cx+Math.cos(ja)*jl;py=cy+Math.sin(ja)*jl;ctx.lineTo(px,py);}ctx.stroke();
+    ctx.strokeStyle=`rgba(255,240,210,${0.25*p})`;ctx.lineWidth=1;ctx.stroke();ctx.strokeStyle='rgba(10,10,16,0.85)';}
+  // crumbled dark pit at centre grows with p
+  ctx.fillStyle='rgba(6,7,12,0.9)';ctx.beginPath();for(let a=0;a<9;a++){const an=a/9*6.28,rad=s*0.16*p*(0.7+rr()*0.6);ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad);}ctx.closePath();ctx.fill();
+  // flying chips
+  for(let i=0;i<7;i++){const an=rr()*6.28,d=s*0.3+rr()*s*0.35*p;ctx.fillStyle='#6a6e88';ctx.save();ctx.translate(cx+Math.cos(an)*d,cy+Math.sin(an)*d-p*8);ctx.rotate(rr()*6.28);ctx.fillRect(-2,-2,4,3);ctx.restore();}}
+// ---- B · HOT BORE: glowing molten hole eaten outward + sparks (tier-tinted) ----
+function bore(cx,cy,s,p,TC,RGB){const R=s*0.42*p;
+  const gl=ctx.createRadialGradient(cx,cy,1,cx,cy,R*1.6);gl.addColorStop(0,'#fff');gl.addColorStop(0.35,TC);gl.addColorStop(0.7,`rgba(${RGB},0.5)`);gl.addColorStop(1,`rgba(${RGB},0)`);
+  ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,R*1.6,0,7);ctx.fill();ctx.restore();
+  // dark molten kerf ring
+  ctx.fillStyle='#0a0810';ctx.beginPath();ctx.arc(cx,cy,R*0.72,0,7);ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(cx,cy,R*0.72,0,7);ctx.stroke();
+  const rr=mul((p*97|0)+RGB.length);for(let i=0;i<10;i++){const an=rr()*6.28,d=R*0.72+rr()*s*0.2;ctx.fillStyle=i%2?'#fff':TC;ctx.beginPath();ctx.arc(cx+Math.cos(an)*d,cy+Math.sin(an)*d,1.6,0,7);ctx.fill();}}
+// ---- C · ROTARY BIT: spinning drill head + dust cone + sparks, pit forming ----
+function rotary(cx,cy,s,p,seed){const rr=mul(seed);const by=cy-s*0.1;
+  // pit forming under the bit
+  ctx.fillStyle='rgba(6,7,12,0.85)';ctx.beginPath();ctx.ellipse(cx,cy+s*0.12,s*0.2*p,s*0.08*p,0,0,7);ctx.fill();
+  // dust cone
+  ctx.fillStyle=`rgba(150,150,170,${0.25+0.2*p})`;ctx.beginPath();ctx.moveTo(cx,cy+s*0.1);ctx.lineTo(cx-s*0.22,cy+s*0.3);ctx.lineTo(cx+s*0.22,cy+s*0.3);ctx.closePath();ctx.fill();
+  // drill shaft
+  ctx.fillStyle='#8a94a8';ctx.fillRect(cx-4,by-s*0.4,8,s*0.32);
+  ctx.strokeStyle='#3a4152';ctx.lineWidth=1;ctx.strokeRect(cx-4,by-s*0.4,8,s*0.32);
+  // spinning fluted bit (blur suggested by ghost copies)
+  for(const off of [-0.2,0,0.2]){ctx.fillStyle=off?`rgba(200,208,224,0.3)`:'#c8d0e0';ctx.beginPath();ctx.moveTo(cx-9+off*14,by);ctx.lineTo(cx+9+off*14,by);ctx.lineTo(cx+off*14,by+s*0.16);ctx.closePath();ctx.fill();}
+  // flutes highlight
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,by);ctx.lineTo(cx,by+s*0.14);ctx.stroke();
+  // sparks kicking off the bit tip
+  for(let i=0;i<8;i++){const an=-0.2+rr()*3.5,d=s*(0.06+rr()*0.22);ctx.strokeStyle=`rgba(255,${180+rr()*70|0},80,${0.8})`;ctx.lineWidth=1.5;ctx.beginPath();const bx=cx,bt=by+s*0.15;ctx.moveTo(bx,bt);ctx.lineTo(bx+Math.cos(an)*d,bt+Math.abs(Math.sin(an))*d*0.6);ctx.stroke();}}
+// ---- D · DISINTEGRATE: tile erodes inward, bright cut edge, motes rise (tier-tinted) ----
+function disintegrate(cx,cy,s,p,TC,RGB,seed){const rr=mul(seed);
+  // eaten region: bites removed from the tile toward centre
+  ctx.save();ctx.beginPath();ctx.rect(cx-s/2,cy-s/2,s,s);ctx.clip();
+  const eat=s*0.5*p;
+  // bright leading cut edge
+  ctx.fillStyle=`rgba(${RGB},0.0)`;
+  ctx.beginPath();for(let a=0;a<16;a++){const an=a/16*6.28,rad=eat*(0.78+0.28*Math.sin(a*3+seed));ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad);}ctx.closePath();
+  ctx.fillStyle='#05070f';ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2;ctx.stroke();
+  ctx.save();ctx.globalCompositeOperation='lighter';ctx.strokeStyle=`rgba(${RGB},0.5)`;ctx.lineWidth=6;ctx.stroke();ctx.restore();
+  ctx.restore();
+  // motes rising off the cut edge, dissolving upward
+  for(let i=0;i<12;i++){const an=rr()*6.28,d=eat*(0.7+rr()*0.4);const mx=cx+Math.cos(an)*d,my=cy+Math.sin(an)*d-rr()*s*0.4*p;ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=i%3?`rgba(${RGB},0.9)`:'#fff';ctx.beginPath();ctx.arc(mx,my,1.4,0,7);ctx.fill();ctx.restore();}}
+ctx.fillStyle='#0a0d16';ctx.fillRect(0,0,W,H);
+const TEAL=['#7fe9d4','79,227,193'],AMB=['#f3b45a','232,163,61'],VIO=['#a99bf8','139,124,246'];
+const FR=[0.3,0.62,0.92];
+const rows=[
+ ['A · Fracture',(x,y,p,sd)=>fracture(x+TS/2,y+TS/2,TS,p,sd),null],
+ ['B · Hot bore',(x,y,p,sd)=>bore(x+TS/2,y+TS/2,TS,p,AMB[0],AMB[1]),null],
+ ['C · Rotary bit',(x,y,p,sd)=>rotary(x+TS/2,y+TS/2,TS,p,sd),null],
+ ['D · Disintegrate',(x,y,p,sd)=>disintegrate(x+TS/2,y+TS/2,TS,p,VIO[0],VIO[1],sd),null],
+];
+ctx.textBaseline='middle';
+rows.forEach((r,ri)=>{const y=Y0+ri*ROWH;
+  ctx.font='15px Georgia';ctx.textAlign='right';ctx.fillStyle='rgba(235,240,250,0.95)';ctx.fillText(r[0],X0-16,y+TS/2);
+  FR.forEach((p,fi)=>{const x=X0+fi*(TS+GAP);rock(x,y,TS,11+ri*7);r[1](x,y,p,31+ri*5+fi);ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.strokeRect(x,y,TS,TS);
+    ctx.font='11px Georgia';ctx.textAlign='center';ctx.fillStyle='rgba(180,190,210,0.7)';ctx.fillText(Math.round(p*100)+'%',x+TS/2,y+TS+14);});});
+// header
+ctx.font='13px Georgia';ctx.textAlign='center';ctx.fillStyle='rgba(160,170,195,0.8)';ctx.fillText('early  →  mid  →  nearly broken',X0+1.5*(TS+GAP),22);
+window.__done=true;
+</script></body></html>

@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05070f}</style></head>
+<body><canvas id="c" width="770" height="640"></canvas>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+function mul(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const CS=140,GAP=9,X0=18;
+function rock(x,y,s,tier){const base={1:[34,28,20],2:[18,22,30],3:[12,12,22],9:[40,16,12],10:[16,26,34]}[tier];ctx.fillStyle=`rgb(${base[0]},${base[1]},${base[2]})`;ctx.fillRect(x,y,s,s);
+  const rr=mul(x*131+y*17+tier);const peb={1:[60,50,38],2:[46,52,66],3:[40,42,64],9:[80,40,28],10:[40,60,78]}[tier];
+  for(let i=0;i<90;i++){const cx=x+rr()*s,cy=y+rr()*s,r=3+rr()*5,sh=0.6+rr()*0.5;ctx.fillStyle=`rgb(${peb[0]*sh|0},${peb[1]*sh|0},${peb[2]*sh|0})`;
+    ctx.beginPath();for(let a=0;a<5;a++){const an=a/5*6.28+rr(),rad=r*(0.7+rr()*0.5);ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad);}ctx.closePath();ctx.fill();
+    ctx.fillStyle='rgba(160,175,205,0.14)';ctx.beginPath();ctx.arc(cx-r*0.25,cy-r*0.3,r*0.4,Math.PI*1.1,Math.PI*1.9);ctx.fill();}}
+function chunk(cx,cy,r,rot,M){const[WH,BR,MD,DK]=M;const P=[];for(let a=0;a<6;a++){const an=rot+a/6*6.28,rr=r*(0.78+0.28*Math.sin(a*2.3+rot));P.push([cx+Math.cos(an)*rr,cy+Math.sin(an)*rr]);}
+  const g=ctx.createLinearGradient(cx-r,cy-r,cx+r,cy+r);g.addColorStop(0,BR);g.addColorStop(0.6,MD);g.addColorStop(1,DK);ctx.fillStyle=g;ctx.beginPath();P.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p[0],p[1]));ctx.closePath();ctx.fill();
+  ctx.fillStyle=WH;ctx.globalAlpha=0.7;ctx.beginPath();ctx.moveTo(cx,cy-r*0.1);ctx.lineTo(P[4][0],P[4][1]);ctx.lineTo(P[5][0],P[5][1]);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+  if(r>4){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.beginPath();ctx.arc(cx-r*0.3,cy-r*0.32,Math.max(1,r*0.15),0,7);ctx.fill();}}
+function metal(x,y,s,M,seed){const rng=mul(seed);ctx.save();ctx.beginPath();ctx.rect(x,y,s,s);ctx.clip();
+  ctx.strokeStyle='rgba(0,0,0,0.22)';ctx.lineWidth=3;for(let v=0;v<3;v++){let px=x+rng()*s,py=y-4;ctx.beginPath();ctx.moveTo(px,py);for(let k=0;k<6;k++){px+=(rng()-0.5)*44;py+=s/5;ctx.lineTo(px,py);}ctx.stroke();}
+  const n=34+((rng()*16)|0);for(let i=0;i<n;i++){const cx=x+rng()*s,cy=y+rng()*s,r=2+rng()*rng()*7;chunk(cx,cy,r,rng()*6.28,M);}ctx.restore();}
+function cube(cx,cy,r,c){ctx.fillStyle=c[0];ctx.beginPath();ctx.moveTo(cx,cy-r);ctx.lineTo(cx+r,cy-r*0.5);ctx.lineTo(cx,cy);ctx.lineTo(cx-r,cy-r*0.5);ctx.closePath();ctx.fill();
+  ctx.fillStyle=c[1];ctx.beginPath();ctx.moveTo(cx-r,cy-r*0.5);ctx.lineTo(cx,cy);ctx.lineTo(cx,cy+r);ctx.lineTo(cx-r,cy+r*0.5);ctx.closePath();ctx.fill();
+  ctx.fillStyle=c[2];ctx.beginPath();ctx.moveTo(cx+r,cy-r*0.5);ctx.lineTo(cx,cy);ctx.lineTo(cx,cy+r);ctx.lineTo(cx+r,cy+r*0.5);ctx.closePath();ctx.fill();}
+// SALT — cubes spread more widely across the tile in a few loose clumps
+function salt(cx,cy,seed){const rng=mul(seed),c=['#eef1ff','#c6ccf0','#9298c8'];const gl=ctx.createRadialGradient(cx,cy,4,cx,cy,66);gl.addColorStop(0,'rgba(200,210,255,0.18)');gl.addColorStop(1,'rgba(200,210,255,0)');ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,66,0,7);ctx.fill();ctx.restore();
+  for(let k=0;k<6;k++){const bx=cx+(rng()-0.5)*104,by=cy+(rng()-0.5)*104;for(let i=0;i<2+((rng()*2)|0);i++)cube(bx+(rng()-0.5)*10,by-i*12,6+rng()*5,c);}}
+// MICA — a few reflective sheet-stacks spread across the tile
+function mica(cx,cy,seed){const rng=mul(seed);for(let g=0;g<3;g++){const gx=cx+(rng()-0.5)*90,gy=cy+(rng()-0.5)*80;
+  for(let k=0;k<3;k++){const bx=gx-24,by=gy-14+k*11,w=40+rng()*14;for(let l=0;l<4;l++){const oy=by+l*3.2,t=185+l*7;ctx.fillStyle=`rgba(${t},${t+8},${t+22},0.92)`;ctx.beginPath();ctx.moveTo(bx,oy);ctx.lineTo(bx+w,oy-5);ctx.lineTo(bx+w+6,oy);ctx.lineTo(bx+6,oy+5);ctx.closePath();ctx.fill();}
+    ctx.strokeStyle='rgba(255,255,255,0.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+w,by-5);ctx.stroke();}}}
+function brine(cx,cy,seed){const rng=mul(seed);for(let i=0;i<4;i++){const bx=cx+(rng()-0.5)*64,by=cy+(rng()-0.5)*54,r=14+rng()*16;
+  const g=ctx.createRadialGradient(bx-r*0.3,by-r*0.4,2,bx,by,r);g.addColorStop(0,'#7fe0ec');g.addColorStop(0.5,'#2a8ca0');g.addColorStop(1,'#0c3240');ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(bx,by,r,r*0.72,rng()*0.6,0,7);ctx.fill();
+  ctx.fillStyle='rgba(210,255,255,0.6)';ctx.beginPath();ctx.ellipse(bx-r*0.34,by-r*0.4,r*0.3,r*0.12,-0.4,0,7);ctx.fill();}}
+// CINDER — a crystalline FLOWER: hot faceted petals radiating from a molten ember core
+function cinder(cx,cy,seed){const rng=mul(seed);const gl=ctx.createRadialGradient(cx,cy,4,cx,cy,70);gl.addColorStop(0,'rgba(255,140,50,0.45)');gl.addColorStop(1,'rgba(255,140,50,0)');ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,70,0,7);ctx.fill();ctx.restore();
+  const pet=9;for(let ring=0;ring<2;ring++){const len=ring?26:44,wid=ring?6:9,off=ring?0.35:0;
+    for(let i=0;i<pet;i++){const an=i/pet*6.28+off+rng()*0.05,ex=cx+Math.cos(an)*len,ey=cy+Math.sin(an)*len,nx=Math.cos(an+1.57),ny=Math.sin(an+1.57);
+      const g=ctx.createLinearGradient(cx,cy,ex,ey);g.addColorStop(0,'#fff2c0');g.addColorStop(0.4,'#ff9a3c');g.addColorStop(1,'#b52d16');ctx.fillStyle=g;
+      ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+nx*wid+ (ex-cx)*0.4,cy+ny*wid+(ey-cy)*0.4);ctx.lineTo(ex,ey);ctx.lineTo(cx-nx*wid+(ex-cx)*0.4,cy-ny*wid+(ey-cy)*0.4);ctx.closePath();ctx.fill();
+      ctx.strokeStyle='rgba(255,240,200,0.6)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(ex,ey);ctx.stroke();}}
+  const cg=ctx.createRadialGradient(cx,cy,1,cx,cy,13);cg.addColorStop(0,'#fff');cg.addColorStop(0.4,'#ffd070');cg.addColorStop(1,'#ff6a20');ctx.fillStyle=cg;ctx.beginPath();ctx.arc(cx,cy,11,0,7);ctx.fill();}
+// RIME — larger radiating ice needles + frost
+function rime(cx,cy,seed){const rng=mul(seed);const gl=ctx.createRadialGradient(cx,cy,4,cx,cy,74);gl.addColorStop(0,'rgba(150,215,245,0.4)');gl.addColorStop(1,'rgba(150,215,245,0)');ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=gl;ctx.beginPath();ctx.arc(cx,cy,74,0,7);ctx.fill();ctx.restore();
+  for(let i=0;i<13;i++){const an=i/13*6.28+rng()*0.25,len=30+rng()*34,ex=cx+Math.cos(an)*len,ey=cy+Math.sin(an)*len,nx=Math.cos(an+1.57)*5,ny=Math.sin(an+1.57)*5;
+    const g=ctx.createLinearGradient(cx,cy,ex,ey);g.addColorStop(0,'#dff2fd');g.addColorStop(1,'#6fb6d8');ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(cx+nx,cy+ny);ctx.lineTo(cx-nx,cy-ny);ctx.lineTo(ex,ey);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.75)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(ex,ey);ctx.stroke();}
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cx,cy,4,0,7);ctx.fill();}
+// GATE / LOCK — a forged, tier-keyed bulkhead sealing a region until the drill qualifies
+function gateLock(x,y,s,tier){const TC=['#4FE3C1','#E8A33D','#8B7CF6'][tier-1],RGB=['79,227,193','232,163,61','139,124,246'][tier-1],cx=x+s/2,cy=y+s/2;
+  const g=ctx.createLinearGradient(x,y,x,y+s);g.addColorStop(0,'#3a4152');g.addColorStop(0.5,'#232a38');g.addColorStop(1,'#161b26');ctx.fillStyle=g;ctx.fillRect(x,y,s,s);
+  ctx.strokeStyle='rgba(255,255,255,0.04)';for(let i=2;i<s;i+=4){ctx.beginPath();ctx.moveTo(x,y+i);ctx.lineTo(x+s,y+i);ctx.stroke();}
+  ctx.fillStyle='rgba(255,255,255,0.09)';ctx.fillRect(x,y,s,4);ctx.fillRect(x,y,4,s);ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(x,y+s-4,s,4);ctx.fillRect(x+s-4,y,4,s);
+  for(const[rx,ry]of[[0.15,0.15],[0.85,0.15],[0.15,0.85],[0.85,0.85]]){const bx=x+rx*s,by=y+ry*s;const rg=ctx.createRadialGradient(bx-2,by-2,1,bx,by,7);rg.addColorStop(0,'#7a melt'.replace(' melt','8598'));rg.addColorStop(1,'#2a3040');ctx.fillStyle=rg;ctx.beginPath();ctx.arc(bx,by,6,0,7);ctx.fill();ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.stroke();}
+  const R=s*0.3;const seg=ctx.createLinearGradient(cx,cy-R,cx,cy+R);seg.addColorStop(0,'#2a3140');seg.addColorStop(1,'#12161f');ctx.fillStyle=seg;ctx.beginPath();for(let a=0;a<6;a++){const an=a/6*6.28-1.57;ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*R,cy+Math.sin(an)*R);}ctx.closePath();ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2.5;ctx.stroke();
+  const cgl=ctx.createRadialGradient(cx,cy,2,cx,cy,R);cgl.addColorStop(0,`rgba(${RGB},0.85)`);cgl.addColorStop(0.55,`rgba(${RGB},0.2)`);cgl.addColorStop(1,`rgba(${RGB},0)`);ctx.fillStyle=cgl;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.fill();
+  ctx.strokeStyle=TC;ctx.lineWidth=2.5;for(let a=0;a<6;a++){const an=a/6*6.28;ctx.beginPath();ctx.moveTo(cx+Math.cos(an)*R*0.32,cy+Math.sin(an)*R*0.32);ctx.lineTo(cx+Math.cos(an+0.55)*R*0.82,cy+Math.sin(an+0.55)*R*0.82);ctx.stroke();}  // sealed iris blades
+  ctx.font=`bold ${s*0.22}px 'Courier New',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='rgba(0,0,0,0.75)';ctx.fillText(['I','II','III'][tier-1],cx+1,cy+1);ctx.fillStyle=TC;ctx.fillText(['I','II','III'][tier-1],cx,cy);ctx.textBaseline='alphabetic';ctx.textAlign='start';}
+ctx.fillStyle='#0a0d16';ctx.fillRect(0,0,W,H);
+const COP=['#ffd8b0','#d98a52','#a85f30','#5f3418'],TIN=['#f4f7fc','#d4d9e2','#a2aab8','#646b7a'],IRON=['#e6ebf4','#aab4c8','#6f7a92','#3a4356'],VST=['#c9b8ff','#8b7cd0','#5a4b90','#2a2148'];
+ctx.font='13px Georgia';ctx.textAlign='center';ctx.fillStyle='rgba(235,240,250,0.95)';
+[['Copper',COP,2],['Tin',TIN,2],['Iron',IRON,2],['Voidsteel',VST,3]].forEach((o,i)=>{const x=X0+i*(CS+GAP),y=34;rock(x,y,CS,o[2]);metal(x,y,CS,o[1],11+i*7);ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.strokeRect(x,y,CS,CS);ctx.fillStyle='rgba(235,240,250,0.95)';ctx.fillText(o[0],x+CS/2,24);});
+[['Salt',2,salt],['Mica',2,mica],['Brine',10,brine],['Cinder',9,cinder],['Rime',10,rime]].forEach((o,i)=>{const x=X0+i*(CS+GAP),y=34+CS+46;rock(x,y,CS,o[1]);ctx.save();ctx.beginPath();ctx.rect(x,y,CS,CS);ctx.clip();o[2](x+CS/2,y+CS/2,29+i*11);ctx.restore();ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.strokeRect(x,y,CS,CS);ctx.fillStyle='rgba(235,240,250,0.95)';ctx.fillText(o[0],x+CS/2,34+CS+36);});
+[1,2,3].forEach((t,i)=>{const x=X0+i*(CS+GAP),y=34+2*(CS+46);gateLock(x,y,CS,t);ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.strokeRect(x,y,CS,CS);ctx.fillStyle='rgba(235,240,250,0.95)';ctx.fillText('Gate — Tier '+['I','II','III'][i],x+CS/2,y-8);});
+ctx.textAlign='start';window.__done=true;
+</script></body></html>
