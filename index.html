@@ -890,6 +890,11 @@
       <button class="act" id="fbReset" title="Reset to lying/upright">⌂</button>
     </span>
     <button class="act" id="fbPair" style="display:none">⇄ Pestle</button>
+    <span id="fbAdmin" style="display:none">
+      <button class="act" id="fbAutoBronze" title="Admin: instantly fill &amp; finish this part in bronze">⚙ Bronze</button>
+      <button class="act" id="fbAutoIron" title="Admin: instantly fill &amp; finish this part in iron">⚙ Iron</button>
+      <button class="act" id="fbAutoVst" title="Admin: instantly fill &amp; finish this part in voidsteel">⚙ Voidsteel</button>
+    </span>
     <button class="act" id="fbFinish">Finish</button>
     <button id="fbLeave">✕ leave</button>
   </div>
@@ -1733,8 +1738,16 @@ function frameResonance(){
    (tier-agnostic, from mineSpeed) survives, so travel through soft old strata
    never regresses. */
 const SET_ADJ=1.5, SET_YIELD=2.0, SET_AREA=2.5;
+// The beyond-100% rungs demand a MATCHED, PLAYER-MADE rig: the forged frame AND bit, plus the carved drill
+// core AND power cell, ALL of one tier. A factory-shim frame/bit, an empty seat, or any part of a different
+// tier drops the whole set — mining sits at 100% (no adjacent/yield/area bonus) until all four are your own
+// work at the same tier. Returns that shared tier, or 0.
 function coreSetTier(){
-  return (drill.core&&drill.power&&drill.core.tier===drill.power.tier)?drill.core.tier:0;
+  const f=drill.frame, b=drill.bit, c=drill.core, pw=drill.power;
+  if (!f||!b||!c||!pw) return 0;
+  if (!f.forge||!b.forge) return 0;                 // frame & bit must be forged, not the factory shim
+  const t=c.tier;
+  return (b.tier===t && f.tier===t && pw.tier===t) ? t : 0;
 }
 function coreSetCharge(){
   return coreSetTier()?(drill.core.output+drill.power.output):0;
@@ -8438,6 +8451,22 @@ function finishForge(){
   if (typeof _forgeStash!=='undefined') _forgeStash={};   // the pair session is over once a part is finished
   updateMeters(); showView('forge');
 }
+// ADMIN: skip the hand-forge — flood-fill the whole mould with a chosen metal and finish instantly. Bronze
+// is copper carrying a tin fraction (so deriveForgeMaterial reads it as the alloy, T2); iron is T2, voidsteel
+// T3. The part's tier/material fall out of the cast exactly as a hand-forged one would, so it's a real part.
+function adminForgeFill(mat){
+  if (view!=='forgeb' || !forgePart){ say('Open a forge template first.','warn'); return; }
+  let n=0;
+  for (let id=0; id<FG_N; id++){
+    if (!fgMould[id]) continue;
+    fgFill[id]=1; fgTemp[id]=0; if (typeof fgLocked!=='undefined') fgLocked[id]=0;
+    fgMetal[id] = mat==='iron' ? 2 : mat==='vst' ? 3 : (((id*2654435761)>>>0)%10 < 3 ? 1 : 0);
+    n++;
+  }
+  if (!n){ say('No mould here to fill.','warn'); return; }
+  forgeDirty=true;
+  finishForge();                                        // derive material/tier from the cast, land it on the shelf
+}
 // Install a forged part into its slot (drill frame/bit or a suit-system frame). The shelf entry
 // IS the installed object, so re-installing another and back is lossless.
 function installForged(part, silent){
@@ -8454,6 +8483,7 @@ function updateForgeHud(){
   const hint=document.getElementById('fbHint'), stat=document.getElementById('fbStat'),
         fill=document.getElementById('fbFill'), fin=document.getElementById('fbFinish');
   if (!hint) return;
+  { const adm=document.getElementById('fbAdmin'); if (adm) adm.style.display=adminOn?'':'none'; }   // admin autofill row
   const frac=forgeFillFrac(), fpc=Math.round(frac*100), q=Math.round(forgeQualityNow()*100);
   const nugLeft=forgeFeed.filter(f=>!f.used).length;   // queued ore not yet dropped
   const crucHint = forgeCrucLoad.length<2 ? 'Crucible: pick TWO ores in the top bar to load the pot.'
@@ -9504,7 +9534,7 @@ function renderLab(){
       ${(()=>{
         // the refinement ladder: a matched pair of cores and its charge
         const st=coreSetTier();
-        if (!st) return `<div class="sub" style="margin-top:5px">no matched core set — pair a drill core and power core of the same tier to unlock tier bonuses</div>`;
+        if (!st) return `<div class="sub" style="margin-top:5px">no matched rig — the beyond-100% bonuses need your OWN forged frame &amp; bit and carved drill + power cores, all of the same tier. Any factory shim or mismatched tier keeps mining at 100%.</div>`;
         const ch=coreSetCharge();
         const rungs=[[SET_ADJ,'adjacent dig'],[SET_YIELD,'double yield'],[SET_AREA,'3×3 bore']];
         const got=rungs.filter(r=>ch>=r[0]).map(r=>r[1]);
@@ -10131,6 +10161,9 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 // The hand-forge: enter the 3D press to shape a copper frame by placing and
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
+document.getElementById('fbAutoBronze').onclick=()=>adminForgeFill('bronze');
+document.getElementById('fbAutoIron').onclick=()=>adminForgeFill('iron');
+document.getElementById('fbAutoVst').onclick=()=>adminForgeFill('vst');
 // Mortar & Pestle are two separate models forged in the same press — this toggles which one you're on,
 // rebuilding the mould for it. Both must be forged to complete the pair.
 // Toggling mortar<->pestle KEEPS each part's in-progress pour, so switching to build its partner doesn't
