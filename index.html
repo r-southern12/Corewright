@@ -5933,16 +5933,30 @@ function autoMine(tx,ty){
   if (!mine||mine.tx!==tx||mine.ty!==ty)
     mine={tx,ty,progress:0,need:(16+TILE_INFO[t].resist*20)/spd};
 }
+// Resolve the held direction keys into ONE dig target (supports diagonals). This
+// replaces the old scattered per-collision autoMine calls, which fought over `mine`
+// when two directions were held (e.g. right+down) and reset progress every frame,
+// stalling the dig. Down/up combine with left/right for diagonal tunnelling; with
+// no direction held the drill bites the tile you face.
+function digAim(){
+  if (!keys.dig) return null;
+  const dirX = keys.right?1:keys.left?-1:0;
+  const dirY = keys.down?1:keys.jump?-1:0;
+  const col=Math.floor(player.x);
+  if (dirY>0) return {tx:col+dirX, ty:Math.floor(player.y+0.35)};      // down / down-diagonal
+  if (dirY<0) return {tx:col+dirX, ty:Math.floor(player.y-0.95)};      // up / up-diagonal
+  return {tx:col+(dirX||player.face), ty:Math.floor(player.y-0.45)};   // horizontal (dir, else facing)
+}
 function stepPlayer(dt){
   if (tut.on){ player.vx=0; player.vy=0; return; }   // pinned during the tutorial
   const acc=0.035, maxv=0.22;
-  if (keys.dig&&keys.down){
-    const dx=keys.left?-0.8:keys.right?0.8:0;
-    autoMine(Math.floor(player.x+dx),Math.floor(player.y+0.35));
-  }
   if (keys.left){ player.vx=Math.max(-maxv,player.vx-acc); player.face=-1; }
   else if (keys.right){ player.vx=Math.min(maxv,player.vx+acc); player.face=1; }
   else player.vx*=0.7;
+  // ONE dig target per frame from the held directions (incl. diagonals), so combined
+  // keys never fight over `mine` and stall. autoMine no-ops on air, so holding dig in
+  // open space just walks; against rock it tunnels in the chosen direction.
+  if (keys.dig){ const a=digAim(); if (a) autoMine(a.tx,a.ty); }
   if (keys.jump) player.vy=Math.max(-0.3,player.vy-0.055);
   player.vy=Math.min(0.5,player.vy+0.028);
   const half=0.38;
@@ -5950,25 +5964,18 @@ function stepPlayer(dt){
   if (player.vx!==0){
     const ahead=player.vx>0?nx+half:nx-half;
     if (solid(tileAt(ahead,player.y-0.1))||solid(tileAt(ahead,player.y-0.85))){
-      if (keys.dig&&!keys.down) autoMine(Math.floor(ahead),Math.floor(player.y-0.45));
-      nx=player.x; player.vx=0;
+      nx=player.x; player.vx=0;                 // blocked; digAim above handles the mining
     }
-  } else if (keys.dig&&(keys.left||keys.right)){
-    const ahead=player.face>0?player.x+half+0.1:player.x-half-0.1;
-    if (solid(tileAt(ahead,player.y-0.45))) autoMine(Math.floor(ahead),Math.floor(player.y-0.45));
   }
   player.x=nx;               // no horizontal bound: the world scrolls forever
   let ny=player.y+player.vy;
   if (player.vy>0){
     if (solid(tileAt(player.x-half+0.05,ny))||solid(tileAt(player.x+half-0.05,ny))){
-      if (keys.dig&&keys.down)
-        autoMine(Math.floor(player.x),Math.floor(ny));   // stick down + dig = sink
-      ny=Math.floor(ny)-0.001; player.vy=0; player.onGround=true;
+      ny=Math.floor(ny)-0.001; player.vy=0; player.onGround=true;   // digAim handles down-sink
     } else player.onGround=false;
   } else if (player.vy<0){
     if (solid(tileAt(player.x-half+0.05,ny-0.95))||solid(tileAt(player.x+half-0.05,ny-0.95))){
-      if (keys.dig&&keys.jump) autoMine(Math.floor(player.x),Math.floor(ny-0.95));
-      ny=player.y; player.vy=0;
+      ny=player.y; player.vy=0;                 // digAim handles digging up
     }
   }
   player.y=ny;
@@ -6080,22 +6087,16 @@ function drawHero(px,py,now){
   ctx.translate(px,py+bob);
   if (face<0) ctx.scale(-1,1);   // draw facing +x, mirror for left
 
-  // ---- headlamp beam thrown forward into the dark ----
-  const lampX=S*0.13, lampY=-S*0.80;
-  const beam=ctx.createLinearGradient(lampX,lampY,lampX+S*2.4,lampY);
-  beam.addColorStop(0,'rgba(255,240,205,0.30)'); beam.addColorStop(0.5,'rgba(255,236,190,0.10)'); beam.addColorStop(1,'rgba(255,236,190,0)');
-  ctx.fillStyle=beam; ctx.beginPath();
-  ctx.moveTo(lampX,lampY); ctx.lineTo(lampX+S*2.4,lampY-S*0.5); ctx.lineTo(lampX+S*2.4,lampY+S*1.0); ctx.closePath(); ctx.fill();
+  // aim the drill at the mined tile, then lean the whole upper body toward it
+  let drillAng=0.12;
+  if (mining && mine){
+    const dxm=(mine.tx+0.5)-player.x, dym=(mine.ty+0.5)-(player.y-0.45);
+    drillAng=Math.max(-1.55,Math.min(1.55,Math.atan2(dym,dxm*(face||1))));
+  }
+  const bodyTilt=mining?Math.max(-0.34,Math.min(0.42,(drillAng-0.12)*0.30)):0;   // hunch fwd boring down, rock back boring up
+  const crouch=mining?Math.max(0,Math.sin(drillAng))*S*0.05:0;                   // sink a touch when boring down
 
-  // ---- back reactor (behind torso) ----
-  const rgx=-S*0.06, rgy=-S*0.44;
-  const rg=ctx.createRadialGradient(rgx,rgy,1,rgx,rgy,S*0.36);
-  rg.addColorStop(0,coreCol); rg.addColorStop(0.4,'rgba(120,220,200,0.22)'); rg.addColorStop(1,'rgba(120,220,200,0)');
-  ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rgx,rgy,S*0.36,0,7); ctx.fill();
-  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.30,-S*0.58,S*0.13,S*0.30,S*0.04); ctx.fill();     // canister
-  ctx.fillStyle=coreCol; ctx.beginPath(); ctx.arc(-S*0.235,-S*0.45,S*0.045+S*0.012*pulse,0,7); ctx.fill();  // core orb
-
-  // ---- legs / boots ----
+  // ---- legs / boots (planted — NOT affected by the lean) ----
   for (const [lx,dir] of [[-S*0.12,-1],[S*0.005,1]]){
     ctx.fillStyle=STEEL_D;
     _rr(ctx,lx+dir*stride*0.5,-S*0.30,S*0.13,S*0.22,S*0.045); ctx.fill();      // greave
@@ -6111,6 +6112,25 @@ function drawHero(px,py,now){
     pl.addColorStop(0,'rgba(255,200,120,0.85)'); pl.addColorStop(1,'rgba(232,120,50,0)');
     ctx.fillStyle=pl; ctx.beginPath(); ctx.moveTo(lx-S*0.05,0); ctx.lineTo(lx+S*0.07,0);
     ctx.lineTo(lx+S*0.01,plen); ctx.closePath(); ctx.fill(); } }
+
+  // ---- UPPER BODY leans as a unit about the waist so the posture follows the drill ----
+  ctx.save();
+  ctx.translate(0,crouch); ctx.translate(0,-S*0.30); ctx.rotate(bodyTilt); ctx.translate(0,S*0.30);
+
+  // headlamp beam thrown forward into the dark
+  const lampX=S*0.13, lampY=-S*0.80;
+  const beam=ctx.createLinearGradient(lampX,lampY,lampX+S*2.4,lampY);
+  beam.addColorStop(0,'rgba(255,240,205,0.30)'); beam.addColorStop(0.5,'rgba(255,236,190,0.10)'); beam.addColorStop(1,'rgba(255,236,190,0)');
+  ctx.fillStyle=beam; ctx.beginPath();
+  ctx.moveTo(lampX,lampY); ctx.lineTo(lampX+S*2.4,lampY-S*0.5); ctx.lineTo(lampX+S*2.4,lampY+S*1.0); ctx.closePath(); ctx.fill();
+
+  // back reactor (behind torso)
+  const rgx=-S*0.06, rgy=-S*0.44;
+  const rg=ctx.createRadialGradient(rgx,rgy,1,rgx,rgy,S*0.36);
+  rg.addColorStop(0,coreCol); rg.addColorStop(0.4,'rgba(120,220,200,0.22)'); rg.addColorStop(1,'rgba(120,220,200,0)');
+  ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(rgx,rgy,S*0.36,0,7); ctx.fill();
+  ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.30,-S*0.58,S*0.13,S*0.30,S*0.04); ctx.fill();     // canister
+  ctx.fillStyle=coreCol; ctx.beginPath(); ctx.arc(-S*0.235,-S*0.45,S*0.045+S*0.012*pulse,0,7); ctx.fill();  // core orb
 
   // ---- torso (hardsuit chest) ----
   const tg=ctx.createLinearGradient(0,-S*0.58,0,-S*0.26);
@@ -6138,14 +6158,8 @@ function drawHero(px,py,now){
   ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.12; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(S*0.06,-S*0.52); ctx.lineTo(ax,ay); ctx.stroke(); ctx.lineCap='butt';
   ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(ax,ay,S*0.08,0,7); ctx.fill();  // fist
-  // aim toward the mined tile; face flips x so the local (possibly mirrored) frame agrees
-  let drillAng=0.12;
-  if (mining && mine){
-    const dxm=(mine.tx+0.5)-player.x, dym=(mine.ty+0.5)-(player.y-0.45);
-    drillAng=Math.max(-1.55,Math.min(1.55,Math.atan2(dym,dxm*(face||1))));
-  }
   const plunge=mining?(f%3)*S*0.045:0;
-  ctx.save(); ctx.translate(ax,ay); ctx.rotate(drillAng);
+  ctx.save(); ctx.translate(ax,ay); ctx.rotate(drillAng-bodyTilt);   // subtract the lean so the bit still aims true
   const d0=S*0.02+plunge;                                         // housing start along the drill axis (centreline y=0)
   const hg=ctx.createLinearGradient(d0,-S*0.12,d0,S*0.12);
   hg.addColorStop(0,'#9aa3bd'); hg.addColorStop(0.45,STEEL); hg.addColorStop(1,STEEL_D);
@@ -6192,7 +6206,8 @@ function drawHero(px,py,now){
   ctx.strokeStyle='rgba(180,220,255,0.5)'; ctx.lineWidth=Math.max(1,S*0.03);
   ctx.beginPath(); ctx.arc(0,-S*0.70,S*0.22,Math.PI*1.05,Math.PI*1.5); ctx.stroke();
 
-  ctx.restore();
+  ctx.restore();   // end upper-body lean
+  ctx.restore();   // end hero
 }
 // ---------- overworld terrain material (baked, seamless) ----------
 // The dig-view rock is a value-noise material sampled by WORLD pixel coordinate,
