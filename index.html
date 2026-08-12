@@ -6129,17 +6129,40 @@ function drawHero(px,py,now){
   ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.12,0,7); ctx.fill();
   ctx.fillStyle=STEEL; ctx.beginPath(); ctx.arc(S*0.03,-S*0.55,S*0.09,0,7); ctx.fill();
 
-  // ---- tool arm + drill ----
-  const reach=mining?(0.28+(f%3)*0.07):0.22;
-  const hx=S*(0.12+reach), hy=-S*0.40;
-  ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.11; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(S*0.08,-S*0.52); ctx.lineTo(hx,hy); ctx.stroke();
-  ctx.strokeStyle='#8a93b8'; ctx.lineWidth=S*0.08;                                 // drill shaft
-  ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(hx+S*0.22,hy+S*0.03); ctx.stroke();
-  ctx.fillStyle=BRASS; ctx.beginPath();                                            // drill bit
-  ctx.moveTo(hx+S*0.22,hy-S*0.05); ctx.lineTo(hx+S*0.36,hy+S*0.03); ctx.lineTo(hx+S*0.22,hy+S*0.12); ctx.closePath(); ctx.fill();
-  if (mining){ ctx.fillStyle=`rgba(255,220,140,${0.4+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(hx+S*0.36,hy+S*0.03,S*0.09,0,7); ctx.fill(); }
-  ctx.lineCap='butt';
+  // ---- tool arm + MINING DRILL: a chunky motor housing carrying a fat conical
+  //      auger bit with spiral flutes — a drill, not a stick. The whole assembly
+  //      plunges a little on each mining frame instead of the arm telescoping. ----
+  const plunge=mining?(f%3)*S*0.04:0;
+  const ax=S*0.13, ay=-S*0.40;                                    // gripping hand
+  ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.12; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(S*0.06,-S*0.52); ctx.lineTo(ax,ay); ctx.stroke(); ctx.lineCap='butt';
+  ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(ax,ay,S*0.08,0,7); ctx.fill();  // fist
+  const dx=ax+S*0.02+plunge, dcy=ay+S*0.03;                       // drill axis start / centreline
+  // motor housing (fat cylinder with a cap band)
+  const hg=ctx.createLinearGradient(dx,dcy-S*0.12,dx,dcy+S*0.12);
+  hg.addColorStop(0,'#9aa3bd'); hg.addColorStop(0.45,STEEL); hg.addColorStop(1,STEEL_D);
+  ctx.fillStyle=hg; _rr(ctx,dx,dcy-S*0.12,S*0.22,S*0.24,S*0.06); ctx.fill();
+  ctx.strokeStyle=TRIM; ctx.lineWidth=Math.max(1,S*0.02); ctx.globalAlpha=flick*0.7;
+  ctx.beginPath(); ctx.moveTo(dx+S*0.06,dcy-S*0.10); ctx.lineTo(dx+S*0.06,dcy+S*0.10); ctx.stroke(); ctx.globalAlpha=flick;  // motor vent
+  ctx.fillStyle=STEEL_D; ctx.fillRect(dx+S*0.22,dcy-S*0.11,S*0.035,S*0.22);       // chuck collar
+  // conical fluted auger bit
+  const bx=dx+S*0.255, tip=bx+S*0.40, bh=S*0.115;
+  const bg=ctx.createLinearGradient(bx,dcy-bh,bx,dcy+bh);
+  bg.addColorStop(0,'#ffe0a0'); bg.addColorStop(0.5,BRASS); bg.addColorStop(1,'#7d4a12');
+  ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(bx,dcy-bh); ctx.lineTo(tip,dcy); ctx.lineTo(bx,dcy+bh); ctx.closePath(); ctx.fill();
+  // spiral flutes across the cone read it as a screw; they travel while drilling
+  ctx.strokeStyle='rgba(60,35,10,0.85)'; ctx.lineWidth=Math.max(1,S*0.022);
+  const sp=mining?((now*0.006)%0.25):0;
+  for (let i=0;i<4;i++){ let u=(i/4)+sp; if(u>0.97) u-=1; if(u<0.03) continue;
+    const cxp=bx+(tip-bx)*u, sh=bh*(1-u), off=(tip-bx)*0.10;
+    ctx.beginPath(); ctx.moveTo(cxp+off,dcy-sh); ctx.lineTo(cxp-off,dcy+sh); ctx.stroke(); }
+  ctx.fillStyle='rgba(255,248,215,0.9)'; ctx.beginPath(); ctx.arc(bx+S*0.05,dcy-bh*0.45,S*0.022,0,7); ctx.fill();  // catch-light
+  // mining: hot bite point + debris flung off the tip
+  if (mining){
+    ctx.fillStyle=`rgba(255,220,140,${0.5+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(tip,dcy,S*0.075,0,7); ctx.fill();
+    for (let i=0;i<5;i++){ const a=(Math.random()-0.5)*1.3, d=S*(0.06+Math.random()*0.22);
+      ctx.fillStyle=`rgba(200,160,95,0.75)`; ctx.fillRect(tip+Math.cos(a)*d,dcy+Math.sin(a)*d,S*0.05,S*0.05); }
+  }
 
   // ---- head: helmet dome + visor + face glow ----
   ctx.fillStyle=STEEL_D; _rr(ctx,-S*0.05,-S*0.62,S*0.10,S*0.08,S*0.025); ctx.fill();   // neck
