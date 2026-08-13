@@ -5792,6 +5792,13 @@ function stepProjectiles(dt){
 
 // ---------- hold-to-mine / attack ----------
 let mine=null, attackTgt=null;
+// Persistent partial-drill damage: absolute "x,y" -> fraction 0..1 of how far a tile
+// has been drilled. Stopping mid-tile keeps that progress, so the fracture stays on
+// the rock and a later dig resumes from it. Fraction (not tick count) so a stronger
+// drill still resumes at the same visual point. In-memory (not saved); cleared when
+// the tile breaks. Bounded by how many tiles you leave half-drilled.
+const tileDmg=new Map();
+function dmgKey(x,y){ return x+','+y; }
 let aim={x:0,y:0,active:false};
 let particles=[];
 const REACH=2.8;
@@ -5830,7 +5837,8 @@ function startMine(sx,sy){
     return;
   }
   player.face=dx>=0?1:-1;
-  mine={tx,ty,progress:0,need:(16+info.resist*20)/spd};
+  const need=(16+info.resist*20)/spd;
+  mine={tx,ty,progress:(tileDmg.get(dmgKey(tx,ty))||0)*need,need};   // resume prior partial drilling
 }
 function mineTick(){
   if (attackTgt){
@@ -5850,7 +5858,8 @@ function mineTick(){
   const dx=mine.tx+0.5-player.x, dy=mine.ty+0.5-(player.y-0.5);
   if (Math.hypot(dx,dy)>REACH+0.3){ mine=null; return; }
   mine.progress++;
-  if (Math.random()<0.5)
+  tileDmg.set(dmgKey(mine.tx,mine.ty), Math.min(1,mine.progress/mine.need));   // persist the drilled amount
+  if (Math.random()<0.35)
     particles.push({x:mine.tx+0.5,y:mine.ty+0.5,vx:(Math.random()-0.5)*0.08,
       vy:-Math.random()*0.06,life:14,col:'#c9d2f0'});
   if (mine.progress>=mine.need){
@@ -5893,6 +5902,7 @@ function applySetAreaBonus(tx,ty,t,horiz){
 function breakTile(tx,ty,t,silent){
   if (t===T_BEDROCK) return;                 // world floor never yields
   if (t===T_WALL){ breakVault(tx,ty); return; }   // caches are 2x2: drilling any cell removes all four
+  tileDmg.delete(dmgKey(tx,ty));             // damage clears with the tile
   setTile(tx,ty,T_AIR);
   setSeen(tx,ty,1);
   setGate(tx,ty,0);                          // a broken gate is just open air now
@@ -5913,6 +5923,7 @@ function breakVault(tx,ty){
   for (let dx=0;dx<2;dx++) for (let dy=0;dy<2;dy++){
     const cx=ax+dx, cy=ay+dy;
     if (getTile(cx,cy)!==T_WALL) continue;
+    tileDmg.delete(dmgKey(cx,cy));
     setTile(cx,cy,T_AIR); setSeen(cx,cy,1); setGate(cx,cy,0);
     for (let i=0;i<6;i++) particles.push({x:cx+0.5,y:cy+0.5,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.16,life:28,col:'#8598b8'});
   }
@@ -5969,8 +5980,10 @@ function autoMine(tx,ty){
   if (gateReqTier(tx,ty)) return;           // locked gate — needs the tier
   const spd=mineSpeed(TILE_INFO[t].resist);
   if (spd<=0) return;                       // assembly can't mark it
-  if (!mine||mine.tx!==tx||mine.ty!==ty)
-    mine={tx,ty,progress:0,need:(16+TILE_INFO[t].resist*20)/spd};
+  if (!mine||mine.tx!==tx||mine.ty!==ty){
+    const need=(16+TILE_INFO[t].resist*20)/spd;
+    mine={tx,ty,progress:(tileDmg.get(dmgKey(tx,ty))||0)*need,need};   // resume prior partial drilling
+  }
 }
 // Resolve the held direction keys into ONE dig target (supports diagonals). This
 // replaces the old scattered per-collision autoMine calls, which fought over `mine`
@@ -6593,7 +6606,7 @@ function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
 // the centre, and rock chips fly off. No energised edge, no sci-fi colour. The
 // crack LAYOUT is seeded per tile so it stays put and just grows; the chips are
 // live. Progress = how far the fracture has spread.
-function drawMineFracture(px,py,TS,p,seed,now){
+function drawMineFracture(px,py,TS,p,seed,live){
   const cx=px+TS/2, cy=py+TS/2, rng=terrMul(seed>>>0);
   ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();          // keep it inside the tile
   // spreading cracks: a dark break with a thin fresh-stone strand so it reads on any rock
@@ -6606,7 +6619,7 @@ function drawMineFracture(px,py,TS,p,seed,now){
     ctx.beginPath(); pts.forEach((q,i)=>ctx[i?'lineTo':'moveTo'](q[0],q[1])); ctx.stroke();
   }
   // chewed chip-scars accumulating around the bite (dark angular notches)
-  const nsc=Math.floor(p*7);
+  const nsc=Math.floor(p*5);
   for(let i=0;i<nsc;i++){ const an=rng()*6.28, d=TS*0.1+rng()*TS*0.22*p, sx=cx+Math.cos(an)*d, sy=cy+Math.sin(an)*d, r=TS*(0.03+rng()*0.03);
     ctx.fillStyle='rgba(6,7,11,0.75)'; ctx.beginPath(); for(let a=0;a<5;a++){ const aa=a/5*6.28+rng(); ctx[a?'lineTo':'moveTo'](sx+Math.cos(aa)*r,sy+Math.sin(aa)*r); } ctx.closePath(); ctx.fill(); }
   // crumbled dark pit at the centre, growing
@@ -6614,10 +6627,12 @@ function drawMineFracture(px,py,TS,p,seed,now){
   for(let a=0;a<9;a++){ const an=a/9*6.28, rad=TS*0.18*p*(0.7+rng()*0.6); ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad); }
   ctx.closePath(); ctx.fill();
   ctx.restore();
-  // a soft puff of rock dust (grey, no glow) + live flying chips
-  const dust=ctx.createRadialGradient(cx,cy,1,cx,cy,TS*0.5); dust.addColorStop(0,`rgba(120,124,140,${0.14*p})`); dust.addColorStop(1,'rgba(120,124,140,0)');
-  ctx.fillStyle=dust; ctx.beginPath(); ctx.arc(cx,cy,TS*0.5,0,7); ctx.fill();
-  for(let i=0;i<9;i++){ const a=Math.random()*6.28, d=TS*(0.16+Math.random()*0.42*(0.4+p)), fx=cx+Math.cos(a)*d, fy=cy+Math.sin(a)*d-Math.random()*TS*0.25;
+  // Live-only: a soft puff of rock dust (grey, no glow) + a few flying chips. On a
+  // persisted-damage tile that isn't being actively drilled, only the cracks show.
+  if (!live) return;
+  const dust=ctx.createRadialGradient(cx,cy,1,cx,cy,TS*0.45); dust.addColorStop(0,`rgba(120,124,140,${0.12*p})`); dust.addColorStop(1,'rgba(120,124,140,0)');
+  ctx.fillStyle=dust; ctx.beginPath(); ctx.arc(cx,cy,TS*0.45,0,7); ctx.fill();
+  for(let i=0;i<4;i++){ const a=Math.random()*6.28, d=TS*(0.16+Math.random()*0.4*(0.4+p)), fx=cx+Math.cos(a)*d, fy=cy+Math.sin(a)*d-Math.random()*TS*0.22;
     ctx.save(); ctx.translate(fx,fy); ctx.rotate(Math.random()*6.28);
     ctx.fillStyle=Math.random()<0.5?'#4f5468':'#6a6f84'; ctx.fillRect(-TS*0.05,-TS*0.035,TS*0.1,TS*0.07); ctx.restore(); }
 }
@@ -6690,6 +6705,12 @@ function drawWorld(now){
       drawWorldCinder(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
     } else if (t===T_RIME){
       drawWorldRime(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
+    }
+    // persisted partial-drill damage: a tile drilled and left shows its cracks
+    // (static, no live chips). The tile being actively drilled is drawn live below.
+    if (tileDmg.size && !(mine&&mine.tx===x&&mine.ty===y)){
+      const dmg=tileDmg.get(x+','+y);
+      if (dmg) drawMineFracture(px,py,TS,dmg,(Math.imul(x,131)^Math.imul(y,17))>>>0,false);
     }
     // (T_WALL caches are drawn in a separate 2x2 pass after the tile loop, so the
     //  big vault art isn't overpainted by neighbouring tile bases.)
@@ -6779,7 +6800,7 @@ function drawWorld(now){
   if (mine){
     const px2=mine.tx*TS-camX, py2=mine.ty*TS-camY;
     const mseed=(Math.imul(mine.tx,131)^Math.imul(mine.ty,17))>>>0;
-    drawMineFracture(px2,py2,TS,Math.min(1,mine.progress/mine.need),mseed,now);
+    drawMineFracture(px2,py2,TS,Math.min(1,mine.progress/mine.need),mseed,true);
   } else if (view==='exped'&&!attackTgt){
     const {tx,ty}=screenToTile(aim.x,aim.y);
     const t=tileAt(tx+0.5,ty+0.5);
