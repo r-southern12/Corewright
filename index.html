@@ -6512,6 +6512,28 @@ function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
   ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillText(num,cx+1,cy+R*0.64+1); ctx.fillStyle=TU; ctx.fillText(num,cx,cy+R*0.64);
   ctx.textAlign='start'; ctx.textBaseline='alphabetic';
 }
+// ---------- mining effect: DISINTEGRATE (replaces the yellow progress arc) ----------
+// The tile is eaten inward from the centre with a bright energised cut-edge, and
+// motes rise off it and dissolve upward — progress = how far the bite has eaten.
+// Tinted by the mined tile's tier (teal I / amber II / violet III), so a better
+// drill visibly cuts a hotter colour. Ported from mockups/mining.html.
+function drawMineDisintegrate(px,py,TS,p,tier,now){
+  const TC=['','#4FE3C1','#E8A33D','#8B7CF6'][tier]||'#4FE3C1';
+  const RGB=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
+  const cx=px+TS/2, cy=py+TS/2, seed=((px*13+py*7)&255), eat=TS*0.55*p;
+  ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();          // keep the bite inside the tile
+  ctx.beginPath();
+  for(let a=0;a<16;a++){ const an=a/16*6.28, rad=eat*(0.78+0.28*Math.sin(a*3+seed)); ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad); }
+  ctx.closePath();
+  ctx.fillStyle='#05070f'; ctx.fill();                                     // consumed void
+  ctx.strokeStyle=TC; ctx.lineWidth=Math.max(1.5,TS*0.05); ctx.stroke();   // sharp cut edge
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.strokeStyle=`rgba(${RGB},0.5)`; ctx.lineWidth=Math.max(3,TS*0.14); ctx.stroke(); ctx.restore();  // energised bloom
+  ctx.restore();
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<10;i++){ const an=Math.random()*6.28, d=eat*(0.7+Math.random()*0.4), mx=cx+Math.cos(an)*d, my=cy+Math.sin(an)*d-Math.random()*TS*0.4*p;
+    ctx.fillStyle=i%3?`rgba(${RGB},0.9)`:'#fff'; ctx.beginPath(); ctx.arc(mx,my,Math.max(1,TS*0.04),0,7); ctx.fill(); }
+  ctx.restore();
+}
 function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
   const TC=['','#4FE3C1','#E8A33D','#8B7CF6'][tier]||'#4FE3C1';
   const RGB=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
@@ -6652,10 +6674,8 @@ function drawWorld(now){
 
   if (mine){
     const px2=mine.tx*TS-camX, py2=mine.ty*TS-camY;
-    ctx.strokeStyle='#E8A33D'; ctx.lineWidth=3;
-    ctx.beginPath();
-    ctx.arc(px2+TS/2,py2+TS/2,TS*0.42,-Math.PI/2,-Math.PI/2+(mine.progress/mine.need)*Math.PI*2);
-    ctx.stroke();
+    const tier=TILE_TIER[getTile(mine.tx,mine.ty)]||(getGate(mine.tx,mine.ty)||1);
+    drawMineDisintegrate(px2,py2,TS,Math.min(1,mine.progress/mine.need),tier,now);
   } else if (view==='exped'&&!attackTgt){
     const {tx,ty}=screenToTile(aim.x,aim.y);
     const t=tileAt(tx+0.5,ty+0.5);
