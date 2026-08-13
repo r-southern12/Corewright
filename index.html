@@ -5028,8 +5028,8 @@ const TILE_INFO={
   [T_MOSS]:{col:'#2c4434',resist:0.3},[T_SALT]:{col:'#3a4258',resist:1.5},
   [T_CINDER]:{col:'#4d2a18',resist:2.4},[T_RIME]:{col:'#20455c',resist:2.8},
   [T_COPPER]:{col:'#4a3b2e',resist:0.4},[T_IRON]:{col:'#37405c',resist:1.15},[T_VST]:{col:'#2a3050',resist:2.2},
-  [T_TIN]:{col:'#5a5d68',resist:0.9},
-  [T_CLAY]:{col:'#5a4436',resist:0.3},[T_MICA]:{col:'#3f4a63',resist:1.2},[T_BRINE]:{col:'#2c4450',resist:2.0},
+  [T_TIN]:{col:'#5a5d68',resist:1.05},   // >= S1 (1.0): tin sits in the soft-stone band, so it can't be mined before that stone
+  [T_CLAY]:{col:'#5a4436',resist:0.3},[T_MICA]:{col:'#3f4a63',resist:1.9},[T_BRINE]:{col:'#2c4450',resist:2.0},  // mica >= S2 (1.8): its tier-III stone gates it
   [T_WALL]:{col:'#1c2740',resist:3.4},[T_BEDROCK]:{col:'#0a0d16',resist:999}
 };
 /* THE HARDNESS SPECTRUM — every material the player has actually LAID EYES ON,
@@ -6326,6 +6326,8 @@ function bakeTile(x,y,t,TS){
   // baking into the tile is correct — nothing to bleed past the edge).
   if (METAL_PAL[t]) bakeMetal(c,TS,METAL_PAL[t],(Math.imul(x,131)^Math.imul(y,17))>>>0);
   if (t===T_CLAY) bakeClay(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // matte clay pocket, static
+  if (t===T_SALT) bakeSalt(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // pale salt cubes, static
+  if (t===T_MICA) bakeMica(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // reflective mica sheets, static
   return cv;
 }
 function tileBaseFor(x,y,t,TS){
@@ -6390,7 +6392,7 @@ function drawWorldCore(px,py,TS,tier,H,seed,now){
 // the edges so it reads as a pocket IN the rock, not a tile-filling wash.
 function bakeClay(c,TS,seed){
   const rng=terrMul(seed>>>0), cx=TS*0.5, cy=TS*0.5, n=3+((rng()*2)|0);
-  for(let k=0;k<n;k++){ const bx=cx+(rng()-0.5)*TS*0.34, by=cy+(rng()-0.5)*TS*0.34, r=TS*(0.11+rng()*0.09);
+  for(let k=0;k<n;k++){ const bx=cx+(rng()-0.5)*TS*0.34, by=cy+(rng()-0.5)*TS*0.34, r=TS*(0.14+rng()*0.10);   // slightly larger blobs
     const g=c.createRadialGradient(bx-r*0.3,by-r*0.35,2,bx,by,r);
     g.addColorStop(0,'#d9b487'); g.addColorStop(0.55,'#a97c4e'); g.addColorStop(1,'#6e4a2a'); c.fillStyle=g;
     c.beginPath(); for(let a=0;a<9;a++){ const an=a/9*6.28, rr=r*(0.82+0.2*Math.sin(a*1.7+k)); c[a?'lineTo':'moveTo'](bx+Math.cos(an)*rr,by+Math.sin(an)*rr); } c.closePath(); c.fill();
@@ -6416,6 +6418,54 @@ function drawWorldMoss(px,py,TS,seed,now){
   ctx.save(); ctx.globalCompositeOperation='lighter';
   for(let i=0;i<5;i++){ ctx.fillStyle=`rgba(190,255,210,${0.7*pulse})`; ctx.beginPath(); ctx.arc(cx+(rng()-0.5)*TS*0.6,cy+(rng()-0.5)*TS*0.6,Math.max(1,TS*0.035),0,7); ctx.fill(); }
   ctx.restore();
+}
+// ---------- reagent materials: salt/mica baked (matte); brine/cinder/rime live (self-lit) ----------
+// SALT — loose clumps of pale iso-cubes, slightly spread across the tile. Baked.
+function saltCube(c,cx,cy,r,cols){
+  c.fillStyle=cols[0]; c.beginPath(); c.moveTo(cx,cy-r); c.lineTo(cx+r,cy-r*0.5); c.lineTo(cx,cy); c.lineTo(cx-r,cy-r*0.5); c.closePath(); c.fill();
+  c.fillStyle=cols[1]; c.beginPath(); c.moveTo(cx-r,cy-r*0.5); c.lineTo(cx,cy); c.lineTo(cx,cy+r); c.lineTo(cx-r,cy+r*0.5); c.closePath(); c.fill();
+  c.fillStyle=cols[2]; c.beginPath(); c.moveTo(cx+r,cy-r*0.5); c.lineTo(cx,cy); c.lineTo(cx,cy+r); c.lineTo(cx+r,cy+r*0.5); c.closePath(); c.fill();
+}
+function bakeSalt(c,TS,seed){ const rng=terrMul(seed>>>0), cols=['#eef1ff','#c6ccf0','#9298c8'];
+  for(let k=0;k<4;k++){ const bx=TS*(0.25+rng()*0.5), by=TS*(0.28+rng()*0.44);
+    for(let i=0;i<2+((rng()*2)|0);i++) saltCube(c,bx+(rng()-0.5)*TS*0.12,by-i*TS*0.10,TS*(0.07+rng()*0.05),cols); }
+}
+// MICA — a few reflective sheet-stacks, slightly spread. Baked.
+function bakeMica(c,TS,seed){ const rng=terrMul(seed>>>0);
+  for(let g=0;g<3;g++){ const gx=TS*(0.3+rng()*0.4), gy=TS*(0.3+rng()*0.4);
+    for(let k=0;k<3;k++){ const bx=gx-TS*0.14, by=gy-TS*0.08+k*TS*0.06, w=TS*(0.22+rng()*0.08);
+      for(let l=0;l<4;l++){ const oy=by+l*TS*0.018, tn=185+l*7; c.fillStyle=`rgba(${tn},${tn+8},${tn+22},0.92)`;
+        c.beginPath(); c.moveTo(bx,oy); c.lineTo(bx+w,oy-TS*0.03); c.lineTo(bx+w+TS*0.035,oy); c.lineTo(bx+TS*0.035,oy+TS*0.03); c.closePath(); c.fill(); }
+      c.strokeStyle='rgba(255,255,255,0.55)'; c.lineWidth=1; c.beginPath(); c.moveTo(bx,by); c.lineTo(bx+w,by-TS*0.03); c.stroke(); } }
+}
+// BRINE — glowing teal pools. Live (self-lit).
+function drawWorldBrine(px,py,TS,seed,now){ const rng=terrMul(seed>>>0), cx=px+TS*0.5, cy=py+TS*0.5, pulse=0.7+0.3*Math.sin(now*0.004+seed*0.11);
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,TS*0.55); gl.addColorStop(0,`rgba(90,200,220,${0.22*pulse})`); gl.addColorStop(1,'rgba(90,200,220,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,TS*0.55,0,7); ctx.fill(); ctx.restore();
+  for(let i=0;i<4;i++){ const bx=cx+(rng()-0.5)*TS*0.4, by=cy+(rng()-0.5)*TS*0.34, r=TS*(0.10+rng()*0.10);
+    const g=ctx.createRadialGradient(bx-r*0.3,by-r*0.4,2,bx,by,r); g.addColorStop(0,'#7fe0ec'); g.addColorStop(0.5,'#2a8ca0'); g.addColorStop(1,'#0c3240'); ctx.fillStyle=g;
+    ctx.beginPath(); ctx.ellipse(bx,by,r,r*0.72,rng()*0.6,0,7); ctx.fill();
+    ctx.fillStyle='rgba(210,255,255,0.6)'; ctx.beginPath(); ctx.ellipse(bx-r*0.34,by-r*0.4,r*0.3,r*0.12,-0.4,0,7); ctx.fill(); }
+}
+// CINDER — a crystalline FLOWER: hot faceted petals radiating from an ember core. Live.
+function drawWorldCinder(px,py,TS,seed,now){ const cx=px+TS*0.5, cy=py+TS*0.5, pulse=0.7+0.3*Math.sin(now*0.006+seed*0.11);
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,TS*0.6); gl.addColorStop(0,`rgba(255,140,50,${0.4*pulse})`); gl.addColorStop(1,'rgba(255,140,50,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,TS*0.6,0,7); ctx.fill(); ctx.restore();
+  const pet=9; for(let ring=0;ring<2;ring++){ const len=ring?TS*0.22:TS*0.36, wid=ring?TS*0.05:TS*0.075, off=ring?0.35:0;
+    for(let i=0;i<pet;i++){ const an=i/pet*6.28+off, ex=cx+Math.cos(an)*len, ey=cy+Math.sin(an)*len, nx=Math.cos(an+1.57), ny=Math.sin(an+1.57);
+      const g=ctx.createLinearGradient(cx,cy,ex,ey); g.addColorStop(0,'#fff2c0'); g.addColorStop(0.4,'#ff9a3c'); g.addColorStop(1,'#b52d16'); ctx.fillStyle=g;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+nx*wid+(ex-cx)*0.4,cy+ny*wid+(ey-cy)*0.4); ctx.lineTo(ex,ey); ctx.lineTo(cx-nx*wid+(ex-cx)*0.4,cy-ny*wid+(ey-cy)*0.4); ctx.closePath(); ctx.fill(); } }
+  const cg=ctx.createRadialGradient(cx,cy,1,cx,cy,TS*0.11); cg.addColorStop(0,'#fff'); cg.addColorStop(0.4,'#ffd070'); cg.addColorStop(1,'#ff6a20'); ctx.fillStyle=cg;
+  ctx.beginPath(); ctx.arc(cx,cy,TS*0.09,0,7); ctx.fill();
+}
+// RIME — larger radiating ice needles + frost. Live.
+function drawWorldRime(px,py,TS,seed,now){ const rng=terrMul(seed>>>0), cx=px+TS*0.5, cy=py+TS*0.5, pulse=0.7+0.3*Math.sin(now*0.005+seed*0.11);
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,TS*0.62); gl.addColorStop(0,`rgba(150,215,245,${0.36*pulse})`); gl.addColorStop(1,'rgba(150,215,245,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,TS*0.62,0,7); ctx.fill(); ctx.restore();
+  for(let i=0;i<11;i++){ const an=i/11*6.28+rng()*0.2, len=TS*(0.24+rng()*0.20), ex=cx+Math.cos(an)*len, ey=cy+Math.sin(an)*len, nx=Math.cos(an+1.57)*TS*0.04, ny=Math.sin(an+1.57)*TS*0.04;
+    const g=ctx.createLinearGradient(cx,cy,ex,ey); g.addColorStop(0,'#dff2fd'); g.addColorStop(1,'#6fb6d8'); ctx.fillStyle=g;
+    ctx.beginPath(); ctx.moveTo(cx+nx,cy+ny); ctx.lineTo(cx-nx,cy-ny); ctx.lineTo(ex,ey); ctx.closePath(); ctx.fill(); }
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(cx,cy,TS*0.06,0,7); ctx.fill();
 }
 function drawWorld(now){
   vpSize();
@@ -6479,35 +6529,12 @@ function drawWorld(now){
       drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now);
     } else if (t===T_MOSS){
       drawWorldMoss(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);   // clay is baked; moss glows live
-    } else if (t===T_MICA){
-      ctx.fillStyle='#b9c4e0';
-      for (let s2=0;s2<3;s2++) ctx.fillRect(px+TS*0.18,py+TS*(0.28+s2*0.18),TS*0.64,TS*0.05);
     } else if (t===T_BRINE){
-      const g3=0.5+0.5*Math.sin(now*0.004+x*1.3);
-      ctx.fillStyle=`rgba(90,200,220,${0.35+g3*0.3})`;
-      ctx.beginPath(); ctx.arc(px+TS/2,py+TS*0.55,TS*0.24,0,7); ctx.fill();
-    } else if (t===T_SALT){
-      ctx.fillStyle='#cfd6f2';
-      ctx.fillRect(px+TS*0.3,py+TS*0.35,TS*0.15,TS*0.3);
-      ctx.fillRect(px+TS*0.55,py+TS*0.25,TS*0.12,TS*0.4);
+      drawWorldBrine(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
     } else if (t===T_CINDER){
-      // scale: overlapping hot plates, breathing
-      const g2=0.5+0.5*Math.sin(now*0.008+x);
-      ctx.fillStyle=`rgba(255,120,50,${0.45+g2*0.4})`;
-      for (const [sx,sy] of [[0.3,0.34],[0.62,0.44],[0.42,0.66]]){
-        ctx.beginPath(); ctx.ellipse(px+sx*TS,py+sy*TS,TS*0.17,TS*0.11,0.5,0,7); ctx.fill();
-      }
+      drawWorldCinder(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
     } else if (t===T_RIME){
-      // salt: pale needles radiating from a cold centre
-      const g4=0.5+0.5*Math.sin(now*0.005+x*0.8);
-      ctx.strokeStyle=`rgba(150,215,245,${0.45+g4*0.4})`;
-      ctx.lineWidth=Math.max(1,TS*0.06);
-      const mx=px+TS/2, my=py+TS/2;
-      for (let a=0;a<6;a++){
-        const ang=a*Math.PI/3;
-        ctx.beginPath(); ctx.moveTo(mx,my);
-        ctx.lineTo(mx+Math.cos(ang)*TS*0.26,my+Math.sin(ang)*TS*0.26); ctx.stroke();
-      }
+      drawWorldRime(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
     } else if (t===T_WALL){
       // gate-wall: a riveted slab, colour-keyed to the tier it demands, with a
       // pulsing lock while still sealed and an open latch once the drill qualifies
