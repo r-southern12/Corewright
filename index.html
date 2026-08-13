@@ -6467,6 +6467,58 @@ function drawWorldRime(px,py,TS,seed,now){ const rng=terrMul(seed>>>0), cx=px+TS
     ctx.beginPath(); ctx.moveTo(cx+nx,cy+ny); ctx.lineTo(cx-nx,cy-ny); ctx.lineTo(ex,ey); ctx.closePath(); ctx.fill(); }
   ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(cx,cy,TS*0.06,0,7); ctx.fill();
 }
+// ---------- gates: ancient decrepit tech sealing a tier-gated region ----------
+// Two approved vault styles (B glyph slab, D reclaimed ring); the style is fixed
+// per depth so a whole curtain reads consistent, the layout varies per cell. Drawn
+// LIVE: the tier rune pulses while sealed, and once the drill qualifies it dims to
+// dead grey with a green "ready to breach" rim. Colour + numeral = required tier.
+// (The reward CACHE inside a gate is a future system; this is only the lock.)
+function gateRust(cx,cy,R,seed){ const rr=terrMul(seed>>>0);
+  for(let i=0;i<12;i++){ const an=rr()*6.28, r0=R*0.5+rr()*R*0.4;
+    ctx.strokeStyle=`rgba(${120+rr()*60|0},${60+rr()*30|0},30,0.5)`; ctx.lineWidth=1+rr()*2;
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(an)*r0,cy+Math.sin(an)*r0); ctx.lineTo(cx+Math.cos(an)*(r0+R*0.15+rr()*R*0.3),cy+Math.sin(an)*(r0+R*0.15+rr()*R*0.3)); ctx.stroke(); }
+}
+function drawGateGlyph(px,py,s,TC,RGB,num,locked,seed,now){
+  const x=px,y=py,cx=x+s/2,cy=y+s/2;
+  const g=ctx.createLinearGradient(x,y,x+s,y+s); g.addColorStop(0,'#2f3444'); g.addColorStop(1,'#161a24'); ctx.fillStyle=g;
+  ctx.beginPath(); ctx.moveTo(x+s*0.10,y+s*0.08); ctx.lineTo(x+s*0.92,y+s*0.06); ctx.lineTo(x+s*0.90,y+s*0.93); ctx.lineTo(x+s*0.08,y+s*0.94); ctx.closePath(); ctx.fill();
+  const rr=terrMul(seed>>>0); ctx.strokeStyle='rgba(90,100,120,0.55)'; ctx.lineWidth=Math.max(1,s*0.012);
+  for(let i=0;i<6;i++){ let gx=x+s*(0.2+rr()*0.6), gy=y+s*(0.2+rr()*0.6); ctx.beginPath(); ctx.moveTo(gx,gy);
+    for(let k=0;k<3;k++){ gx+=(rr()<0.5?1:-1)*s*0.12; ctx.lineTo(gx,gy); gy+=(rr()<0.5?1:-1)*s*0.1; ctx.lineTo(gx,gy); } ctx.stroke();
+    ctx.fillStyle='rgba(120,130,150,0.5)'; ctx.beginPath(); ctx.arc(gx,gy,Math.max(1,s*0.016),0,7); ctx.fill(); }
+  ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=Math.max(1,s*0.012); ctx.beginPath(); ctx.moveTo(x+s*0.3,y+s*0.08); ctx.lineTo(x+s*0.42,y+s*0.5); ctx.lineTo(x+s*0.34,y+s*0.92); ctx.stroke();
+  const pulse=locked?0.7+0.3*Math.sin(now*0.005+seed*0.1):0.35, RU=locked?RGB:'150,160,180', TU=locked?TC:'#9aa6c0';
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,s*0.24); gl.addColorStop(0,`rgba(${RU},${0.8*pulse})`); gl.addColorStop(1,`rgba(${RU},0)`); ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,s*0.24,0,7); ctx.fill();
+  ctx.strokeStyle=TU; ctx.lineWidth=Math.max(1.5,s*0.022); ctx.beginPath(); for(let a=0;a<3;a++){ const an=a/3*6.28-1.57; ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*s*0.14,cy+Math.sin(an)*s*0.14); } ctx.closePath(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,s*0.06,0,7); ctx.stroke();
+  if(!locked){ ctx.strokeStyle='rgba(120,220,150,0.8)'; ctx.lineWidth=Math.max(1,s*0.02); ctx.strokeRect(x+s*0.1,y+s*0.09,s*0.8,s*0.84); }
+  ctx.font=`bold ${s*0.16}px 'Courier New',monospace`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillText(num,cx+1,cy+s*0.31+1); ctx.fillStyle=TU; ctx.fillText(num,cx,cy+s*0.31);
+  ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+}
+function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
+  const x=px,y=py,cx=x+s/2,cy=y+s/2,R=s*0.42;
+  const g=ctx.createRadialGradient(cx,cy,R*0.5,cx,cy,R); g.addColorStop(0,'#2a2018'); g.addColorStop(0.7,'#40342a'); g.addColorStop(1,'#241c16'); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.fill();
+  ctx.strokeStyle='#5a4a3a'; ctx.lineWidth=Math.max(2,s*0.035); ctx.stroke();
+  gateRust(cx,cy,R,(seed*7)>>>0);
+  const rr=terrMul((seed*9)>>>0); for(let i=0;i<9;i++){ const an=rr()*6.28, d=R*(0.7+rr()*0.3); ctx.fillStyle=`rgba(${90+rr()*40|0},${110+rr()*30|0},${90+rr()*30|0},0.8)`; ctx.beginPath(); ctx.arc(cx+Math.cos(an)*d,cy+Math.sin(an)*d,s*(0.025+rr()*0.03),0,7); ctx.fill(); }
+  const pulse=locked?0.7+0.3*Math.sin(now*0.005+seed*0.1):0.35, RU=locked?RGB:'150,160,180', TU=locked?TC:'#9aa6c0';
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,R*0.55); gl.addColorStop(0,`rgba(${RU},${0.8*pulse})`); gl.addColorStop(1,`rgba(${RU},0)`); ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,R*0.55,0,7); ctx.fill();
+  const r=R*0.36; const cg=ctx.createLinearGradient(cx-r,cy-r,cx+r,cy+r); cg.addColorStop(0,'#fff'); cg.addColorStop(0.4,TU); cg.addColorStop(1,`rgba(${RU},0.4)`); ctx.fillStyle=cg;
+  ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx+r*0.6,cy); ctx.lineTo(cx,cy+r); ctx.lineTo(cx-r*0.6,cy); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx,cy+r); ctx.stroke();
+  if(!locked){ ctx.strokeStyle='rgba(120,220,150,0.8)'; ctx.lineWidth=Math.max(1,s*0.025); ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke(); }
+  ctx.font=`bold ${s*0.14}px 'Courier New',monospace`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillText(num,cx+1,cy+R*0.64+1); ctx.fillStyle=TU; ctx.fillText(num,cx,cy+R*0.64);
+  ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+}
+function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
+  const TC=['','#4FE3C1','#E8A33D','#8B7CF6'][tier]||'#4FE3C1';
+  const RGB=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
+  const num=['','I','II','III'][tier]||'?';
+  if (reclaimed) drawGateReclaimed(px,py,TS,TC,RGB,num,locked,seed,now);
+  else drawGateGlyph(px,py,TS,TC,RGB,num,locked,seed,now);
+}
 function drawWorld(now){
   vpSize();
   const w=world2d.width=Math.round(VW), h=world2d.height=Math.round(VH);
@@ -6536,36 +6588,11 @@ function drawWorld(now){
     } else if (t===T_RIME){
       drawWorldRime(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
     } else if (t===T_WALL){
-      // gate-wall: a riveted slab, colour-keyed to the tier it demands, with a
-      // pulsing lock while still sealed and an open latch once the drill qualifies
       const req=getGate(x,y)||1;
-      const tierCol=req>=3?'#8B7CF6':req>=2?'#E8A33D':'#4FE3C1';
       const locked=drillPower()/req<0.95;
-      ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=2;
-      ctx.strokeRect(px+2,py+2,TS-4,TS-4);
-      ctx.strokeStyle=tierCol;
-      ctx.globalAlpha=locked?0.55+0.35*Math.sin(now*0.005+x+y):0.9;
-      ctx.strokeRect(px+4,py+4,TS-8,TS-8);
-      // rivets
-      ctx.fillStyle=tierCol; ctx.globalAlpha=0.8;
-      for (const [rx,ry] of [[0.22,0.22],[0.78,0.22],[0.22,0.78],[0.78,0.78]])
-        { ctx.beginPath(); ctx.arc(px+rx*TS,py+ry*TS,TS*0.05,0,7); ctx.fill(); }
-      // lock glyph in the middle
-      ctx.globalAlpha=1;
-      ctx.fillStyle=locked?tierCol:'rgba(120,200,150,0.9)';
-      const cx=px+TS/2, cy=py+TS*0.56;
-      ctx.fillRect(cx-TS*0.11,cy-TS*0.06,TS*0.22,TS*0.18);
-      ctx.strokeStyle=locked?tierCol:'rgba(120,200,150,0.9)'; ctx.lineWidth=2;
-      ctx.beginPath();
-      ctx.arc(cx,cy-TS*0.06,TS*0.09,Math.PI, locked?2*Math.PI:1.35*Math.PI);
-      ctx.stroke();
-      ctx.globalAlpha=1;
-      // tier numeral
-      ctx.fillStyle='rgba(0,0,0,0.7)';
-      ctx.font=`bold ${Math.floor(TS*0.34)}px 'Courier New',monospace`;
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(['','I','II','III'][req]||'?', cx, py+TS*0.26);
-      ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+      const gseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
+      const reclaimed=((Math.imul(y,2654435761)>>>1)&1)===1;   // style fixed per depth -> a curtain reads consistent
+      drawGate(px,py,TS,req,locked,gseed,reclaimed,now);
     }
     // biome / planet tint wash: a translucent colour laid over the stone so each
     // zone reads distinct at a glance. Skips self-lit gems and gate-walls. Reads
