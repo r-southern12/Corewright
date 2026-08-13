@@ -6325,6 +6325,7 @@ function bakeTile(x,y,t,TS){
   // metal ore: faceted flecks baked THROUGHOUT the host rock (static, no glow, so
   // baking into the tile is correct — nothing to bleed past the edge).
   if (METAL_PAL[t]) bakeMetal(c,TS,METAL_PAL[t],(Math.imul(x,131)^Math.imul(y,17))>>>0);
+  if (t===T_CLAY) bakeClay(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // matte clay pocket, static
   return cv;
 }
 function tileBaseFor(x,y,t,TS){
@@ -6382,6 +6383,39 @@ function drawWorldCore(px,py,TS,tier,H,seed,now){
   coreXtal(cx,cy,main,(rng()-0.5)*0.5,P);                               // the dominant central stone
   for (const s of shards) if (s[1]>=cy) coreXtal(s[0],s[1],s[2],s[3],P);
   if (tier>=3){ctx.save();ctx.globalCompositeOperation='lighter';ctx.fillStyle=`rgba(255,255,255,${0.5*pulse})`;for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(cx+(rng()-0.5)*main,cy+(rng()-0.5)*main,Math.max(1,TS*0.04),0,7);ctx.fill();}ctx.restore();}
+}
+// ---------- moss & clay deposits (clustered in the host rock) ----------
+// Clay: matte tan pockets, static -> BAKED into the tile like the metal flecks.
+// A tight cluster of smooth blobs with drying cracks and a soft sheen, inset from
+// the edges so it reads as a pocket IN the rock, not a tile-filling wash.
+function bakeClay(c,TS,seed){
+  const rng=terrMul(seed>>>0), cx=TS*0.5, cy=TS*0.5, n=3+((rng()*2)|0);
+  for(let k=0;k<n;k++){ const bx=cx+(rng()-0.5)*TS*0.34, by=cy+(rng()-0.5)*TS*0.34, r=TS*(0.11+rng()*0.09);
+    const g=c.createRadialGradient(bx-r*0.3,by-r*0.35,2,bx,by,r);
+    g.addColorStop(0,'#d9b487'); g.addColorStop(0.55,'#a97c4e'); g.addColorStop(1,'#6e4a2a'); c.fillStyle=g;
+    c.beginPath(); for(let a=0;a<9;a++){ const an=a/9*6.28, rr=r*(0.82+0.2*Math.sin(a*1.7+k)); c[a?'lineTo':'moveTo'](bx+Math.cos(an)*rr,by+Math.sin(an)*rr); } c.closePath(); c.fill();
+    c.strokeStyle='rgba(60,40,24,0.45)'; c.lineWidth=1;
+    for(let i=0;i<3;i++){ const an=rng()*6.28; c.beginPath(); c.moveTo(bx,by); c.lineTo(bx+Math.cos(an)*r*0.8,by+Math.sin(an)*r*0.8); c.stroke(); }
+    c.fillStyle='rgba(255,240,215,0.35)'; c.beginPath(); c.ellipse(bx-r*0.3,by-r*0.34,r*0.35,r*0.18,-0.5,0,7); c.fill();
+  }
+}
+// Moss: bioluminescent nodules — drawn LIVE (like the cores) so its soft green
+// glow bleeds into the surrounding stone and breathes. A clustered patch, not a
+// ground-cover crust.
+function drawWorldMoss(px,py,TS,seed,now){
+  const rng=terrMul(seed>>>0), cx=px+TS*0.5, cy=py+TS*0.5, pulse=0.7+0.3*Math.sin(now*0.003+seed*0.11);
+  const gl=ctx.createRadialGradient(cx,cy,2,cx,cy,TS*0.6);
+  gl.addColorStop(0,`rgba(120,240,150,${0.26*pulse})`); gl.addColorStop(1,'rgba(120,240,150,0)');
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle=gl; ctx.beginPath(); ctx.arc(cx,cy,TS*0.6,0,7); ctx.fill(); ctx.restore();
+  const n=4+((rng()*3)|0);
+  for(let k=0;k<n;k++){ const bx=cx+(rng()-0.5)*TS*0.42, by=cy+(rng()-0.5)*TS*0.42, br=TS*(0.07+rng()*0.06);
+    for(let i=0;i<4;i++){ const ox=bx+(rng()-0.5)*br, oy=by+(rng()-0.5)*br, r=br*(0.5+rng()*0.5), col=['#2f6b3c','#4f9d63','#6fce82'][i%3];
+      ctx.fillStyle=col; ctx.beginPath(); ctx.arc(ox,oy,r,0,7); ctx.fill();
+      ctx.fillStyle='rgba(170,255,200,0.5)'; ctx.beginPath(); ctx.arc(ox-r*0.3,oy-r*0.3,r*0.35,0,7); ctx.fill(); }
+  }
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<5;i++){ ctx.fillStyle=`rgba(190,255,210,${0.7*pulse})`; ctx.beginPath(); ctx.arc(cx+(rng()-0.5)*TS*0.6,cy+(rng()-0.5)*TS*0.6,Math.max(1,TS*0.035),0,7); ctx.fill(); }
+  ctx.restore();
 }
 function drawWorld(now){
   vpSize();
@@ -6444,12 +6478,7 @@ function drawWorld(now){
       const seed=nodeCoreSeed(x,y);
       drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now);
     } else if (t===T_MOSS){
-      ctx.fillStyle='#6fdc8f';
-      for (let s=0;s<3;s++)
-        ctx.fillRect(px+(0.2+s*0.28)*TS,py+TS*0.6,TS*0.1,TS*0.35);
-    } else if (t===T_CLAY){
-      ctx.fillStyle='#8a6b4f';
-      ctx.beginPath(); ctx.ellipse(px+TS*0.5,py+TS*0.6,TS*0.28,TS*0.18,0,0,7); ctx.fill();
+      drawWorldMoss(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);   // clay is baked; moss glows live
     } else if (t===T_MICA){
       ctx.fillStyle='#b9c4e0';
       for (let s2=0;s2<3;s2++) ctx.fillRect(px+TS*0.18,py+TS*(0.28+s2*0.18),TS*0.64,TS*0.05);
