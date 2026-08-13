@@ -5943,8 +5943,8 @@ function digAim(){
   const dirX = keys.right?1:keys.left?-1:0;
   const dirY = keys.down?1:keys.jump?-1:0;
   const col=Math.floor(player.x);
-  if (dirY>0) return {tx:col+dirX, ty:Math.floor(player.y+0.35)};      // down / down-diagonal
-  if (dirY<0) return {tx:col+dirX, ty:Math.floor(player.y-0.95)};      // up / up-diagonal
+  if (dirY>0) return {tx:col+dirX, ty:Math.floor(player.y+0.35)};      // down: the floor tile under the body
+  if (dirY<0) return {tx:col+dirX, ty:Math.floor(player.y-1.05)};      // up: the tile ABOVE the head (‑0.95 hit the body's own tile, which is air in a shaft, so nothing mined)
   return {tx:col+(dirX||player.face), ty:Math.floor(player.y-0.45)};   // horizontal (dir, else facing)
 }
 function stepPlayer(dt){
@@ -6062,7 +6062,7 @@ function _rr(c,x,y,w,h,r){ r=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
    twitch); only a tiny per-step bounce while walking. */
 function drawHero(px,py,now){
   const S=TS, f=player.frame, face=player.face;
-  const walking=player.anim==='walk', mining=player.anim==='mine';
+  const walking=player.anim==='walk', drilling=!!mine;      // drilling = actually cutting a tile (spark/plunge/spin)
   const thrusting=(player.anim==='hoverUp'||keys.jump);     // actively firing feet jets
   const airborne=!player.onGround;                          // off the floor at all
   const step=walking?(f%2?1:-1):0;
@@ -6072,6 +6072,21 @@ function drawHero(px,py,now){
   const pulse=0.5+0.5*Math.sin(now*0.004);
   const coreCol=pulse>0.5?'#4FE3C1':'#8B7CF6';
   const STEEL_D='#1b2133', STEEL='#333d5a', STEEL_L='#6b779e', TRIM='#4FE3C1', BRASS='#E8A33D';
+  // AIM + STANCE. An actively-mined tile (mouse or keys) wins; otherwise, while the
+  // dig button is held, the INTENDED dig direction from digAim — so the drill and
+  // the whole body swing to point where you're about to bore even before any rock
+  // is cut, and a mouse target near the character reads too. Facing turns toward
+  // the target so the bit always reads forward, never back through the body.
+  const aimTile = mine ? {tx:mine.tx,ty:mine.ty} : digAim();
+  let drawFace = face, drillAng = 0.12;
+  if (aimTile){
+    const dxm=(aimTile.tx+0.5)-player.x, dym=(aimTile.ty+0.5)-(player.y-0.45);
+    if (Math.abs(dxm)>0.1) drawFace = dxm>0?1:-1;
+    drillAng=Math.max(-1.55,Math.min(1.55,Math.atan2(dym,dxm*drawFace)));
+  }
+  const posing = !!aimTile;
+  const bodyTilt = posing ? Math.max(-0.34,Math.min(0.42,(drillAng-0.12)*0.30)) : 0;   // hunch fwd boring down, rock back up
+  const crouch  = posing ? Math.max(0,Math.sin(drillAng))*S*0.05 : 0;                   // sink a touch when boring down
   ctx.save(); ctx.globalAlpha=flick;
 
   // ---- contact shadow: a soft radial pool cast on the floor the feet rest on.
@@ -6085,16 +6100,7 @@ function drawHero(px,py,now){
   }
 
   ctx.translate(px,py+bob);
-  if (face<0) ctx.scale(-1,1);   // draw facing +x, mirror for left
-
-  // aim the drill at the mined tile, then lean the whole upper body toward it
-  let drillAng=0.12;
-  if (mining && mine){
-    const dxm=(mine.tx+0.5)-player.x, dym=(mine.ty+0.5)-(player.y-0.45);
-    drillAng=Math.max(-1.55,Math.min(1.55,Math.atan2(dym,dxm*(face||1))));
-  }
-  const bodyTilt=mining?Math.max(-0.34,Math.min(0.42,(drillAng-0.12)*0.30)):0;   // hunch fwd boring down, rock back boring up
-  const crouch=mining?Math.max(0,Math.sin(drillAng))*S*0.05:0;                   // sink a touch when boring down
+  if (drawFace<0) ctx.scale(-1,1);   // draw facing +x, mirror for left / toward the aim target
 
   // ---- legs / boots (planted — NOT affected by the lean) ----
   for (const [lx,dir] of [[-S*0.12,-1],[S*0.005,1]]){
@@ -6158,7 +6164,7 @@ function drawHero(px,py,now){
   ctx.strokeStyle=STEEL; ctx.lineWidth=S*0.12; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(S*0.06,-S*0.52); ctx.lineTo(ax,ay); ctx.stroke(); ctx.lineCap='butt';
   ctx.fillStyle=STEEL_L; ctx.beginPath(); ctx.arc(ax,ay,S*0.08,0,7); ctx.fill();  // fist
-  const plunge=mining?(f%3)*S*0.045:0;
+  const plunge=drilling?(f%3)*S*0.045:0;
   ctx.save(); ctx.translate(ax,ay); ctx.rotate(drillAng-bodyTilt);   // subtract the lean so the bit still aims true
   const d0=S*0.02+plunge;                                         // housing start along the drill axis (centreline y=0)
   const hg=ctx.createLinearGradient(d0,-S*0.12,d0,S*0.12);
@@ -6174,13 +6180,13 @@ function drawHero(px,py,now){
   ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(bx,-bh); ctx.lineTo(tip,0); ctx.lineTo(bx,bh); ctx.closePath(); ctx.fill();
   // travelling spiral flutes read it as a turning screw
   ctx.strokeStyle='rgba(60,35,10,0.85)'; ctx.lineWidth=Math.max(1,S*0.022);
-  const sp=mining?((now*0.006)%0.25):0;
+  const sp=drilling?((now*0.006)%0.25):0;
   for (let i=0;i<4;i++){ let u=(i/4)+sp; if(u>0.97) u-=1; if(u<0.03) continue;
     const cxp=bx+(tip-bx)*u, sh=bh*(1-u), off=(tip-bx)*0.10;
     ctx.beginPath(); ctx.moveTo(cxp+off,-sh); ctx.lineTo(cxp-off,sh); ctx.stroke(); }
   ctx.fillStyle='rgba(255,248,215,0.9)'; ctx.beginPath(); ctx.arc(bx+S*0.05,-bh*0.45,S*0.022,0,7); ctx.fill();  // catch-light
   // mining: hot bite point + chips sprayed BACK off the tip, all in the drill frame
-  if (mining){
+  if (drilling){
     ctx.fillStyle=`rgba(255,220,140,${0.5+0.4*(f%2)})`; ctx.beginPath(); ctx.arc(tip,0,S*0.075,0,7); ctx.fill();
     for (let i=0;i<5;i++){ const a=Math.PI+(Math.random()-0.5)*1.8, dd=S*(0.05+Math.random()*0.22);
       ctx.fillStyle='rgba(200,160,95,0.75)'; ctx.fillRect(tip+Math.cos(a)*dd,Math.sin(a)*dd,S*0.05,S*0.05); }
