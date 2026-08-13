@@ -5136,10 +5136,9 @@ function getElem(x,y){ if(y<0||y>=WH) return 0; return column(x).elem[y]; }  // 
 //            topsoil/deep override ore tables inside the zone. The hardness/DPS/
 //            gate fields are DATA HOOKS consumed by later systems; this pass lays
 //            the regions and records element per cell.
-//  gates:    optional [{ atDepth, tier }] — a horizontal curtain of
-//            T_WALL laid across the whole width at that depth, every cell stamped
-//            with the required tier. The wall won't yield until the drill meets
-//            the tier, so everything below a gate is a tiered-locked area.
+//            (Ancient caches — scattered single tier-locked T_WALL vaults — are
+//            seeded per column below, not from the descriptor; they replaced the
+//            old full-width gate curtains.)
 //
 // ---------- elements ----------
 // Biomes carry an element. The loop: an ICE zone is hard-gated (needs ice-tier
@@ -5183,7 +5182,6 @@ const PLANET_TERRA={
     [0.05,  (d,r,base)=> (d>=26 && d<52) ? T_MICA  : base],
   ],
   // a Tier-II curtain seals the voidsteel deep: you must forge iron gear to pass
-  gates:[ { atDepth:50, tier:2 } ],
   biomes:[
     // FIRE zone: ungated, hard + damaging — the source of ice-counter materials
     { element:'fire', scale:22, threshold:0.82, hardMult:3, dps:6,
@@ -5256,10 +5254,6 @@ const PLANET_FERRIC={
         [0.28, (d,r,base)=> r<0.55 ? T_RIME : base],
         [0.14, T_BRINE],
       ] },
-  ],
-  gates:[
-    { atDepth:38, tier:2 },
-    { atDepth:62, tier:3 },
   ],
   bootstrap:{ count:6, nodes:3, node:T_NODE1, other:T_IRON },
 };
@@ -5335,14 +5329,25 @@ function genColumn(x){
     }
     tiles[y]=t;
   }
-  // gates: a tier-stamped wall at each gate depth, with a per-column fissure roll
-  if (p.gates) for (const g of p.gates){
-    const y=s+g.atDepth;
-    if (y<=0||y>=BEDROCK_Y) continue;
-    // deterministic fissure: hash of column x + gate depth
-    const fr=mulberry32((WORLD_SEED+7+g.atDepth) ^ Math.imul(x,0x85EBCA77))();
-    if (fr<0.08) continue;
-    tiles[y]=T_WALL; gate[y]=g.tier;
+  // Scattered ANCIENT CACHES (replaces the old full-width gate curtains): occasional
+  // single tier-locked vaults buried in the strata, found by digging rather than
+  // walled across a whole depth. Tier follows the depth band (dirt→I, soft-stone→II,
+  // deep→III) so a vault reads as "you'll need that grade of drill". One roll per
+  // column keeps them scattered (~1 in 16 columns) and deterministic for save-diffing.
+  {
+    const vr=mulberry32((WORLD_SEED+31) ^ Math.imul(x,0x27D4EB2F));
+    if (vr()<0.06){
+      // pick the tier first (shallow tiers a bit more common), then bury the vault
+      // in THAT tier's depth band — so all three tiers actually appear instead of
+      // almost everything landing in the huge deep band.
+      const tr=vr(), tier=tr<0.40?1:tr<0.72?2:3;
+      const lo=tier===1?2:tier===2?b.dirt:b.s1;
+      const hi=tier===1?b.dirt:tier===2?b.s1:Math.max(b.s1+8,BEDROCK_Y-s-2);
+      const yy=s+lo+Math.floor(vr()*Math.max(1,hi-lo));
+      if (yy>0 && yy<BEDROCK_Y && tiles[yy]!==T_AIR && tiles[yy]!==T_BEDROCK){
+        gate[yy]=tier; tiles[yy]=T_WALL;
+      }
+    }
   }
   // bootstrap: only the spawn band (near x=0) is seeded with guaranteed starters,
   // so the opening always has copper + nodes without peppering the whole world
@@ -5794,7 +5799,7 @@ function startMine(sx,sy){
   if (Math.hypot(dx,dy)>REACH){ say('Out of reach.','warn'); return; }
   const req=gateReqTier(tx,ty);
   if (req){
-    say(`A gate-wall — sealed. It needs a ${TIERS[req].name} drill to crack.`,'warn');
+    say(`An ancient cache — sealed. It needs a ${TIERS[req].name} drill to crack.`,'warn');
     return;
   }
   if (t===T_BEDROCK){ say('World-floor bedrock. Nothing digs through this.','warn'); return; }
@@ -5887,7 +5892,7 @@ function bitYieldChance(){
   return (1-tinHardness(b.tin))*0.5;      // up to +50% chance at min tin
 }
 function tileYield(t,silent,coreSeed){
-  if (t===T_WALL){ if(!silent) say('The gate-wall gives way. The path below opens.','good'); }
+  if (t===T_WALL){ say('Ancient cache breached.','good'); }   // reward contents are a later system; for now it just cracks open
   else if (t===T_COPPER){ metals.copper+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Copper ore pried loose.'); }
   else if (t===T_IRON){ metals.iron+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Iron ore chipped free.'); }
   else if (t===T_TIN){ metals.tin+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Tin ore — soft and bright.'); }
