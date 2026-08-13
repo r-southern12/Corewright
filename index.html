@@ -6116,7 +6116,12 @@ function drawHero(px,py,now){
   // the whole body swing to point where you're about to bore even before any rock
   // is cut, and a mouse target near the character reads too. Facing turns toward
   // the target so the bit always reads forward, never back through the body.
-  const aimTile = mine ? {tx:mine.tx,ty:mine.ty} : digAim();
+  // Pose toward what you're actually drilling: an active cut wins; otherwise, while
+  // the dig button is held, the intended direction — but ONLY if a real solid block
+  // sits there. Over open air the drill stays neutral, so flying + holding mine no
+  // longer jiggles the body through a mining stance with nothing to bite.
+  let aimTile = mine ? {tx:mine.tx,ty:mine.ty} : null;
+  if (!aimTile){ const a=digAim(); if (a){ const tt=getTile(a.tx,a.ty); if (tt!==T_AIR && tt!==T_BEDROCK) aimTile=a; } }
   let drawFace = face, drillAng = 0.12;
   if (aimTile){
     const dxm=(aimTile.tx+0.5)-player.x, dym=(aimTile.ty+0.5)-(player.y-0.45);
@@ -6727,6 +6732,18 @@ function drawWorld(now){
       if (y<0||y>=WH) continue;
       if (dx*dx+dy*dy>sRange*sRange) continue;
       const t=getTile(x,y);
+      if (t===T_WALL){
+        // ANCIENT CACHE: ping its 2x2 once (at the anchor) with a tier-coloured DIAMOND,
+        // distinct from the core boxes, so the buried vaults can be hunted down.
+        if (getTile(x-1,y)===T_WALL || getTile(x,y-1)===T_WALL) continue;   // only the top-left cell
+        const tier=getGate(x,y)||1, tc=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
+        const ping=0.45+0.4*Math.abs(Math.sin(now*0.004+(x+y)*0.6));
+        const mcx=x*TS-camX+TS, mcy=y*TS-camY+TS;                           // centre of the 2x2
+        ctx.strokeStyle=`rgba(${tc},${ping})`; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.moveTo(mcx,mcy-TS*0.62); ctx.lineTo(mcx+TS*0.62,mcy); ctx.lineTo(mcx,mcy+TS*0.62); ctx.lineTo(mcx-TS*0.62,mcy); ctx.closePath(); ctx.stroke();
+        ctx.fillStyle=`rgba(${tc},${ping*0.35})`; ctx.fill();
+        continue;
+      }
       if (!RESOURCE.has(t)) continue;
       if (getSeen(x,y)&&SELF_LIT.has(t)) continue;
       const px2=x*TS-camX, py2=y*TS-camY;
