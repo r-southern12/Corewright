@@ -5080,16 +5080,17 @@ const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_CINDER,T_RIME,T_MOSS,T_BRINE])
 // these: it calls out the core tier you're set up for and the one rung up, so you can steer toward the
 // cores worth digging rather than being swamped by a ping on every scrap of ore.
 const NODE_TILE={[T_NODE1]:1,[T_NODE2]:2,[T_NODE3]:3};
-const RESOURCE=new Set([T_ORE,T_NODE1,T_NODE2,T_NODE3,T_MOSS,T_SALT,T_CINDER,T_RIME,T_COPPER,T_IRON,T_VST,
+const RESOURCE=new Set([T_NODE1,T_NODE2,T_NODE3,T_MOSS,T_SALT,T_CINDER,T_RIME,T_COPPER,T_IRON,T_VST,
   T_CLAY,T_MICA,T_BRINE,T_TIN]);
 // rolled fresh for a new run; loaded from the save when one exists
 let WORLD_SEED=(Math.random()*2**31)|0;
 // The world had almost no tin (it was band-locked and rare), so bronze was near-impossible to source.
-// Ore seams are now mostly TIN: 80% of every T_ORE cell becomes T_TIN, 20% stays a dust seam. Split on the
-// same per-cell roll r — inside an ore-table branch r is uniform in [0,chance), so r<chance*0.8 is the
-// lower 80% — keeping generation deterministic per column (a regen must reproduce the same tiles).
+// This seam is a TIN seam: 80% of its cells become T_TIN, the rest stay plain host stone. (It used to
+// leave a T_ORE dust block in the gap; the ore/dust block was removed, so that fraction is now just
+// stone.) Split on the per-cell roll r — inside a table branch r is uniform in [0,chance), so r<chance*0.8
+// is the lower 80% — keeping generation deterministic per column (a regen must reproduce the same tiles).
 const ORE_TIN_FRAC=0.8;
-const oreVein=chance=>(d,r)=> r < chance*ORE_TIN_FRAC ? T_TIN : T_ORE;
+const oreVein=chance=>(d,r,base)=> r < chance*ORE_TIN_FRAC ? T_TIN : base;
 
 // ---------- infinite world storage: a cache of columns keyed by absolute x ----------
 // The world is no longer a fixed WWxWH array. Each column is generated on demand
@@ -5887,7 +5888,6 @@ function bitYieldChance(){
 }
 function tileYield(t,silent,coreSeed){
   if (t===T_WALL){ if(!silent) say('The gate-wall gives way. The path below opens.','good'); }
-  else if (t===T_ORE){ dust+=4; updateMeters(); if(!silent) say('Ore seam crushed to dust. +4◈'); }
   else if (t===T_COPPER){ metals.copper+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Copper ore pried loose.'); }
   else if (t===T_IRON){ metals.iron+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Iron ore chipped free.'); }
   else if (t===T_TIN){ metals.tin+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Tin ore — soft and bright.'); }
@@ -6592,13 +6592,7 @@ function drawWorld(now){
     // Frozen base (fill, milled noise, carved bevel, lit edge, topsoil crust) is
     // baked per-cell and blitted; the animated overlays below still draw live.
     ctx.drawImage(tileBaseFor(x,y,t,TS),px,py);
-    if (t===T_ORE){
-      ctx.fillStyle='#E8A33D';
-      for (let s=0;s<4;s++){
-        const ox=(hash2(x*4+s,y)*0.7+0.15)*TS, oy=(hash2(x,y*4+s)*0.7+0.15)*TS;
-        ctx.fillRect(px+ox,py+oy,TS*0.12,TS*0.12);
-      }
-    } else if (t>=T_NODE1&&t<=T_NODE3){
+    if (t>=T_NODE1&&t<=T_NODE3){
       const seed=nodeCoreSeed(x,y);
       drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now);
     } else if (t===T_MOSS){
