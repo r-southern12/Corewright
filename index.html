@@ -1501,7 +1501,7 @@ let dust=0, hp=100, hardcore=true, corpse=null;
 // (Superseded the earlier "cells are consumable, dumped into the bank" model at the player's request.)
 let powerBank=0;
 let maxAir=120, air=120;
-const metals={copper:0,iron:0,vst:0,tin:0};
+const metals={copper:0,iron:0,vst:0,tin:0,adamant:0,aether:0};
 // Expanded for excavation. Each reagent has a depth and a job, so the
 // potion you can brew is a function of where you've been able to dig.
 const reagents={moss:0,salt:0,clay:0,mica:0,brine:0,cinder:0,rime:0};
@@ -5033,7 +5033,9 @@ const WH=90;                 // world DEPTH is fixed; WIDTH is infinite
 const BEDROCK_Y=WH-1;        // bottom row is unbreakable floor
 const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=8,
       T_MOSS=9,T_SALT=10,T_CINDER=11,T_COPPER=12,T_IRON=13,T_VST=14,
-      T_CLAY=15,T_MICA=16,T_BRINE=17,T_WALL=18,T_BEDROCK=19,T_RIME=20,T_TIN=21;
+      T_CLAY=15,T_MICA=16,T_BRINE=17,T_WALL=18,T_BEDROCK=19,T_RIME=20,T_TIN=21,
+      // deep tiers: S4/S5 stone, NODE4/5 cores, adamant/aether smeltable ore
+      T_S4=22,T_S5=23,T_NODE4=24,T_NODE5=25,T_ADT=26,T_AETH=27;
 // T_CINDER / T_RIME are the ELEMENT-BIOME materials. They only generate inside a
 // fire or ice zone respectively, so possessing them is proof you were there.
 // Each is dual-purpose: a forge metal-analogue for elemental gear AND a brewing
@@ -5054,6 +5056,11 @@ const TILE_INFO={
   [T_COPPER]:{col:'#4a3b2e',resist:0.4},[T_IRON]:{col:'#37405c',resist:1.15},[T_VST]:{col:'#2a3050',resist:2.2},
   [T_TIN]:{col:'#5a5d68',resist:1.05},   // >= S1 (1.0): tin sits in the soft-stone band, so it can't be mined before that stone
   [T_CLAY]:{col:'#5a4436',resist:0.3},[T_MICA]:{col:'#3f4a63',resist:1.9},[T_BRINE]:{col:'#2c4450',resist:2.0},  // mica >= S2 (1.8): its tier-III stone gates it
+  // deep tiers — resist stays modest (the TIER_GATE wall does the gating, not resist, so mining
+  // stays a sane speed once you're geared for the band). S4 tier-IV, S5 tier-V.
+  [T_S4]:{col:'#241f38',resist:3.4},[T_S5]:{col:'#181228',resist:4.2},
+  [T_NODE4]:{col:'#3a1622',resist:3.4},[T_NODE5]:{col:'#123a37',resist:4.2},
+  [T_ADT]:{col:'#4a2028',resist:3.2},[T_AETH]:{col:'#123a37',resist:4.0},
   [T_WALL]:{col:'#1c2740',resist:3.4},[T_BEDROCK]:{col:'#0a0d16',resist:999}
 };
 /* THE HARDNESS SPECTRUM — every material the player has actually LAID EYES ON,
@@ -5071,7 +5078,9 @@ const TILE_NAMES={
   [T_NODE1]:'Shallow node',[T_S1]:'Soft stone',[T_ORE]:'Ore seam',[T_IRON]:'Iron',
   [T_MICA]:'Mica',[T_SALT]:'Void salt',[T_NODE2]:'Deep node',[T_S2]:'Banded stone',[T_TIN]:'Tin',
   [T_BRINE]:'Deep brine',[T_VST]:'Voidsteel',[T_NODE3]:'Rich node',[T_CINDER]:'Cinder scale',
-  [T_S3]:'Deep stone',[T_RIME]:'Rime salt',[T_WALL]:'Gate wall'
+  [T_S3]:'Deep stone',[T_RIME]:'Rime salt',[T_WALL]:'Gate wall',
+  [T_S4]:'Abyssal stone',[T_NODE4]:'Adamant node',[T_ADT]:'Adamant',
+  [T_S5]:'Nether stone',[T_NODE5]:'Aether node',[T_AETH]:'Aether'
 };
 // 2 = full speed, 1 = slow going, 0 = cannot break it
 function mineState(resist){
@@ -5097,15 +5106,17 @@ function hardnessSpectrum(){
 const TILE_TIER={
   [T_DIRT]:1,[T_CLAY]:1,[T_MOSS]:1,[T_COPPER]:1,[T_NODE1]:1,[T_ORE]:1,
   [T_S1]:2,[T_IRON]:2,[T_SALT]:2,[T_NODE2]:2,[T_TIN]:2,
-  [T_S2]:3,[T_S3]:3,[T_MICA]:3,[T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_RIME]:3
+  [T_S2]:3,[T_S3]:3,[T_MICA]:3,[T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_RIME]:3,
+  [T_S4]:4,[T_NODE4]:4,[T_ADT]:4,
+  [T_S5]:5,[T_NODE5]:5,[T_AETH]:5
 };
-const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
+const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
 // The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
 // these: it calls out the core tier you're set up for and the one rung up, so you can steer toward the
 // cores worth digging rather than being swamped by a ping on every scrap of ore.
-const NODE_TILE={[T_NODE1]:1,[T_NODE2]:2,[T_NODE3]:3};
-const RESOURCE=new Set([T_NODE1,T_NODE2,T_NODE3,T_MOSS,T_SALT,T_CINDER,T_RIME,T_COPPER,T_IRON,T_VST,
-  T_CLAY,T_MICA,T_BRINE,T_TIN]);
+const NODE_TILE={[T_NODE1]:1,[T_NODE2]:2,[T_NODE3]:3,[T_NODE4]:4,[T_NODE5]:5};
+const RESOURCE=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_MOSS,T_SALT,T_CINDER,T_RIME,
+  T_COPPER,T_IRON,T_VST,T_ADT,T_AETH,T_CLAY,T_MICA,T_BRINE,T_TIN]);
 // rolled fresh for a new run; loaded from the save when one exists
 let WORLD_SEED=(Math.random()*2**31)|0;
 // The world had almost no tin (it was band-locked and rare), so bronze was near-impossible to source.
@@ -5986,8 +5997,10 @@ function tileYield(t,silent,coreSeed){
   else if (t===T_IRON){ metals.iron+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Iron ore chipped free.'); }
   else if (t===T_TIN){ metals.tin+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Tin ore — soft and bright.'); }
   else if (t===T_VST){ metals.vst++; dust+=2; updateMeters(); say('Voidsteel. The pack feels heavier than it should.','good'); }
-  else if (t>=T_NODE1&&t<=T_NODE3){
-    const tier=t-T_NODE1+1;
+  else if (t===T_ADT){ metals.adamant++; dust+=2; updateMeters(); say('Adamant ore — dense and unyielding.','good'); }
+  else if (t===T_AETH){ metals.aether++; dust+=3; updateMeters(); say('Aether ore. It barely seems to be there at all.','good'); }
+  else if (NODE_TILE[t]){
+    const tier=NODE_TILE[t];
     inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
     say(`Raw core recovered — ${TIERS[tier].name}. It hums in the pack.`,'good');
   }
@@ -6333,7 +6346,7 @@ function terrNoise(seed){const r=terrMul(seed),g=64,b=new Float32Array(g*g);for(
 const terrGrain=terrNoise(2),terrPatch=terrNoise(6),terrCrack=terrNoise(9),terrFleck=terrNoise(13);
 // host-rock tint per tier; index 0 = air (never sampled). T_WALL and anything off the
 // tier table falls back to tier 1 and is covered by its own overlay anyway.
-const TERR_TINT={1:[122,92,58],2:[92,104,132],3:[52,54,92]};
+const TERR_TINT={1:[122,92,58],2:[92,104,132],3:[52,54,92],4:[58,40,70],5:[40,34,64]};   // T4 deep-violet, T5 near-black indigo
 function matClass(t){ return t===T_AIR ? 0 : (TILE_TIER[t]||1); }
 // Ore metals read as faceted metallic flecks spread THROUGHOUT the host rock (no
 // single nugget, no dust). Four-stop palette per metal: [highlight, lit, body, shadow].
@@ -6341,7 +6354,9 @@ const METAL_PAL={
   [T_COPPER]:['#ffd8b0','#d98a52','#a85f30','#5f3418'],
   [T_TIN]   :['#f4f7fc','#d4d9e2','#a2aab8','#646b7a'],
   [T_IRON]  :['#e6ebf4','#aab4c8','#6f7a92','#3a4356'],
-  [T_VST]   :['#c9b8ff','#8b7cd0','#5a4b90','#2a2148']
+  [T_VST]   :['#c9b8ff','#8b7cd0','#5a4b90','#2a2148'],
+  [T_ADT]   :['#ffb0bc','#d9586a','#a83048','#5f1826'],   // adamant — deep red
+  [T_AETH]  :['#b0fff2','#4fd6c4','#2a9a90','#0f4a45']     // aether — luminous teal
 };
 
 // ---------- overworld tile bake cache ----------
@@ -6471,7 +6486,8 @@ function coreXtal(cx,cy,r,rot,P){const WHT=P[0],BRT=P[1],MID=P[2],DK=P[3];
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(Q[0][0],Q[0][1],r*0.09,0,7);ctx.fill();}
 function drawWorldCore(px,py,TS,tier,H,seed,now){
   const rng=terrMul((seed*2654435761)>>>0), P=coreFacetPalette(H), RGB=P[4];
-  const cfg={1:{main:0.22,n:1,glow:0.34},2:{main:0.27,n:3,glow:0.48},3:{main:0.31,n:6,glow:0.62}}[tier];
+  const cfg={1:{main:0.22,n:1,glow:0.34},2:{main:0.27,n:3,glow:0.48},3:{main:0.31,n:6,glow:0.62},
+             4:{main:0.35,n:9,glow:0.76},5:{main:0.39,n:12,glow:0.90}}[tier];   // deep nodes: bigger, richer, glowier
   const main=TS*cfg.main, cx=px+TS/2, cy=py+TS/2, pulse=0.82+0.18*Math.sin(now*0.004+seed*0.11);
   // A soft additive self-glow only — NO dark socket disc and NO hard halo ring.
   // A drawn circle behind the stone read as a round cut-out the gem was dropped
@@ -6715,7 +6731,7 @@ function drawMineFracture(px,py,TS,p,seed,live,dirx,diry){
 // The live-glow deposits (cores, moss, brine, cinder, rime). Baked deposits (metal ore,
 // clay, salt, mica) live in the tile base image, not here.
 function drawWorldDeposit(x,y,t,px,py,now){
-  if (t>=T_NODE1&&t<=T_NODE3){ const seed=nodeCoreSeed(x,y); drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now); }
+  if (NODE_TILE[t]){ const seed=nodeCoreSeed(x,y); drawWorldCore(px,py,TS,NODE_TILE[t],CORE_HUES[worldCoreHueIdx(seed)],seed,now); }
   else if (t===T_MOSS)   drawWorldMoss(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
   else if (t===T_BRINE)  drawWorldBrine(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
   else if (t===T_CINDER) drawWorldCinder(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
@@ -7304,8 +7320,8 @@ function txSeed(){
 }
 // The one-notch-rarer map: only ore-bearing tiles, never stone or gates.
 const SEED_UP={
-  [T_COPPER]:T_IRON, [T_IRON]:T_VST, [T_TIN]:T_IRON,
-  [T_NODE1]:T_NODE2, [T_NODE2]:T_NODE3
+  [T_COPPER]:T_IRON, [T_IRON]:T_VST, [T_TIN]:T_IRON, [T_VST]:T_ADT, [T_ADT]:T_AETH,
+  [T_NODE1]:T_NODE2, [T_NODE2]:T_NODE3, [T_NODE3]:T_NODE4, [T_NODE4]:T_NODE5
 };
 /* ============================================================
    THE FLUX PRESS — heat-and-slump forging.
