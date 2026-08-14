@@ -1776,8 +1776,22 @@ function setChargeFor(t){
    divisor can never explode; the ceiling sits well above anything reachable. */
 const OVERKILL_EXP=1.5;
 const OVERKILL_MAX=20;
-function mineSpeed(resist){
-  const r=drillPower()/resist;
+/* TIER WALL. A stratum of tier T demands a minimum RAW drill power to breach at all, on top
+   of the per-material resist gate below. Sized above the ceiling of the tier beneath it, so a
+   maxed lower-tier rig is walled out — a perfectly-refined Tier-II assembly tops out at ~2.89
+   power (forge q1 + two output≈1.86 cores), so the Tier-III wall sits at 2.9 and that rig can't
+   touch T3 stone no matter how deep it digs. Indexed by TILE_TIER; 0 = no wall (T1 topsoil and
+   T2 soft stone stay on the resist gate alone). One caveat, inherent to the power system:
+   refinement (output up to 1.86) can push a LOWER tier's power up near the next tier's, so this
+   same wall also holds out an UNDER-refined T3 rig (power < 2.9) — deep stone wants a properly
+   built, refined T3 assembly, not just a T3 core dropped in. Lower this number to admit weaker
+   T3 rigs (at the cost of letting a near-flawless T2 rig scrape the softest T3); raise it toward
+   ~4.3 to demand a maxed T3 rig. Speed past the wall is unchanged — it's still resist-driven. */
+const TIER_GATE=[0,0,0,2.9];
+function mineSpeed(resist, tier){
+  const P=drillPower();
+  if (tier && P<TIER_GATE[tier]) return 0;         // hard tier wall — lower tiers can't breach it
+  const r=P/resist;
   if (r<0.60) return 0;
   if (r<0.95) return 0.12+0.48*(r-0.60)/0.35;
   if (r<1) return 0.55+r*0.45;
@@ -2645,11 +2659,11 @@ function devTick(){
          '  core '+partScore(drill.core).toFixed(2)+
          '  pwr '+partScore(drill.power).toFixed(2));
   L.push('MATERIAL           ratio  speed');
-  const mats=[['dirt',0.35],['copper',0.4],['moss',0.3],['node I',0.5],
-    ['stone I',1],['iron',1.15],['salt',1.5],['stone II',1.8],
-    ['voidsteel',2.2],['stone III',2.6]];
-  for (const [n,r] of mats){
-    const ratio=dp/r, sp=mineSpeed(r);
+  const mats=[['dirt',0.35,1],['copper',0.4,1],['moss',0.3,1],['node I',0.5,1],
+    ['stone I',1,2],['iron',1.15,2],['salt',1.5,2],['stone II',1.8,3],
+    ['voidsteel',2.2,3],['stone III',2.6,3]];
+  for (const [n,r,tier] of mats){
+    const ratio=dp/r, sp=mineSpeed(r,tier);
     const cls=sp<=0?'bad':sp<0.3?'warn':'';
     L.push(('  '+n).padEnd(12)+ratio.toFixed(2).padStart(6)+
       (sp<=0?'  LOCKED':(sp*100).toFixed(0).padStart(6)+'%'));
@@ -5833,7 +5847,7 @@ function startMine(sx,sy){
   }
   if (t===T_BEDROCK){ say('World-floor bedrock. Nothing digs through this.','warn'); return; }
   const info=TILE_INFO[t];
-  const spd=mineSpeed(info.resist);
+  const spd=mineSpeed(info.resist, TILE_TIER[t]);
   if (spd<=0){
     say('The drill can\'t mark this yet. Upgrade the assembly — or blast it.','warn');
     return;
@@ -5904,7 +5918,7 @@ function applySetAreaBonus(tx,ty,t,horiz){
     if (t2===T_AIR||t2===T_BEDROCK||t2===T_WALL) continue;
     if (TILE_TIER[t2]!==tier) continue;        // the set only bites its own tier
     if (gateReqTier(ax,ay)) continue;
-    if (mineSpeed(TILE_INFO[t2].resist)<=0) continue;
+    if (mineSpeed(TILE_INFO[t2].resist, TILE_TIER[t2])<=0) continue;
     breakTile(ax,ay,t2,true);
   }
 }
@@ -5998,7 +6012,7 @@ function autoMine(tx,ty){
   const t=getTile(tx,ty);
   if (t===T_AIR) return;
   if (gateReqTier(tx,ty)) return;           // locked gate — needs the tier
-  const spd=mineSpeed(TILE_INFO[t].resist);
+  const spd=mineSpeed(TILE_INFO[t].resist, TILE_TIER[t]);
   if (spd<=0) return;                       // assembly can't mark it
   if (!mine||mine.tx!==tx||mine.ty!==ty){
     const need=(16+TILE_INFO[t].resist*20)/spd;
@@ -6876,7 +6890,7 @@ function drawWorld(now){
     const t=tileAt(tx+0.5,ty+0.5);
     if (t!==T_AIR&&(getSeen(tx,ty)||ty<surfaceY[tx])){
       const inReach=Math.hypot(tx+0.5-player.x,ty+0.5-(player.y-0.5))<=REACH;
-      const can=gateReqTier(tx,ty)?false:mineSpeed(TILE_INFO[t].resist)>0;
+      const can=gateReqTier(tx,ty)?false:mineSpeed(TILE_INFO[t].resist, TILE_TIER[t])>0;
       ctx.strokeStyle=!inReach?'rgba(140,147,176,0.3)':
         can?'rgba(79,227,193,0.6)':'rgba(224,82,61,0.55)';
       ctx.lineWidth=2;
