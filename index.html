@@ -5861,7 +5861,12 @@ function mineTick(){
   if (Math.hypot(dx,dy)>REACH+0.3){ mine=null; return; }
   mine.progress++;
   const dl=Math.hypot(dx,dy)||1, ux=dx/dl, uy=dy/dl, frac=Math.min(1,mine.progress/mine.need);
-  tileDmg.set(dmgKey(mine.tx,mine.ty), {p:frac,dx:ux,dy:uy});   // persist the drilled amount AND the bitten face
+  const dk=dmgKey(mine.tx,mine.ty);
+  // Bound the map: every tile you graze but don't finish persists its crumble, and each
+  // on-screen one redraws every frame — left unbounded a long session accumulates hundreds
+  // and the overworld frame time climbs. Cap it; the oldest abandoned partial just resets.
+  if (!tileDmg.has(dk) && tileDmg.size>=96) tileDmg.delete(tileDmg.keys().next().value);
+  tileDmg.set(dk, {p:frac,dx:ux,dy:uy});   // persist the drilled amount AND the bitten face
   if (Math.random()<0.35){          // dust rides the erosion front (edge nearest the player, advancing inward)
     const fx=mine.tx+0.5+ux*(frac-0.5)*0.7, fy=mine.ty+0.5+uy*(frac-0.5)*0.7;
     particles.push({x:fx,y:fy,vx:(Math.random()-0.5)*0.08,vy:-Math.random()*0.06,life:14,col:'#8b90a8'});
@@ -6627,21 +6632,39 @@ function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
 // area reads as one hole, not a mosaic of little squares. (dirx,diry) is the unit vector
 // player->tile; a block's threshold is its distance along it, so near blocks go first. Grain is
 // seeded per tile and the bitten face persists. Break tumbles the loosened blocks as cubes.
+// The cave gradient revealed behind removed rock is the SAME for every tile in a frame
+// (planet sky over the screen height), so build it once and memoise — creating one per
+// drawMineFracture call was the bulk of the per-tile cost when many partials are on screen.
+let _skyGradKey='', _skyGrad=null;
+function caveSkyGrad(){
+  const pal=(typeof planet!=='undefined'&&planet.palette)||PLANET_TERRA.palette;
+  const key=pal.sky[0]+pal.sky[1]+pal.sky[2]+'|'+world2d.height;
+  if(key!==_skyGradKey){
+    const g=ctx.createLinearGradient(0,0,0,world2d.height);
+    g.addColorStop(0,pal.sky[0]); g.addColorStop(0.55,pal.sky[1]); g.addColorStop(1,pal.sky[2]);
+    _skyGrad=g; _skyGradKey=key;
+  }
+  return _skyGrad;
+}
+const _crumbThr=new Float32Array(16);            // reused per call, no per-frame allocation
 function drawMineFracture(px,py,TS,p,seed,live,dirx,diry){
   if(!dirx&&!diry) diry=1;                        // unknown face -> eat from below
   const G=4, cell=TS/G, cx=px+TS/2, cy=py+TS/2;
-  // Removed rock reveals what a fully-mined AIR tile reveals: the sky/cave behind, built in the
-  // SAME 0..h space as drawWorld's background so the opening matches the air it's becoming.
-  const pal=(typeof planet!=='undefined'&&planet.palette)||PLANET_TERRA.palette;
-  const skyG=ctx.createLinearGradient(0,0,0,world2d.height);
-  skyG.addColorStop(0,pal.sky[0]); skyG.addColorStop(0.55,pal.sky[1]); skyG.addColorStop(1,pal.sky[2]);
+  const maxProj=0.375*(Math.abs(dirx)+Math.abs(diry))+1e-6;
+  // per-block gone-thresholds, plus the tile's max, so the LAST cube disappears exactly at
+  // p=1 (== the break) instead of the tile sitting hollow-but-still-solid for the final ticks.
+  let maxThr=1e-6;
+  for(let j=0;j<G;j++) for(let i=0;i<G;i++){
+    const ox=(i+0.5)/G-0.5, oy=(j+0.5)/G-0.5;
+    const f=Math.min(1,Math.max(0,0.5+(ox*dirx+oy*diry)/(2*maxProj)));   // 0 at the bitten face, 1 far
+    let h=(seed ^ Math.imul(i+1,73856093) ^ Math.imul(j+1,19349663))>>>0;
+    h=Math.imul(h^(h>>>15),0x85ebca6b)>>>0; const n=(h>>>8)/16777216;
+    const g=f*0.82+n*0.18; _crumbThr[j*G+i]=g; if(g>maxThr) maxThr=g;
+  }
+  const skyG=caveSkyGrad();
   ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();
   for(let j=0;j<G;j++) for(let i=0;i<G;i++){
-    const ox=(i+0.5)/G-0.5, oy=(j+0.5)/G-0.5;      // block centre offset from tile centre, [-0.5,0.5]
-    const f=Math.min(1,Math.max(0,0.5+ox*dirx+oy*diry));   // 0 at the bitten face, 1 at the far face
-    let h=(seed ^ Math.imul(i+1,73856093) ^ Math.imul(j+1,19349663))>>>0;   // cheap per-block hash, no alloc
-    h=Math.imul(h^(h>>>15),0x85ebca6b)>>>0; const n=(h>>>8)/16777216;
-    const thrC=f*0.72+n*0.16, thrG=thrC+0.13;      // crack threshold, then gone threshold
+    const thrG=_crumbThr[j*G+i]/maxThr, thrC=thrG-0.15;   // normalised so the last block goes at p=1
     const bx=px+i*cell, by=py+j*cell;
     if(p>thrG){                                    // gone: merge seamlessly into the open cavity, no outline
       ctx.fillStyle=skyG; ctx.fillRect(bx-0.6,by-0.6,cell+1.2,cell+1.2);   // tiny overlap so adjacent holes join without a seam
@@ -6664,6 +6687,30 @@ function drawMineFracture(px,py,TS,p,seed,live,dirx,diry){
   for(let i=0;i<2;i++){ const an=Math.random()*6.28, d=TS*(0.05+Math.random()*0.22), cx2=fx+Math.cos(an)*d, cy2=fy+Math.sin(an)*d-Math.random()*TS*0.15;
     ctx.save(); ctx.translate(cx2,cy2); ctx.rotate(Math.random()*6.28);
     ctx.fillStyle=Math.random()<0.5?'#4f5468':'#6a6f84'; ctx.fillRect(-TS*0.05,-TS*0.045,TS*0.1,TS*0.09); ctx.restore(); }
+}
+// The live-glow deposits (cores, moss, brine, cinder, rime). Baked deposits (metal ore,
+// clay, salt, mica) live in the tile base image, not here.
+function drawWorldDeposit(x,y,t,px,py,now){
+  if (t>=T_NODE1&&t<=T_NODE3){ const seed=nodeCoreSeed(x,y); drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now); }
+  else if (t===T_MOSS)   drawWorldMoss(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
+  else if (t===T_BRINE)  drawWorldBrine(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
+  else if (t===T_CINDER) drawWorldCinder(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
+  else if (t===T_RIME)   drawWorldRime(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
+}
+// The FULL deposit — live glow PLUS the baked ore/clay/salt/mica features — redrawn ON TOP
+// of a crumble so mining never hides what a block is: only the terrain behind wears away,
+// the ore specks / core gem / moss / clay stay put until the tile breaks.
+function drawDepositOverCrumble(x,y,t,px,py,now){
+  drawWorldDeposit(x,y,t,px,py,now);
+  if (METAL_PAL[t]||t===T_CLAY||t===T_SALT||t===T_MICA){
+    const seed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
+    ctx.save(); ctx.translate(px,py);
+    if (METAL_PAL[t]) bakeMetal(ctx,TS,METAL_PAL[t],seed);
+    else if (t===T_CLAY) bakeClay(ctx,TS,seed);
+    else if (t===T_SALT) bakeSalt(ctx,TS,seed);
+    else if (t===T_MICA) bakeMica(ctx,TS,seed);
+    ctx.restore();
+  }
 }
 function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
   const TC=['','#4FE3C1','#E8A33D','#8B7CF6'][tier]||'#4FE3C1';
@@ -6720,27 +6767,22 @@ function drawWorld(now){
       continue;
     }
     if (t===T_AIR) continue;
-    // Frozen base (fill, milled noise, carved bevel, lit edge, topsoil crust) is
-    // baked per-cell and blitted; the animated overlays below still draw live.
+    // Frozen base (fill, milled noise, carved bevel, lit edge) is baked per-cell and
+    // blitted; the deposits (live glow + the baked ore/clay/salt/mica features) draw over it.
     ctx.drawImage(tileBaseFor(x,y,t,TS),px,py);
-    if (t>=T_NODE1&&t<=T_NODE3){
-      const seed=nodeCoreSeed(x,y);
-      drawWorldCore(px,py,TS,t-T_NODE1+1,CORE_HUES[worldCoreHueIdx(seed)],seed,now);
-    } else if (t===T_MOSS){
-      drawWorldMoss(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);   // clay is baked; moss glows live
-    } else if (t===T_BRINE){
-      drawWorldBrine(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
-    } else if (t===T_CINDER){
-      drawWorldCinder(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
-    } else if (t===T_RIME){
-      drawWorldRime(px,py,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0,now);
-    }
-    // persisted partial-drill damage: a tile drilled and left shows its crumble
-    // (static, no live dust), eaten from the same face it was bitten from. The tile
-    // being actively drilled is drawn live below.
-    if (tileDmg.size && !(mine&&mine.tx===x&&mine.ty===y)){
-      const dmg=tileDmg.get(x+','+y);
-      if (dmg) drawMineFracture(px,py,TS,dmg.p,(Math.imul(x,131)^Math.imul(y,17))>>>0,false,dmg.dx,dmg.dy);
+    // The mining crumble draws BETWEEN the base and the deposit, so the terrain wears away
+    // while the ore specks / core gem / moss / clay stay on top — you can always see what
+    // you're digging. Active tile eats live; a grazed-and-left tile shows its persisted state.
+    const active = mine&&mine.tx===x&&mine.ty===y;
+    const mseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
+    if (active){
+      const ddx=x+0.5-player.x, ddy=y+0.5-(player.y-0.5), dl=Math.hypot(ddx,ddy)||1;
+      drawMineFracture(px,py,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx/dl,ddy/dl);
+      drawDepositOverCrumble(x,y,t,px,py,now);
+    } else {
+      const dmg = tileDmg.size ? tileDmg.get(x+','+y) : null;
+      if (dmg){ drawMineFracture(px,py,TS,dmg.p,mseed,false,dmg.dx,dmg.dy); drawDepositOverCrumble(x,y,t,px,py,now); }
+      else drawWorldDeposit(x,y,t,px,py,now);       // untouched tile: live overlays only (baked ones already in the base)
     }
     // (T_WALL caches are drawn in a separate 2x2 pass after the tile loop, so the
     //  big vault art isn't overpainted by neighbouring tile bases.)
@@ -6827,13 +6869,9 @@ function drawWorld(now){
     }
   }
 
-  if (mine){
-    const px2=mine.tx*TS-camX, py2=mine.ty*TS-camY;
-    const mseed=(Math.imul(mine.tx,131)^Math.imul(mine.ty,17))>>>0;
-    // bite direction = player -> tile, so the crumble eats in from the drilled face
-    const ddx=mine.tx+0.5-player.x, ddy=mine.ty+0.5-(player.y-0.5), dl=Math.hypot(ddx,ddy)||1;
-    drawMineFracture(px2,py2,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx/dl,ddy/dl);
-  } else if (view==='exped'&&!attackTgt){
+  // the active-drill crumble is drawn inline in the tile loop above (under its deposit); here
+  // we only place the aim cursor when not mining
+  if (!mine && view==='exped'&&!attackTgt){
     const {tx,ty}=screenToTile(aim.x,aim.y);
     const t=tileAt(tx+0.5,ty+0.5);
     if (t!==T_AIR&&(getSeen(tx,ty)||ty<surfaceY[tx])){
