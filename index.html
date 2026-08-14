@@ -5907,9 +5907,18 @@ function breakTile(tx,ty,t,silent){
   setSeen(tx,ty,1);
   setGate(tx,ty,0);                          // a broken gate is just open air now
   const col=t===T_WALL?'#5b6ea0':t===T_ORE?'#E8A33D':(SELF_LIT.has(t)?'#4FE3C1':'#8a94b8');
-  for (let i=0;i<8;i++)
+  // the cleave pays off: the loosened plates tumble away as a handful of spinning
+  // stone chunks, then a few bright sparks in the yield colour so nodes still pop
+  const STONE=['#5a6070','#6b7284','#494f5e'];
+  for (let i=0;i<5;i++){
+    const a=Math.random()*6.28, sp=0.05+Math.random()*0.13;
+    particles.push({x:tx+0.5+(Math.random()-0.5)*0.4, y:ty+0.5+(Math.random()-0.5)*0.4,
+      vx:Math.cos(a)*sp, vy:-0.05-Math.random()*0.13, life:30+(Math.random()*12|0),
+      col:STONE[i%3], sz:TS*(0.15+Math.random()*0.12), rot:Math.random()*6.28, spin:(Math.random()-0.5)*0.32});
+  }
+  for (let i=0;i<3;i++)
     particles.push({x:tx+0.5,y:ty+0.5,vx:(Math.random()-0.5)*0.16,
-      vy:-Math.random()*0.14,life:26,col});
+      vy:-Math.random()*0.14,life:22,col});
   tileYield(t,silent,nodeCoreSeed(tx,ty));    // a node yields the very core drawn in the wall
   // 200% rung: matching-tier material gives up a second yield (a fresh, distinct core)
   if (setChargeFor(t)>=SET_YIELD) tileYield(t,true);
@@ -6600,39 +6609,69 @@ function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
   ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillText(num,cx+1,cy+R*0.7+1); ctx.fillStyle=TU; ctx.fillText(num,cx,cy+R*0.7);
   ctx.textAlign='start'; ctx.textBaseline='alphabetic';
 }
-// ---------- mining effect: FRACTURE (cracks + flying rock debris) ----------
-// A grounded, no-glow effect: the rock fractures where the drill bites — dark
-// jagged cracks spread out and lengthen with progress, a crumbled pit opens at
-// the centre, and rock chips fly off. No energised edge, no sci-fi colour. The
-// crack LAYOUT is seeded per tile so it stays put and just grows; the chips are
-// live. Progress = how far the fracture has spread.
+// ---------- mining effect: CLEAVE (rock splits into a few big plates that pull apart) ----------
+// A grounded, no-glow effect. NOT a spider-crack from the centre — that's exactly what
+// read as a starburst. Instead ONE dominant fracture runs clean across the tile and an
+// optional branch peels off it, so the rock reads as splitting into 2-3 big angular
+// PLATES. As progress climbs each fracture OPENS: a band of fresh inner rock (lighter
+// than the weathered face, so it pops on dark stone) framed by a dark crack (so it still
+// reads on light stone) and a bright catch-light on the top-left plate lip. LAYOUT is
+// seeded per tile so it stays put and just gaps wider; dust is live. The payoff (plates
+// tumbling away) is spawned as chunk debris in breakTile. Progress = how far they've split.
 function drawMineFracture(px,py,TS,p,seed,live){
   const cx=px+TS/2, cy=py+TS/2, rng=terrMul(seed>>>0);
-  ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();          // keep it inside the tile
-  // spreading cracks: a dark break with a thin fresh-stone strand so it reads on any rock
-  for(let k=0;k<6;k++){
-    const an=k/6*6.28+rng()*0.4, len=TS*0.52*p, pts=[[cx,cy]];
-    for(let j=1;j<=4;j++){ const jl=len*j/4, ja=an+(rng()-0.5)*0.5; pts.push([cx+Math.cos(ja)*jl,cy+Math.sin(ja)*jl]); }
-    ctx.strokeStyle='rgba(8,8,12,0.9)'; ctx.lineWidth=Math.max(1.2,TS*0.04*(0.5+p));
-    ctx.beginPath(); pts.forEach((q,i)=>ctx[i?'lineTo':'moveTo'](q[0],q[1])); ctx.stroke();
-    ctx.strokeStyle=`rgba(185,192,212,${0.28*p})`; ctx.lineWidth=Math.max(1,TS*0.013);
-    ctx.beginPath(); pts.forEach((q,i)=>ctx[i?'lineTo':'moveTo'](q[0],q[1])); ctx.stroke();
+  // clip a line (through mx,my in direction dx,dy) to the tile box -> [x1,y1,x2,y2]
+  const clip=(mx,my,dx,dy)=>{
+    let tmin=-1e9,tmax=1e9;
+    for(const [d,lo,hi] of [[dx,px-mx,px+TS-mx],[dy,py-my,py+TS-my]]){
+      if(Math.abs(d)<1e-6) continue;
+      let t0=lo/d,t1=hi/d; if(t0>t1){const t=t0;t0=t1;t1=t;}
+      tmin=Math.max(tmin,t0); tmax=Math.min(tmax,t1);
+    }
+    return [mx+dx*tmin,my+dy*tmin, mx+dx*tmax,my+dy*tmax];
+  };
+  // one opening fracture: the two plates slide apart perpendicular to the crack line
+  const gap=(x1,y1,x2,y2,half,lit)=>{
+    const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1, nx=-dy/L, ny=dx/L;
+    ctx.fillStyle=`rgba(150,158,182,${0.16+0.42*p})`;               // fresh inner rock exposed in the gap
+    ctx.beginPath();
+    ctx.moveTo(x1+nx*half,y1+ny*half); ctx.lineTo(x2+nx*half,y2+ny*half);
+    ctx.lineTo(x2-nx*half,y2-ny*half); ctx.lineTo(x1-nx*half,y1-ny*half); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='rgba(4,5,9,0.9)'; ctx.lineWidth=Math.max(1.4,TS*0.03*(0.45+p));    // the crack spine
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    const s=(nx+ny<0)?1:-1;                                          // lit plate lip faces top-left
+    ctx.strokeStyle=`rgba(208,215,233,${lit*Math.min(0.9,0.45+0.5*p)})`; ctx.lineWidth=Math.max(1,TS*0.02);
+    ctx.beginPath(); ctx.moveTo(x1+nx*half*s,y1+ny*half*s); ctx.lineTo(x2+nx*half*s,y2+ny*half*s); ctx.stroke();
+  };
+  ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();   // keep it inside the tile
+  const half=TS*(0.012+0.12*p);                                     // gap half-width: hairline start, gaping near break
+  // PRIMARY: one dominant cleave clean across the tile, offset off-centre so it isn't a bisector
+  const a=rng()*3.14, dx=Math.cos(a), dy=Math.sin(a), nx=-dy, ny=dx;
+  const off=(rng()-0.5)*TS*0.34, mx=cx+nx*off, my=cy+ny*off;
+  const pr=clip(mx,my,dx,dy);
+  gap(pr[0],pr[1],pr[2],pr[3],half,1);
+  // SECONDARY: a branch peeling off the primary out to one edge, making a third plate
+  let bpx=mx, bpy=my;                                               // the worked point (dust/pit sit here)
+  if(rng()<0.72){
+    const f=0.34+rng()*0.32; bpx=pr[0]+(pr[2]-pr[0])*f; bpy=pr[1]+(pr[3]-pr[1])*f;
+    const ba=a+(1.0+rng()*1.0)*(rng()<0.5?1:-1);                    // veer off at an angle, not parallel
+    const br=clip(bpx,bpy,Math.cos(ba),Math.sin(ba));
+    const far=Math.hypot(br[2]-bpx,br[3]-bpy)>Math.hypot(br[0]-bpx,br[1]-bpy);   // outward end only -> a branch, not a crossing
+    gap(bpx,bpy, far?br[2]:br[0], far?br[3]:br[1], half*0.82, 0.85);
   }
-  // chewed chip-scars accumulating around the bite (dark angular notches)
-  const nsc=Math.floor(p*5);
-  for(let i=0;i<nsc;i++){ const an=rng()*6.28, d=TS*0.1+rng()*TS*0.22*p, sx=cx+Math.cos(an)*d, sy=cy+Math.sin(an)*d, r=TS*(0.03+rng()*0.03);
-    ctx.fillStyle='rgba(6,7,11,0.75)'; ctx.beginPath(); for(let a=0;a<5;a++){ const aa=a/5*6.28+rng(); ctx[a?'lineTo':'moveTo'](sx+Math.cos(aa)*r,sy+Math.sin(aa)*r); } ctx.closePath(); ctx.fill(); }
-  // crumbled dark pit at the centre, growing
-  ctx.fillStyle='rgba(5,6,10,0.92)'; ctx.beginPath();
-  for(let a=0;a<9;a++){ const an=a/9*6.28, rad=TS*0.18*p*(0.7+rng()*0.6); ctx[a?'lineTo':'moveTo'](cx+Math.cos(an)*rad,cy+Math.sin(an)*rad); }
+  // drill bite pit where the fracture is being worked: a dark hole with a faint rubble rim
+  ctx.fillStyle='rgba(4,5,9,0.9)'; ctx.beginPath();
+  for(let i=0;i<8;i++){ const an=i/8*6.28, rad=TS*0.11*p*(0.7+rng()*0.6); ctx[i?'lineTo':'moveTo'](bpx+Math.cos(an)*rad,bpy+Math.sin(an)*rad); }
   ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=`rgba(198,205,224,${0.45*p})`; ctx.lineWidth=Math.max(1,TS*0.013);
+  ctx.beginPath(); ctx.arc(bpx,bpy,TS*0.11*p,0,7); ctx.stroke();
   ctx.restore();
-  // Live-only: a soft puff of rock dust (grey, no glow) + a few flying chips. On a
-  // persisted-damage tile that isn't being actively drilled, only the cracks show.
+  // Live-only: a low puff of rock dust at the bite + a couple of shed chips. A
+  // persisted-damage tile that isn't being actively drilled shows only the split.
   if (!live) return;
-  const dust=ctx.createRadialGradient(cx,cy,1,cx,cy,TS*0.45); dust.addColorStop(0,`rgba(120,124,140,${0.12*p})`); dust.addColorStop(1,'rgba(120,124,140,0)');
-  ctx.fillStyle=dust; ctx.beginPath(); ctx.arc(cx,cy,TS*0.45,0,7); ctx.fill();
-  for(let i=0;i<4;i++){ const a=Math.random()*6.28, d=TS*(0.16+Math.random()*0.4*(0.4+p)), fx=cx+Math.cos(a)*d, fy=cy+Math.sin(a)*d-Math.random()*TS*0.22;
+  const dust=ctx.createRadialGradient(bpx,bpy,1,bpx,bpy,TS*0.42); dust.addColorStop(0,`rgba(120,124,140,${0.12*p})`); dust.addColorStop(1,'rgba(120,124,140,0)');
+  ctx.fillStyle=dust; ctx.beginPath(); ctx.arc(bpx,bpy,TS*0.42,0,7); ctx.fill();
+  for(let i=0;i<3;i++){ const an=Math.random()*6.28, d=TS*(0.08+Math.random()*0.3*(0.4+p)), fx=bpx+Math.cos(an)*d, fy=bpy+Math.sin(an)*d-Math.random()*TS*0.2;
     ctx.save(); ctx.translate(fx,fy); ctx.rotate(Math.random()*6.28);
     ctx.fillStyle=Math.random()<0.5?'#4f5468':'#6a6f84'; ctx.fillRect(-TS*0.05,-TS*0.035,TS*0.1,TS*0.07); ctx.restore(); }
 }
@@ -6866,10 +6905,18 @@ function drawWorld(now){
   for (let i=particles.length-1;i>=0;i--){
     const p=particles[i];
     p.x+=p.vx; p.y+=p.vy; p.vy+=0.012; p.life--;
+    if (p.spin!==undefined) p.rot+=p.spin;
     if (p.life<=0){ particles.splice(i,1); continue; }
     ctx.globalAlpha=Math.min(1,p.life/10);
     ctx.fillStyle=p.col;
-    ctx.fillRect(p.x*TS-camX,p.y*TS-camY,3,3);
+    if (p.sz){                                   // tumbling cleave chunk: a spinning angular plate
+      const s=p.sz; ctx.save(); ctx.translate(p.x*TS-camX,p.y*TS-camY); ctx.rotate(p.rot||0);
+      ctx.beginPath(); ctx.moveTo(-s*0.5,-s*0.4); ctx.lineTo(s*0.5,-s*0.3); ctx.lineTo(s*0.4,s*0.45); ctx.lineTo(-s*0.45,s*0.35); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.moveTo(s*0.4,s*0.45); ctx.lineTo(-s*0.45,s*0.35); ctx.lineTo(-s*0.5,-s*0.4); ctx.closePath(); ctx.fill();   // shaded underside so it reads as a solid tumbling chip
+      ctx.restore();
+    } else {
+      ctx.fillRect(p.x*TS-camX,p.y*TS-camY,3,3);
+    }
     ctx.globalAlpha=1;
   }
 
