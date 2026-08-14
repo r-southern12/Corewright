@@ -6627,6 +6627,12 @@ function drawGateReclaimed(px,py,s,TC,RGB,num,locked,seed,now){
 function drawMineFracture(px,py,TS,p,seed,live,dirx,diry){
   if(!dirx&&!diry) diry=1;                        // unknown face -> eat from below
   const G=4, cell=TS/G;
+  // A removed block reveals what a fully-mined AIR tile reveals: the sky/cave behind. Built
+  // in the SAME 0..h space as drawWorld's background, so a hole matches the mined-out air it
+  // is becoming instead of reading as a painted black square.
+  const pal=(typeof planet!=='undefined'&&planet.palette)||PLANET_TERRA.palette;
+  const skyG=ctx.createLinearGradient(0,0,0,world2d.height);
+  skyG.addColorStop(0,pal.sky[0]); skyG.addColorStop(0.55,pal.sky[1]); skyG.addColorStop(1,pal.sky[2]);
   ctx.save(); ctx.beginPath(); ctx.rect(px,py,TS,TS); ctx.clip();
   for(let j=0;j<G;j++) for(let i=0;i<G;i++){
     const ox=(i+0.5)/G-0.5, oy=(j+0.5)/G-0.5;     // block centre offset from tile centre, [-0.5,0.5]
@@ -6635,10 +6641,10 @@ function drawMineFracture(px,py,TS,p,seed,live,dirx,diry){
     h=Math.imul(h^(h>>>15),0x85ebca6b)>>>0; const n=(h>>>8)/16777216;
     const thrC=f*0.72+n*0.16, thrG=thrC+0.13;     // crack threshold, then gone threshold
     const bx=px+i*cell, by=py+j*cell;
-    if(p>thrG){                                   // gone: a true-black cavity where the block dropped out
-      ctx.fillStyle='rgba(2,3,6,0.97)'; ctx.fillRect(bx,by,cell,cell);
-      // recessed read: fresh-rock lip catches light on the top+left walls, shadow on the far walls
-      ctx.strokeStyle='rgba(176,184,208,0.5)'; ctx.lineWidth=1;
+    if(p>thrG){                                   // gone: the block is removed — the cave shows through
+      ctx.fillStyle=skyG; ctx.fillRect(bx,by,cell,cell);
+      // a faint fresh-rock lip on the top+left walls so the opening reads as a cut edge, not a window
+      ctx.strokeStyle='rgba(176,184,208,0.32)'; ctx.lineWidth=1;
       ctx.beginPath(); ctx.moveTo(bx+0.5,by+cell-0.5); ctx.lineTo(bx+0.5,by+0.5); ctx.lineTo(bx+cell-0.5,by+0.5); ctx.stroke();
     } else if(p>thrC){                            // cracked: markedly darkened, split block still in place
       ctx.fillStyle='rgba(0,0,0,0.46)'; ctx.fillRect(bx,by,cell,cell);
