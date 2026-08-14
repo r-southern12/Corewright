@@ -1118,7 +1118,12 @@ const lamp=new THREE.PointLight(0x4FE3C1,0.9,22); lamp.position.set(0,0,5); scen
 const TIERS={
   1:{name:'Tier I',  vox:0.55, halfN:3, dustPer:1,    durability:1.0, hotOdds:[0.30,0.0]},
   2:{name:'Tier II', vox:0.36, halfN:5, dustPer:0.45, durability:1.6, hotOdds:[0.40,0.10]},
-  3:{name:'Tier III',vox:0.24, halfN:7, dustPer:0.25, durability:2.4, hotOdds:[0.55,0.15]}
+  3:{name:'Tier III',vox:0.24, halfN:7, dustPer:0.25, durability:2.4, hotOdds:[0.55,0.15]},
+  // T4/T5 refine to the SAME grain as T3 (vox 0.24) but are physically BIGGER — a larger
+  // halfN means more cubes (radius halfN*vox), T5 bigger than T4 — and carry MORE, hotter
+  // concentrated spots (higher hotOdds). Deeper strata, richer cores.
+  4:{name:'Tier IV', vox:0.24, halfN:9, dustPer:0.18, durability:3.2, hotOdds:[0.72,0.24]},
+  5:{name:'Tier V',  vox:0.24, halfN:11,dustPer:0.14, durability:4.0, hotOdds:[0.88,0.32]}
 };
 let VOX=TIERS[1].vox, HALF=TIERS[1].halfN;
 
@@ -1541,7 +1546,9 @@ const ORE_INFO={
   copper:{label:'Copper ore', note:'soft veins in the topsoil',  col:'#b5713a'},
   tin:   {label:'Tin ore',    note:'soft and bright, runs with iron; alloys and transmutes', col:'#cdd2dc'},
   iron:  {label:'Iron ore',   note:'banded through grey stone',  col:'#8a94b8'},
-  vst:   {label:'Voidsteel ore',note:'deep strata only',         col:'#6f5fa8'}
+  vst:   {label:'Voidsteel ore',note:'deep strata only',         col:'#6f5fa8'},
+  adamant:{label:'Adamant ore',note:'tier-IV strata; rare, in rich pockets', col:'#c8586a'},
+  aether:{label:'Aether ore', note:'tier-V; the deepest metal there is',      col:'#4fd6c4'}
 };
 /* METALS — the single source of truth for a metal's TIER, role and colour. The forge
    reads tier off here (metalTier), so the forge scales to five tiers and more metals
@@ -1553,8 +1560,8 @@ const METALS={
   tin:   {name:'Tin',       tier:1, agent:true },
   iron:  {name:'Iron',      tier:2, agent:false},
   vst:   {name:'Voidsteel', tier:3, agent:false},
-  // adamant:{name:'Adamant', tier:4, agent:false},   // ready for the deep strata
-  // aether: {name:'Aether',  tier:5, agent:false},
+  adamant:{name:'Adamant',  tier:4, agent:false},   // tier-IV deep strata
+  aether: {name:'Aether',   tier:5, agent:false},   // tier-V, the bottom of the world
 };
 const metalTier=k=>METALS[k]?METALS[k].tier:1;
 // Ores worth showing in the forge's metal stores, ordered by tier then name.
@@ -1787,7 +1794,7 @@ const OVERKILL_MAX=20;
    built, refined T3 assembly, not just a T3 core dropped in. Lower this number to admit weaker
    T3 rigs (at the cost of letting a near-flawless T2 rig scrape the softest T3); raise it toward
    ~4.3 to demand a maxed T3 rig. Speed past the wall is unchanged — it's still resist-driven. */
-const TIER_GATE=[0,0,0,2.9];
+const TIER_GATE=[0,0,0,2.9,4.4,5.85];  // each sits just above the tier below's max rig (T2 2.89, T3 4.33, T4 5.77)
 function mineSpeed(resist, tier){
   const P=drillPower();
   if (tier && P<TIER_GATE[tier]) return 0;         // hard tier wall — lower tiers can't breach it
@@ -1862,7 +1869,10 @@ function forgePairPart(shape){ return shape==='pestle' ? PESTLE_PART : FORGE_TEM
 // Named alloys, keyed by the sorted pair of structural metals in the cast. An unlisted pair
 // falls back to "<primary>–<secondary>". Only the historically-real ones get proper names.
 const ALLOY_NAMES={ 'copper+tin':'Bronze', 'iron+vst':'Darksteel', 'copper+vst':'Aegissteel',
-  'copper+iron':'Gunmetal', 'iron+tin':'Bell-metal', 'tin+vst':'Voidpewter' };
+  'copper+iron':'Gunmetal', 'iron+tin':'Bell-metal', 'tin+vst':'Voidpewter',
+  // deep-tier alloys (keys are the sorted metal-id pair)
+  'adamant+vst':'Blacksteel', 'adamant+tin':'Adamantine', 'adamant+iron':'Ferradamant',
+  'adamant+aether':'Godalloy', 'aether+vst':'Voidglass', 'aether+tin':'Aetherpewter' };
 /* THE TIN FRACTION. Bronze-family recipes (alloyBase/alloyAgent) are forged at a
    chosen tin percentage. Historically bronze is ~12% tin; the player may run
    8-20%. The fraction drives three things at once:
