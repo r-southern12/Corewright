@@ -6384,12 +6384,15 @@ function bakeTile(x,y,t,TS){
   }
   c.putImageData(img,0,0);
   // edges ONLY where the tile meets air or a different tier: a lit top rim on an
-  // exposed face (no topsoil crust — moss is a resource deposit now, not ground
-  // cover), a thin strata seam against a different tier, and a bottom/side falloff
-  // that gives the exposed block its one-light-source-top-left carved read.
+  // exposed face, a thin strata seam against a different tier, and a bottom/side
+  // falloff that gives the exposed block its one-light-source-top-left carved read.
+  // The top rim is a THIN, COOL highlight — a lit rock edge, not a warm earthy band.
+  // (It used to be a thick cream crust; because it's painted on any freshly-exposed
+  // face, digging spread a "topsoil" look everywhere. Real soil is a world-gen tile
+  // with its own brown base tint and never depends on this.)
   const mu=matClass(getTile(x,y-1)), md=matClass(getTile(x,y+1)),
         ml=matClass(getTile(x-1,y)), mr=matClass(getTile(x+1,y));
-  if (mu===0){ c.fillStyle='rgba(255,236,205,0.32)'; c.fillRect(0,0,TS,Math.max(3,TS*0.15)); }
+  if (mu===0){ c.fillStyle='rgba(208,216,236,0.20)'; c.fillRect(0,0,TS,Math.max(1,TS*0.05)); }
   else if (mu!==m){ c.fillStyle='rgba(0,0,0,0.10)'; c.fillRect(0,0,TS,1); }   // faint tier seam, not a ruled line
   if (md===0){ c.fillStyle='rgba(0,0,0,0.34)'; c.fillRect(0,TS-Math.max(3,TS*0.14),TS,Math.max(3,TS*0.14)); }
   if (ml===0){ c.fillStyle='rgba(255,255,255,0.10)'; c.fillRect(0,0,Math.max(2,TS*0.09),TS); }
