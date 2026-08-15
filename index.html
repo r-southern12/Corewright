@@ -450,11 +450,16 @@
     padding:0 3px;margin-left:4px}
   .railLbl{font-size:8px;letter-spacing:.10em;color:#a77635;margin:0 0 4px 1px}
   .railGrid{display:flex;flex-wrap:wrap;gap:9px 10px;padding-bottom:2px}
-  /* Ores read as chips of the rock itself rather than vials — they are dug, not distilled. */
-  .oreChip{position:relative;width:26px;height:26px;border-radius:4px;border:2px solid #a77635;
+  /* Ores read as milled readout tiles — a beveled brass frame around the rock's own colour and an
+     engraved count, so the ore rack matches the instrument idiom rather than being a flat swatch. */
+  .oreChip{position:relative;width:26px;height:26px;border:2px solid #8f6938;
+    clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px);
+    background:linear-gradient(150deg,#343c50 0 12%,#1b2130 45%,#121728 100%);
+    box-shadow:inset 0 1px 0 rgba(255,240,205,.14),inset 0 0 7px #000,0 2px 4px #0007;
     display:flex;align-items:center;justify-content:center;cursor:default}
-  .oreChip b{position:absolute;right:-4px;bottom:-6px;min-width:14px;padding:0 3px;text-align:center;
-    font-size:9px;background:#0b0e18;border:1px solid #2c3550;border-radius:3px;color:#e8ecf8}
+  .oreChip .sw{width:12px;height:12px;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.4),0 0 5px currentColor}
+  .oreChip b{position:absolute;right:-5px;bottom:-6px;min-width:14px;padding:0 3px;text-align:center;
+    font:9px 'Courier New',monospace;color:#f4e4bd;background:#1c2130;border:1px solid #8b6332;border-radius:2px}
   #instrumentRail{position:fixed;left:12px;top:47px;z-index:8;width:150px;padding:9px 9px 8px 13px;
     display:grid;grid-template-columns:repeat(3,1fr);gap:7px;border-radius:4px 10px 10px 4px;
     background:
@@ -467,11 +472,20 @@
     font:8px 'Courier New',monospace;letter-spacing:.12em;color:#d5b06f;background:#171c2a;border:1px solid #72512b}
   /* Width was previously supplied by the old fixed grid; in a flex row the vials
      had none and collapsed to slivers. */
+  /* Graduated LEVEL gauge, not a full-tube swatch: the fluid rises to how much you're carrying
+     (--lvl, set in renderRail), read against etched graduation lines. Reads as an instrument that
+     tells you your stock at a glance, not just which reagent it is. */
   .railVial{position:relative;width:26px;flex:0 0 26px;height:55px;border:3px solid #a77635;border-top-width:6px;border-radius:4px 4px 7px 7px;
-    background:linear-gradient(90deg,#0b1019 0 18%,#263147 20% 32%,#0c121e 35% 100%);box-shadow:inset 0 0 8px #000}
-  .railVial::before{content:'';position:absolute;left:4px;right:4px;bottom:4px;height:31px;border-radius:2px 2px 4px 4px;
-    background:linear-gradient(90deg,#fff2,transparent 28%),var(--fluid);box-shadow:0 0 9px var(--glow)}
-  .railVial::after{content:'';position:absolute;width:5px;height:5px;border-radius:50%;left:8px;bottom:12px;background:#fff8;box-shadow:6px -8px #fff5}
+    background:
+      repeating-linear-gradient(0deg,transparent 0 6px,rgba(210,225,250,.06) 6px 7px),
+      linear-gradient(90deg,#0b1019 0 18%,#1b2436 20% 34%,#0c121e 37% 100%);
+    box-shadow:inset 0 0 8px #000}
+  .railVial::before{content:'';position:absolute;left:3.5px;right:3.5px;bottom:3.5px;
+    height:calc(var(--lvl,1)*43px);max-height:43px;border-radius:2px 2px 4px 4px;
+    background:linear-gradient(90deg,#fff3,transparent 30%),var(--fluid);
+    box-shadow:0 0 9px var(--glow),inset 0 2px 0 rgba(255,255,255,.35);transition:height .25s ease-out}
+  .railVial::after{content:'';position:absolute;left:6px;top:8px;width:3.5px;height:16px;border-radius:2px;
+    background:linear-gradient(rgba(255,255,255,.42),transparent);pointer-events:none}
   .railVial b{position:absolute;z-index:1;right:-5px;bottom:-7px;min-width:16px;padding:1px 3px;text-align:center;
     font:9px 'Courier New',monospace;color:#f4e4bd;background:#1c2130;border:1px solid #8b6332;border-radius:2px}
   .railVial.moss{--fluid:#1d8d76;--glow:#4fe3c1}.railVial.salt{--fluid:#6958c5;--glow:#8b7cf6}
@@ -1632,17 +1646,19 @@ function renderRail(){
   if (rr){
     rr.innerHTML=Object.keys(REAGENT_INFO).map(k=>{
       const i=REAGENT_INFO[k], n=reagents[k]||0;
+      // Level gauge: a full field stock reads at ~60, so the fluid rises across a useful range
+      // (a stock of 30 is half a tube) rather than pinning full the moment you have any.
+      const lvl=n?Math.max(0.06,Math.min(1,n/60)):0;
       return `<div class="railVial ${k}" title="${i.label} — ${i.depth}. ${i.note}."
-        style="${n?'':'opacity:.35'}"><b>${n}</b></div>`;
+        style="--lvl:${lvl};${n?'':'opacity:.35'}"><b>${n}</b></div>`;
     }).join('');
   }
   const orr=document.getElementById('oreRail');
   if (orr){
     orr.innerHTML=Object.keys(ORE_INFO).map(k=>{
       const i=ORE_INFO[k], n=metals[k]||0;
-      return `<div class="oreChip" title="${i.label} — ${i.note}."
-        style="background:${i.col}22;border-color:${i.col};${n?'':'opacity:.35'}">
-        <span style="width:10px;height:10px;border-radius:2px;background:${i.col}"></span>
+      return `<div class="oreChip" title="${i.label} — ${i.note}." style="${n?'':'opacity:.35'}">
+        <span class="sw" style="background:${i.col};color:${i.col}"></span>
         <b>${n}</b></div>`;
     }).join('');
   }
