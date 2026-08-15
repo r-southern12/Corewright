@@ -1,5 +1,8 @@
 # Deep Tiers — T4 & T5 (adamant / aether)
 
+**Status: SHIPPED (stages 1–5 complete).**
+
+
 Add two tiers below the current three: deeper world, T4 & T5 node cores, T4 & T5
 smeltable ores, new alloys. The engine was built for this (`METALS` has commented
 `adamant`/`aether` stubs, `TIER_HARD` already has 5 entries, `FINEST_GRAIN` reads
