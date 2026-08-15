@@ -1830,17 +1830,29 @@ function setChargeFor(t){
 const OVERKILL_EXP=1.5;
 const OVERKILL_MAX=20;
 /* TIER WALL. A stratum of tier T demands a minimum RAW drill power to breach at all, on top
-   of the per-material resist gate below. Sized above the ceiling of the tier beneath it, so a
-   maxed lower-tier rig is walled out — a perfectly-refined Tier-II assembly tops out at ~2.89
-   power (forge q1 + two output≈1.86 cores), so the Tier-III wall sits at 2.9 and that rig can't
-   touch T3 stone no matter how deep it digs. Indexed by TILE_TIER; 0 = no wall (T1 topsoil and
-   T2 soft stone stay on the resist gate alone). One caveat, inherent to the power system:
-   refinement (output up to 1.86) can push a LOWER tier's power up near the next tier's, so this
-   same wall also holds out an UNDER-refined T3 rig (power < 2.9) — deep stone wants a properly
-   built, refined T3 assembly, not just a T3 core dropped in. Lower this number to admit weaker
-   T3 rigs (at the cost of letting a near-flawless T2 rig scrape the softest T3); raise it toward
-   ~4.3 to demand a maxed T3 rig. Speed past the wall is unchanged — it's still resist-driven. */
-const TIER_GATE=[0,0,0,2.9,4.4,5.85];  // each sits just above the tier below's max rig (T2 2.89, T3 4.33, T4 5.77)
+   of the per-material resist gate below. Indexed by TILE_TIER; 0 = no wall.
+
+   The load-bearing rule the wall MUST respect is PROGRESSION: a tier-N drill is forged from
+   tier-N ore and carved from tier-N nodes, so to build one you must first MINE tier-N tiles —
+   and the only rig you have at that point is tier-(N-1) gear. So the tier-N wall has to ADMIT
+   tier-(N-1) gear (or the ladder deadlocks: you'd need a T3 rig to get the T3 cores/ore a T3
+   rig is built from). It also has to BLOCK tier-(N-2) gear, so you can't skip a rung. Each
+   wall therefore sits just ABOVE the max power of the tier TWO below it — not one below, which
+   was the earlier mistake: the T3 wall was pinned at 2.9, just over a maxed T2 rig's 2.89, so
+   full T2 gear could never touch the T3 ore and nodes it needed to advance.
+
+   Max rig power by tier ≈ tier×1.44 (T1 1.44, T2 2.89, T3 4.33, T4 5.77): so the T3 wall sits
+   just above T1's 1.44 (admits any real T2 rig, blocks T1), the T4 wall just above T2's 2.89
+   (admits a built T3 rig, blocks maxed T2), the T5 wall just above T3's 4.33. This is what now
+   keeps a T2 rig off the DEEP bands: it can work down through T3 to harvest T3 cores/ore, but
+   the T4 wall (2.95) holds it out of T4/T5 — the actual floor of the deepened world.
+
+   Refinement (core output up to ~1.86) makes a tier's power a range, not a point, so these
+   walls also demand a REASONABLY BUILT rig of the admitting tier, not a bare frame with one
+   raw core — a minimal T3 rig (~1.2 power) is still walled from T4 until it's built up past
+   2.95. Raise a wall to demand a more refined rig of the tier below; lower it to admit a
+   rougher one. Speed past the wall is unchanged — still resist-driven. */
+const TIER_GATE=[0,0,0,1.5,2.95,4.4];  // wall N sits just above tier (N-1)'s BELOW: admits tier N-1 gear, blocks N-2
 function mineSpeed(resist, tier){
   const P=drillPower();
   if (tier && P<TIER_GATE[tier]) return 0;         // hard tier wall — lower tiers can't breach it
