@@ -5736,6 +5736,17 @@ function gateReqTier(tx,ty){
   const need=getGate(tx,ty)||1;
   return (drillPower()/need>=0.95) ? 0 : need;
 }
+// Mining speed for any tile, with caches handled specially. A cache (T_WALL) is
+// gated by gateReqTier (power >= 0.95×gateTier), NOT by its flat TILE_INFO resist:
+// that resist was 3.4 for every cache, which silently demanded T3-level power to
+// mine even a T1 vault the gate had already unlocked. Once unlocked we want ANY
+// gear that cleared the gate to be able to dig it, so give the cache a tier-scaled
+// resist (1.2+0.3·gate) chosen so 0.60·resist ≤ 0.95·gate for every tier — the mine
+// threshold always sits below the gate threshold — and pass tier 0 to skip TIER_GATE.
+function tileMineSpeed(t,tx,ty){
+  if (t===T_WALL){ const g=getGate(tx,ty)||1; return mineSpeed(1.2+0.3*g, 0); }
+  return mineSpeed(TILE_INFO[t].resist, TILE_TIER[t]);
+}
 
 // ---------- enemies ----------
 const ENEMY_TYPES={
@@ -5933,7 +5944,7 @@ function startMine(sx,sy){
   }
   if (t===T_BEDROCK){ say('World-floor bedrock. Nothing digs through this.','warn'); return; }
   const info=TILE_INFO[t];
-  const spd=mineSpeed(info.resist, TILE_TIER[t]);
+  const spd=tileMineSpeed(t,tx,ty);
   if (spd<=0){
     say('The drill can\'t mark this yet. Upgrade the assembly — or blast it.','warn');
     return;
@@ -6102,7 +6113,7 @@ function autoMine(tx,ty){
   const t=getTile(tx,ty);
   if (t===T_AIR) return;
   if (gateReqTier(tx,ty)) return;           // locked gate — needs the tier
-  const spd=mineSpeed(TILE_INFO[t].resist, TILE_TIER[t]);
+  const spd=tileMineSpeed(t,tx,ty);
   if (spd<=0) return;                       // assembly can't mark it
   if (!mine||mine.tx!==tx||mine.ty!==ty){
     const need=(16+TILE_INFO[t].resist*20)/spd;
@@ -6983,7 +6994,7 @@ function drawWorld(now){
     const t=tileAt(tx+0.5,ty+0.5);
     if (t!==T_AIR&&(getSeen(tx,ty)||ty<surfaceY[tx])){
       const inReach=Math.hypot(tx+0.5-player.x,ty+0.5-(player.y-0.5))<=REACH;
-      const can=gateReqTier(tx,ty)?false:mineSpeed(TILE_INFO[t].resist, TILE_TIER[t])>0;
+      const can=gateReqTier(tx,ty)?false:tileMineSpeed(t,tx,ty)>0;
       ctx.strokeStyle=!inReach?'rgba(140,147,176,0.3)':
         can?'rgba(79,227,193,0.6)':'rgba(224,82,61,0.55)';
       ctx.lineWidth=2;
