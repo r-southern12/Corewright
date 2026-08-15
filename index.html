@@ -5029,7 +5029,7 @@ canvas.addEventListener('touchend',e=>{
    ============================================================ */
 const world2d=document.getElementById('world2d');
 const ctx=world2d.getContext('2d');
-const WH=90;                 // world DEPTH is fixed; WIDTH is infinite
+const WH=150;                // world DEPTH is fixed; WIDTH is infinite (deepened for T4/T5 strata)
 const BEDROCK_Y=WH-1;        // bottom row is unbreakable floor
 const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=8,
       T_MOSS=9,T_SALT=10,T_CINDER=11,T_COPPER=12,T_IRON=13,T_VST=14,
@@ -5189,7 +5189,8 @@ const ELEM={
 const PLANET_TERRA={
   id:'terra', name:'Terra',
   surface:{ base:14, waves:[[0.18,4],[0.53,3,2]], jitter:1.5 },
-  bands:{ dirt:7, s1:26, s2:52 },
+  // dirt(T1) 0-7 · S1(T2) 7-26 · S2/S3(T3) 26-78 · S4(T4) 78-112 · S5(T5) 112-148
+  bands:{ dirt:7, s1:26, s2:52, s3:78, s4:112 },
   palette:{
     sky:['#070912','#10152b','#1a2140'],
     glow:['#8B7CF6','#4b3f8f'],
@@ -5245,7 +5246,8 @@ const PLANET_TERRA={
 const PLANET_FERRIC={
   id:'ferric', name:'Ferric',
   surface:{ base:11, waves:[[0.12,6],[0.4,3,1.2],[0.9,1.5]], jitter:2 },
-  bands:{ dirt:5, s1:20, s2:46 },
+  // dirt 0-5 · S1(T2) 5-20 · S2/S3(T3) 20-72 · S4(T4) 72-108 · S5(T5) 108-148
+  bands:{ dirt:5, s1:20, s2:46, s3:72, s4:108 },
   palette:{
     sky:['#140806','#2a120a','#3d1d10'],
     glow:['#E8A33D','#7a3c17'],
@@ -5350,10 +5352,11 @@ function vaultAnchorAt(x){
   const p=planet, b=p.bands;
   const vr=mulberry32((WORLD_SEED+31) ^ Math.imul(x,0x27D4EB2F));
   if (vr()>=0.055) return null;
-  const tr=vr(), tier=tr<0.40?1:tr<0.72?2:3;              // tier first, shallow a bit more common
+  const tr=vr(), tier=tr<0.34?1:tr<0.60?2:tr<0.80?3:tr<0.92?4:5;   // deeper tiers rarer
   const s=surfaceOf(x);
-  const lo=tier===1?2:tier===2?b.dirt:b.s1;
-  const hi=tier===1?b.dirt:tier===2?b.s1:Math.max(b.s1+8,BEDROCK_Y-s-3);
+  // each tier's vault buries in its own band (T4 in the S4 band, T5 in the S5 band)
+  const LO=[0,2,b.dirt,b.s1,b.s3,b.s4], HI=[0,b.dirt,b.s1,b.s3,b.s4,BEDROCK_Y-s-3];
+  const lo=LO[tier], hi=Math.max(lo+2,Math.min(HI[tier],BEDROCK_Y-s-3));
   const vy=s+lo+Math.floor(vr()*Math.max(1,hi-lo));
   if (vy<=0 || vy+1>=BEDROCK_Y) return null;
   return {vy,tier};
@@ -5377,15 +5380,29 @@ function genColumn(x){
     const bio=biomeAt(p,x,y);
     if (bio) elem[y]=bio.element==='ice'?2:1;
     const depth=y-s;
-    let t=depth<b.dirt?T_DIRT:depth<b.s1?T_S1:depth<b.s2?T_S2:T_S3;
+    let t=depth<b.dirt?T_DIRT:depth<b.s1?T_S1:depth<b.s2?T_S2:depth<b.s3?T_S3:depth<b.s4?T_S4:T_S5;
     const r=rnd();
-    const topsoil=(bio&&bio.topsoil)||p.topsoil;
-    const deep=(bio&&bio.deep)||p.deep;
-    const rolls=(t===T_DIRT)?topsoil:deep;
-    for (const roll of rolls){
-      const [chance,pick,minDepth]=roll;
-      if (minDepth!==undefined && depth<=minDepth) continue;
-      if (r<chance){ t=(typeof pick==='function')?pick(depth,r,t):pick; break; }
+    if (depth>=b.s3){
+      // T4/T5 deep strata: adamant/aether ore + node4/5 laid in CONCENTRATED POCKETS (a
+      // low-frequency value-noise field), not evenly scattered — the deep tiers are rich
+      // in spots and barren between, so digging deep is about finding the pocket. The old
+      // T2/T3 deep rolls don't run this far, so no voidsteel/mica bleeds into these bands.
+      const t4=depth<b.s4;
+      const rich=valueNoise(x,y, t4?18:22, (WORLD_SEED + (t4?211:307))>>>0);
+      // ore is the concentrated payoff of a pocket; nodes (carveable cores) stay a rarer find
+      const oreC =rich>0.62 ? (t4?0.28:0.32) : (t4?0.022:0.030);
+      const nodeC=rich>0.62 ? (t4?0.045:0.055) : (t4?0.006:0.008);
+      if (r<oreC) t=t4?T_ADT:T_AETH;
+      else if (r<oreC+nodeC) t=t4?T_NODE4:T_NODE5;
+    } else {
+      const topsoil=(bio&&bio.topsoil)||p.topsoil;
+      const deep=(bio&&bio.deep)||p.deep;
+      const rolls=(t===T_DIRT)?topsoil:deep;
+      for (const roll of rolls){
+        const [chance,pick,minDepth]=roll;
+        if (minDepth!==undefined && depth<=minDepth) continue;
+        if (r<chance){ t=(typeof pick==='function')?pick(depth,r,t):pick; break; }
+      }
     }
     tiles[y]=t;
   }
@@ -6753,9 +6770,9 @@ function drawDepositOverCrumble(x,y,t,px,py,now){
   }
 }
 function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
-  const TC=['','#4FE3C1','#E8A33D','#8B7CF6'][tier]||'#4FE3C1';
-  const RGB=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
-  const num=['','I','II','III'][tier]||'?';
+  const TC=['','#4FE3C1','#E8A33D','#8B7CF6','#D9586A','#4FD6C4'][tier]||'#4FE3C1';
+  const RGB=['','79,227,193','232,163,61','139,124,246','217,88,106','79,214,196'][tier]||'79,227,193';
+  const num=['','I','II','III','IV','V'][tier]||'?';
   if (reclaimed) drawGateReclaimed(px,py,TS,TC,RGB,num,locked,seed,now);
   else drawGateGlyph(px,py,TS,TC,RGB,num,locked,seed,now);
 }
@@ -6881,7 +6898,7 @@ function drawWorld(now){
         // ANCIENT CACHE: ping its 2x2 once (at the anchor) with a tier-coloured DIAMOND,
         // distinct from the core boxes, so the buried vaults can be hunted down.
         if (getTile(x-1,y)===T_WALL || getTile(x,y-1)===T_WALL) continue;   // only the top-left cell
-        const tier=getGate(x,y)||1, tc=['','79,227,193','232,163,61','139,124,246'][tier]||'79,227,193';
+        const tier=getGate(x,y)||1, tc=['','79,227,193','232,163,61','139,124,246','217,88,106','79,214,196'][tier]||'79,227,193';
         const ping=0.45+0.4*Math.abs(Math.sin(now*0.004+(x+y)*0.6));
         const mcx=x*TS-camX+TS, mcy=y*TS-camY+TS;                           // centre of the 2x2
         ctx.strokeStyle=`rgba(${tc},${ping})`; ctx.lineWidth=2;
