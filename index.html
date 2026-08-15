@@ -258,20 +258,31 @@
   #joystick{position:relative;width:124px;height:124px;border-radius:50%;pointer-events:auto;
     border:2px solid #3a4467;background:rgba(21,26,46,.78);box-shadow:0 5px 18px rgba(0,0,0,.45);
     touch-action:none;user-select:none}
-  #joystick::before,#joystick::after{content:'';position:absolute;background:#303a5c;opacity:.8}
-  #joystick::before{width:2px;height:84px;left:60px;top:18px}
-  #joystick::after{height:2px;width:84px;left:18px;top:60px}
+  /* Compass instrument: a milled tick ring around the rim (::before, a conic tick pattern masked to
+     an annulus) and a glass-dome sheen (::after). The crosshair moved into the joystick background
+     so both pseudo-elements were free for the bezel dressing. */
+  #joystick::before{content:'';position:absolute;inset:-1px;border-radius:50%;pointer-events:none;
+    background:repeating-conic-gradient(#c9a45c 0 1.3deg,transparent 1.3deg 15deg);opacity:.55;
+    -webkit-mask:radial-gradient(circle,transparent 0 51%,#000 53% 59%,transparent 61%);
+            mask:radial-gradient(circle,transparent 0 51%,#000 53% 59%,transparent 61%)}
+  #joystick::after{content:'';position:absolute;inset:0;border-radius:50%;pointer-events:none;
+    background:radial-gradient(circle at 34% 27%,rgba(255,255,255,.13),rgba(255,255,255,0) 46%)}
   #stick{position:absolute;width:50px;height:50px;left:35px;top:35px;border-radius:50%;
     display:flex;align-items:center;justify-content:center;color:var(--violet);font-size:20px;
     border:2px solid var(--violet);background:rgba(27,33,57,.98);box-shadow:0 3px 12px rgba(0,0,0,.55);
     transform:translate(0,0)}
+  /* Machined-brass control knobs: a brass bezel with an inset milled ring, a lit top bevel and a
+     drop edge — one light source, top-left — so they read as instruments, not web buttons. The
+     crystal/amber accent stays in the icon + a faint inner glow so mine vs blast still reads. */
   #pad button{width:68px;height:68px;border-radius:50%;
     font-size:28px;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-    font-family:'Courier New',monospace;background:rgba(21,26,46,.94);border:2px solid var(--line);
-    box-shadow:0 5px 18px rgba(0,0,0,.45);touch-action:none;user-select:none}
-  #pad button span{font-size:10px;letter-spacing:.12em;text-transform:uppercase}
-  #k_dig{width:78px;height:78px;border-color:var(--crystal);color:var(--crystal)}
-  #k_throw{width:58px;height:58px;font-size:22px;color:var(--amber);border-color:var(--amber)}
+    font-family:'Courier New',monospace;background:radial-gradient(circle at 34% 28%,#2a3145,#121728 72%);border:2px solid #8f6938;
+    box-shadow:inset 0 2px 0 rgba(255,235,190,.16),inset 0 0 0 4px #141a29,inset 0 -3px 7px rgba(0,0,0,.6),0 5px 16px rgba(0,0,0,.5);
+    touch-action:none;user-select:none;transition:transform .05s}
+  #pad button:active{transform:translateY(1px)}
+  #pad button span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#c9a45c}
+  #k_dig{width:78px;height:78px;color:var(--crystal);text-shadow:0 0 8px rgba(79,227,193,.5)}
+  #k_throw{width:58px;height:58px;font-size:22px;color:var(--amber);text-shadow:0 0 8px rgba(232,163,61,.5)}
   #expedHud{position:fixed;bottom:142px;left:18%;right:18%;text-align:center;z-index:8;display:none;
     font-size:13px;color:var(--dim);font-style:italic}
   #expedHud.on{display:block}
@@ -393,11 +404,18 @@
   .card.t3{border-left-color:var(--brass)}
   .badge{border-color:var(--brass-dark);color:#d8b478;background:rgba(49,35,25,.45)}
   .qbar,.bigbar,.minibar .track{background:#080c16;border-color:#3c4665;box-shadow:inset 0 0 8px #000}
-  #joystick{background:radial-gradient(circle,rgba(29,38,59,.94) 0 42%,rgba(12,18,33,.9) 44% 100%);
-    border-color:var(--brass-dark);box-shadow:inset 0 0 0 5px rgba(200,154,82,.06),0 5px 18px rgba(0,0,0,.55)}
-  #stick{background:radial-gradient(circle at 35% 30%,#35415f,#171d33 70%);box-shadow:inset 0 0 0 3px rgba(139,124,246,.12),0 3px 12px #000}
-  #k_dig{background:radial-gradient(circle at 35% 30%,rgba(32,82,75,.98),rgba(15,29,40,.98));box-shadow:inset 0 0 0 4px rgba(79,227,193,.08),0 4px 15px #000}
-  #k_throw{background:radial-gradient(circle at 35% 30%,rgba(93,58,29,.98),rgba(32,25,35,.98))}
+  #joystick{border-color:#8f6938;
+    background:
+      linear-gradient(rgba(58,68,103,.5),rgba(58,68,103,.5)) 50%/2px 62% no-repeat,
+      linear-gradient(rgba(58,68,103,.5),rgba(58,68,103,.5)) 50%/62% 2px no-repeat,
+      radial-gradient(circle,rgba(29,38,59,.94) 0 42%,rgba(12,18,33,.92) 44% 100%);
+    box-shadow:inset 0 0 0 4px #1a2032,inset 0 2px 7px rgba(255,235,190,.12),0 6px 20px rgba(0,0,0,.55)}
+  /* the thumb is a milled brass knob with a lit top bevel */
+  #stick{background:radial-gradient(circle at 34% 28%,#5a4c2e,#251b0f 72%);border-color:#c9a45c;color:#f2d78e;
+    box-shadow:inset 0 2px 0 rgba(255,235,190,.32),inset 0 -2px 5px rgba(0,0,0,.5),0 3px 12px #000}
+  /* buttons keep the brass bezel from the base rule; here just the accent inner glow that says which is which */
+  #k_dig{box-shadow:inset 0 2px 0 rgba(255,235,190,.16),inset 0 0 0 4px #141a29,inset 0 0 14px rgba(79,227,193,.14),inset 0 -3px 7px rgba(0,0,0,.6),0 5px 16px rgba(0,0,0,.5)}
+  #k_throw{box-shadow:inset 0 2px 0 rgba(255,235,190,.16),inset 0 0 0 4px #141a29,inset 0 0 14px rgba(232,163,61,.16),inset 0 -3px 7px rgba(0,0,0,.6),0 5px 16px rgba(0,0,0,.5)}
   #seat .card2{border-color:var(--brass);background:linear-gradient(145deg,#252c40,#111729);box-shadow:0 0 35px rgba(79,227,193,.12)}
 
   /* material-built instrument chrome */
