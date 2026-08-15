@@ -5922,7 +5922,7 @@ let mine=null, attackTgt=null;
 // stronger drill still resumes at the same visual point. In-memory (not saved); cleared
 // when the tile breaks. Bounded by how many tiles you leave half-drilled.
 const tileDmg=new Map();
-function dmgKey(x,y){ return x+','+y; }
+function dmgKey(x,y){ return x*WH+y; }   // numeric key (y in [0,WH)): unique, and no per-frame string allocation in the draw loop
 function dmgFrac(x,y){ const e=tileDmg.get(dmgKey(x,y)); return e?e.p:0; }   // stored fraction, 0 if untouched
 let aim={x:0,y:0,active:false};
 let particles=[];
@@ -6466,9 +6466,9 @@ function invalidateBake(x,y){
   if (!tileBake) return;                       // not baked yet (early world-gen)
   // this cell AND the four around it: a neighbour's exposed-edge/topsoil crust
   // depends on whether THIS cell is air, so opening one tile restyles its borders
-  tileBake.delete(x+','+y);
-  tileBake.delete((x+1)+','+y); tileBake.delete((x-1)+','+y);
-  tileBake.delete(x+','+(y+1)); tileBake.delete(x+','+(y-1));
+  tileBake.delete(x*WH+y);
+  tileBake.delete((x+1)*WH+y); tileBake.delete((x-1)*WH+y);
+  tileBake.delete(x*WH+(y+1)); tileBake.delete(x*WH+(y-1));
 }
 // One faceted metallic chunk: a 6-sided nugget with a lit top facet, a diagonal
 // body gradient and a specular pip on the larger ones. Draws into the passed tile
@@ -6541,7 +6541,7 @@ function bakeTile(x,y,t,TS){
 }
 function tileBaseFor(x,y,t,TS){
   if (!tileBake||TS!==tileBakeTS){ tileBake=new Map(); tileBakeTS=TS; }  // resize rebakes all
-  const k=x+','+y; let e=tileBake.get(k);
+  const k=x*WH+y; let e=tileBake.get(k);       // numeric key: no per-tile string allocation in the draw loop
   if (!e||e.t!==t){                            // cell newly seen or its material changed
     if (tileBake.size>4000) tileBake.clear();  // infinite world: bound the cache, rebake lazily
     e={cv:bakeTile(x,y,t,TS),t}; tileBake.set(k,e);
@@ -6849,6 +6849,17 @@ function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
   if (reclaimed) drawGateReclaimed(px,py,TS,TC,RGB,num,locked,seed,now);
   else drawGateGlyph(px,py,TS,TC,RGB,num,locked,seed,now);
 }
+// Depth-fog colour, precomputed. The fog fill runs on every revealed tile every frame,
+// and building `rgba(r,g,b,${dark})` inline allocated ~900 short-lived strings PER FRAME —
+// steady garbage that made the GC pause periodically and read as mining stutter. Quantise
+// the darkness to 32 levels (imperceptible) and cache the strings once, so the hot loop just
+// indexes. Three bands: T1 neutral, T2 cool, T3+ indigo — the tier hue the fog already used.
+const _FOGRGB=[[4,6,14],[6,10,22],[11,7,24]];
+const _FOGLEV=32;
+const _fogCache=_FOGRGB.map(([r,g,b])=>{ const a=new Array(_FOGLEV);
+  for(let i=0;i<_FOGLEV;i++) a[i]=`rgba(${r},${g},${b},${(i/_FOGLEV).toFixed(3)})`; return a; });
+function fogColor(ti,dark){ const band=ti>=3?2:ti>=2?1:0; let i=(dark*_FOGLEV)|0;
+  if(i<0)i=0; else if(i>=_FOGLEV)i=_FOGLEV-1; return _fogCache[band][i]; }
 function drawWorld(now){
   vpSize();
   const w=world2d.width=Math.round(VW), h=world2d.height=Math.round(VH);
@@ -6876,81 +6887,95 @@ function drawWorld(now){
 
   const x0=Math.floor(camX/TS), x1=Math.ceil((camX+w)/TS);
   const y0=Math.max(0,Math.floor(camY/TS)), y1=Math.min(WH,Math.ceil((camY+h)/TS));
-  for (let x=x0;x<x1;x++) for (let y=y0;y<y1;y++){
-    const t=getTile(x,y);
-    const px=x*TS-camX, py=y*TS-camY;
-    const underground=y>=surfaceY[x];
-    // A material joins the hardness spectrum the moment it is actually visible:
-    // out of the fog and on screen. Surface tiles are never fogged, so they
-    // register as soon as they are drawn.
-    if (!underground||getSeen(x,y)) noteSeen(t);
-    if (underground&&!getSeen(x,y)){
-      ctx.fillStyle='#05070f';
-      ctx.fillRect(px,py,TS,TS);
-      // Surface-band biomes read THROUGH the fog: a walking player sees a zone's
-      // colour bleeding up from the ground before ever digging into it. Only the
-      // shallow band shows — deeper blobs stay hidden until you mine to them.
-      if (y-surfaceY[x] < 4){
-        const e=getElem(x,y);
-        if (e){ ctx.fillStyle=e===1?ELEM.fire.tint:ELEM.ice.tint; ctx.fillRect(px,py,TS,TS); }
+  // Hoist the column ONCE per screen-x: getTile/getSeen/getElem each did a
+  // columns.get(x) map lookup, so the inner y-loop was doing ~4 lookups per tile
+  // (~3700/frame on a full screen). Reading col.tiles[y] / col.seen[y] / col.elem[y]
+  // straight off the hoisted column removes them — the bulk of the revealed-area
+  // cost, which is why lag climbed the moment fog turned into open, drawn tiles.
+  const pfx=player.x, pfy=player.y-0.5, hasDmg=tileDmg.size>0;
+  for (let x=x0;x<x1;x++){
+    const col=column(x), tiles=col.tiles, seen=col.seen, elem=col.elem, surf=surfaceY[x];
+    for (let y=y0;y<y1;y++){
+      const t=tiles[y];
+      const px=x*TS-camX, py=y*TS-camY;
+      const underground=y>=surf, isSeen=seen[y];
+      // A material joins the hardness spectrum the moment it is actually visible:
+      // out of the fog and on screen. Surface tiles are never fogged, so they
+      // register as soon as they are drawn.
+      if (!underground||isSeen) noteSeen(t);
+      if (underground&&!isSeen){
+        ctx.fillStyle='#05070f';
+        ctx.fillRect(px,py,TS,TS);
+        // Surface-band biomes read THROUGH the fog: a walking player sees a zone's
+        // colour bleeding up from the ground before ever digging into it. Only the
+        // shallow band shows — deeper blobs stay hidden until you mine to them.
+        if (y-surf < 4){
+          const e=elem[y];
+          if (e){ ctx.fillStyle=e===1?ELEM.fire.tint:ELEM.ice.tint; ctx.fillRect(px,py,TS,TS); }
+        }
+        continue;
       }
-      continue;
-    }
-    if (t===T_AIR) continue;
-    // Frozen base (fill, milled noise, carved bevel, lit edge) is baked per-cell and
-    // blitted; the deposits (live glow + the baked ore/clay/salt/mica features) draw over it.
-    ctx.drawImage(tileBaseFor(x,y,t,TS),px,py);
-    // The mining crumble draws BETWEEN the base and the deposit, so the terrain wears away
-    // while the ore specks / core gem / moss / clay stay on top — you can always see what
-    // you're digging. Active tile eats live; a grazed-and-left tile shows its persisted state.
-    const active = mine&&mine.tx===x&&mine.ty===y;
-    const mseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
-    if (active){
-      const ddx=x+0.5-player.x, ddy=y+0.5-(player.y-0.5), dl=Math.hypot(ddx,ddy)||1;
-      drawMineFracture(px,py,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx/dl,ddy/dl);
-      drawDepositOverCrumble(x,y,t,px,py,now);
-    } else {
-      const dmg = tileDmg.size ? tileDmg.get(x+','+y) : null;
-      if (dmg){ drawMineFracture(px,py,TS,dmg.p,mseed,false,dmg.dx,dmg.dy); drawDepositOverCrumble(x,y,t,px,py,now); }
-      else drawWorldDeposit(x,y,t,px,py,now);       // untouched tile: live overlays only (baked ones already in the base)
-    }
-    // (T_WALL caches are drawn in a separate 2x2 pass after the tile loop, so the
-    //  big vault art isn't overpainted by neighbouring tile bases.)
-    // biome / planet tint wash: a translucent colour laid over the stone so each
-    // zone reads distinct at a glance. Skips self-lit gems and gate-walls. Reads
-    // the element recorded per cell at generation, not a re-sampled noise field.
-    if (t!==T_WALL&&!SELF_LIT.has(t)){
-      const e=getElem(x,y);
-      const tint = e===1 ? ELEM.fire.tint
-                 : e===2 ? ELEM.ice.tint
-                 : (planet.palette&&planet.palette.tint);
-      if (tint&&tint!=='rgba(0,0,0,0)'){ ctx.fillStyle=tint; ctx.fillRect(px,py,TS,TS); }
-    }
-    const depthT=y-surfaceY[x];
-    if (depthT>1&&!SELF_LIT.has(t)){
-      const d=Math.hypot(x+0.5-player.x,y+0.5-(player.y-0.5));
-      const dark=Math.min(0.93,Math.max(0,(d-2.2)/6)+Math.min(0.55,depthT*0.012));
-      // the deep fog takes a cool TIER hue, so descending through the bands shifts the mood: neutral T1
-      // topsoil, a cool cast through the T2 soft-stone band, a deep indigo through the T3 hard stone.
-      const ti=TILE_TIER[t]||1;
-      ctx.fillStyle = ti>=3 ? `rgba(11,7,24,${dark})` : ti>=2 ? `rgba(6,10,22,${dark})` : `rgba(4,6,14,${dark})`;
-      ctx.fillRect(px,py,TS,TS);
+      if (t===T_AIR) continue;
+      // Frozen base (fill, milled noise, carved bevel, lit edge) is baked per-cell and
+      // blitted; the deposits (live glow + the baked ore/clay/salt/mica features) draw over it.
+      ctx.drawImage(tileBaseFor(x,y,t,TS),px,py);
+      const selfLit=SELF_LIT.has(t);
+      // The mining crumble draws BETWEEN the base and the deposit, so the terrain wears away
+      // while the ore specks / core gem / moss / clay stay on top — you can always see what
+      // you're digging. Active tile eats live; a grazed-and-left tile shows its persisted state.
+      const active = mine&&mine.tx===x&&mine.ty===y;
+      if (active){
+        const mseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
+        const ddx=x+0.5-pfx, ddy=y+0.5-pfy, dl=Math.hypot(ddx,ddy)||1;
+        drawMineFracture(px,py,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx/dl,ddy/dl);
+        drawDepositOverCrumble(x,y,t,px,py,now);
+      } else {
+        const dmg = hasDmg ? tileDmg.get(x*WH+y) : null;
+        if (dmg){ const mseed=(Math.imul(x,131)^Math.imul(y,17))>>>0; drawMineFracture(px,py,TS,dmg.p,mseed,false,dmg.dx,dmg.dy); drawDepositOverCrumble(x,y,t,px,py,now); }
+        // untouched tile: only SELF_LIT tiles (nodes/moss/brine/cinder/rime) have a LIVE overlay;
+        // ore/clay/salt/mica are baked into the base already, so plain stone needs no deposit call at all.
+        else if (selfLit) drawWorldDeposit(x,y,t,px,py,now);
+      }
+      // (T_WALL caches are drawn in a separate 2x2 pass after the tile loop, so the
+      //  big vault art isn't overpainted by neighbouring tile bases.)
+      // biome / planet tint wash: a translucent colour laid over the stone so each
+      // zone reads distinct at a glance. Skips self-lit gems and gate-walls. Reads
+      // the element recorded per cell at generation, not a re-sampled noise field.
+      if (t!==T_WALL&&!selfLit){
+        const e=elem[y];
+        const tint = e===1 ? ELEM.fire.tint
+                   : e===2 ? ELEM.ice.tint
+                   : (planet.palette&&planet.palette.tint);
+        if (tint&&tint!=='rgba(0,0,0,0)'){ ctx.fillStyle=tint; ctx.fillRect(px,py,TS,TS); }
+      }
+      const depthT=y-surf;
+      if (depthT>1&&!selfLit){
+        const ex=x+0.5-pfx, ey=y+0.5-pfy, d=Math.sqrt(ex*ex+ey*ey);   // sqrt, not hypot (hypot's overflow guard is slower)
+        const dark=Math.min(0.93,Math.max(0,(d-2.2)/6)+Math.min(0.55,depthT*0.012));
+        // the deep fog takes a cool TIER hue, so descending through the bands shifts the mood: neutral T1
+        // topsoil, a cool cast through the T2 soft-stone band, a deep indigo through the T3 hard stone.
+        ctx.fillStyle = fogColor(TILE_TIER[t]||1, dark);   // cached, quantised — no per-tile string alloc
+        ctx.fillRect(px,py,TS,TS);
+      }
     }
   }
 
   // ---- 2x2 ANCIENT CACHE vaults: one big, detailed vault per group, over the bases.
   //      The anchor is the group's top-left T_WALL cell (no wall to its left or above).
   //      Range extended by 1 so a vault whose anchor sits just off-screen still draws.
-  for (let x=x0-1;x<x1;x++) for (let y=y0-1;y<y1;y++){
-    if (getTile(x,y)!==T_WALL) continue;
-    if (getTile(x-1,y)===T_WALL || getTile(x,y-1)===T_WALL) continue;   // not the top-left cell
-    const anySeen = getSeen(x,y)||getSeen(x+1,y)||getSeen(x,y+1)||getSeen(x+1,y+1) || y<surfaceY[x];
+  for (let x=x0-1;x<x1;x++){
+    const col=column(x), tiles=col.tiles, seen=col.seen;
+    for (let y=y0-1;y<y1;y++){
+    if (y<0||y>=WH || tiles[y]!==T_WALL) continue;   // same-column read; the rare wall check gates the rest
+    if (getTile(x-1,y)===T_WALL || (y>0&&tiles[y-1]===T_WALL)) continue;   // not the top-left cell
+    const anySeen = seen[y]||getSeen(x+1,y)||(y+1<WH&&seen[y+1])||getSeen(x+1,y+1) || y<surfaceY[x];
     if (!anySeen) continue;
     const px=x*TS-camX, py=y*TS-camY, req=getGate(x,y)||1;
     const locked=drillPower()/req<0.95;
     const gseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
     const reclaimed=((Math.imul(y,2654435761)>>>1)&1)===1;   // style fixed per depth
     drawGate(px,py,TS*2,req,locked,gseed,reclaimed,now);
+  }
   }
 
   const sRange=scanRange();
