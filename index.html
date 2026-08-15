@@ -187,6 +187,8 @@
   .card.t1{border-left-color:var(--crystal)}
   .card.t2{border-left-color:var(--violet)}
   .card.t3{border-left-color:var(--amber)}
+  .card.t4{border-left-color:#d9586a}
+  .card.t5{border-left-color:#4fd6c4}
   .card .info{font-size:13px;flex:1}
   .card .sub{font-size:11px;color:var(--dim);font-style:italic;margin-top:3px}
   .card .sub .glow{color:var(--amber)}
@@ -7198,7 +7200,7 @@ function renderForge(){
   // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
   const ol=document.getElementById('forgeOreList');
   if (ol) ol.innerHTML=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,note:''};
-    return `<div class="card t${Math.min(3,metalTier(k))}"><div class="info">${oi.label}<div class="sub">${oi.note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
+    return `<div class="card t${metalTier(k)}"><div class="info">${oi.label}<div class="sub">${oi.note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
   }).join('');
   // the tin slider shows only when a bronze recipe is available to forge
   const hasBronze=FORGE_TEMPLATES.some(m=>m.alloyBase);
@@ -7230,7 +7232,7 @@ function renderForge(){
     const div=document.createElement('div');
     const isSuit=m.part==='suitFrame';
     const fitted=isSuit?suitFrames[m.system]:drill[m.part];
-    div.className='card t'+Math.min(3,fitted?fitted.tier:1);
+    div.className='card t'+(fitted?fitted.tier:1);
     const fitQ=fitted?`${fitted.name||'fitted'} · ${Math.round((fitted.q||0)*100)}%`:'slot empty';
     div.innerHTML=`<div class="info">${m.label}
       <div class="sub">${m.desc}
@@ -7257,7 +7259,7 @@ function renderForgedShelf(){
   if (!forgedParts.length){ shelf.innerHTML='<span class="sub">Nothing forged yet — pick a template above and pour a part.</span>'; return; }
   for (const part of forgedParts){
     const installed = part.part==='suitFrame' ? suitFrames[part.system]===part : drill[part.part]===part;
-    const card=document.createElement('div'); card.className='card t'+Math.min(3,part.tier)+(installed?' active':'');
+    const card=document.createElement('div'); card.className='card t'+part.tier+(installed?' active':'');
     card.style.cssText='display:flex;gap:8px;align-items:center;min-width:230px';
     const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=72; cv.style.cssText='width:72px;height:72px;flex:0 0 72px';
     card.appendChild(cv); registerThumb(cv, forgeThumbMesh(part));
@@ -8162,14 +8164,16 @@ const FORGE_LOCK_COL={
 // nugget carries its own id; the crucible blend uses FORGE_ALLOY_ID. Each id has a SET
 // colour — how the metal reads once cooled — so a mixed feed shows its constituents and
 // the alloy housing reads apart from the copper.
-const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3};
+const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3, adamant:4, aether:5};
 const FORGE_ALLOY_ID=9;
 const forgeMetalId=k=>FORGE_METAL_ID[k]!==undefined?FORGE_METAL_ID[k]:0;
-const ID_TO_METAL={0:'copper',1:'tin',2:'iron',3:'vst'};   // reverse of FORGE_METAL_ID (for material derivation)
+const ID_TO_METAL={0:'copper',1:'tin',2:'iron',3:'vst',4:'adamant',5:'aether'};   // reverse of FORGE_METAL_ID (for material derivation)
 const FORGE_METAL_SET={
   1:new THREE.Color(0xc2ccd6),        // tin  -> bright pewter
   2:new THREE.Color(0x59657a),        // iron -> dark steel
   3:new THREE.Color(0x7a5bc0),        // voidsteel -> void violet
+  4:new THREE.Color(0xc8586a),        // adamant -> deep red
+  5:new THREE.Color(0x4fd6c4),        // aether -> luminous teal
 };
 // Incandescence ramp: what a heating patch looks like as temperature climbs, and —
 // run backwards as it cools — how it fades. Cold raw ore is dark copper; heat drives
@@ -10443,10 +10447,10 @@ const lapTier={raw:0,store:0,wrought:0};
 function renderCoreSection(key,cores,clean,emptyMsg){
   const tabsEl=document.getElementById(key+'Tabs'), listEl=document.getElementById(key+'List');
   const sel=lapTier[key];
-  const counts={0:cores.length,1:0,2:0,3:0};
+  const counts={0:cores.length,1:0,2:0,3:0,4:0,5:0};
   for (const c of cores) counts[c.tier]=(counts[c.tier]||0)+1;
   tabsEl.innerHTML='';
-  for (const [tv,label] of [[0,'All'],[1,'T I'],[2,'T II'],[3,'T III']]){
+  for (const [tv,label] of [[0,'All'],[1,'T I'],[2,'T II'],[3,'T III'],[4,'T IV'],[5,'T V']]){
     const b=document.createElement('button');
     b.className='tierTab'+(sel===tv?' on':'');
     b.innerHTML=label+(counts[tv]?`<span class="n">${counts[tv]}</span>`:'');
@@ -10456,7 +10460,7 @@ function renderCoreSection(key,cores,clean,emptyMsg){
   const shown=sel?cores.filter(c=>c.tier===sel):cores;
   listEl.innerHTML='';
   if (!shown.length){
-    listEl.innerHTML=`<div class="card"><div class="info sub">${cores.length?`No Tier ${['','I','II','III'][sel]} cores here.`:emptyMsg}</div></div>`;
+    listEl.innerHTML=`<div class="card"><div class="info sub">${cores.length?`No Tier ${['','I','II','III','IV','V'][sel]} cores here.`:emptyMsg}</div></div>`;
     return;
   }
   for (const c of shown) listEl.appendChild(coreCard(c,clean));
