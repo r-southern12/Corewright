@@ -210,6 +210,9 @@
   #packMark{display:none}
   #packTrack.maxed{box-shadow:0 0 8px rgba(79,227,193,.55)}
   #packTrack.maxed #packBar{background:linear-gradient(90deg,#4fe3c1,#c9a24b,#4fe3c1)!important}
+  #benchGauges{display:none;margin:2px auto 0;text-align:center}
+  #benchGauges.on{display:block}
+  #benchGauges canvas{display:inline-block}
 
   /* ---------- refined overlay styling ---------- */
   .overlay{position:fixed;inset:0;z-index:7;display:none;overflow-y:auto;
@@ -814,6 +817,9 @@
   <div id="machineName"></div>
   <div id="benchOut" class="toolhint mono" style="padding:2px;color:var(--crystal)"></div>
   <div id="packTrack"><div id="packBar"></div><div id="packMark"></div></div>
+  <!-- Bench dials: IN-TEMPLATE (how much of the core sits inside the pattern) and REFINE (surface
+       toward the tier ceiling), in the seat-gauge idiom. Shown on the shaping benches; drawn each cut. -->
+  <div id="benchGauges"><canvas id="benchGaugeCv" width="452" height="176" style="width:226px;height:88px"></canvas></div>
   <div id="tools_cleave" style="display:none">
     <div class="row">
       <button class="potion" id="p_h">Level<span class="count mono" id="c_h"></span></button>
@@ -4867,8 +4873,28 @@ function coreStats(){
     seat:seat.score,seatMode:seat.mode,housing:seat.housing,
     output:fits?projOutput:0};
 }
+// Two bench dials in the seat-gauge idiom, refreshed on every cut. IN-TEMPLATE reads the share of
+// the core sitting inside the pattern (full needle = nothing wasted); REFINE reads surface toward
+// what this core could reach at its tier. No-op unless the bench-gauge panel is showing.
+function drawBenchGauges(){
+  const bg=document.getElementById('benchGauges');
+  const cv=document.getElementById('benchGaugeCv');
+  if(!bg||!cv||!bg.classList.contains('on')) return;
+  const c=cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); c.textBaseline='alphabetic';
+  if(!coreStats()) return;                                   // empty bench: leave the dials dark
+  if(countMatrix()>0){                                       // still dirty: one dial, the rest is text
+    drawMiniDial(c,cv.width/2,104,40,0,'#8C93B0','MATRIX','on'); return;
+  }
+  const r=refinementStats();
+  const within=Math.max(0,Math.min(1,1-r.outside)), waste=1-within;
+  const wcol=waste<0.02?'#4FE3C1':waste<0.25?'#E8A33D':'#E0523D';   // low waste is GOOD, so invert the ramp
+  const ref=Math.max(0,Math.min(1,r.relative));
+  drawMiniDial(c,116,104,40,within, wcol, 'IN TEMPLATE', Math.round(within*100)+'%');
+  drawMiniDial(c,336,104,40,ref, _gaugeCol(ref), 'REFINE', Math.round(ref*100)+'%');
+}
 function liveOutput(){
   drawCoreSpider();                       // keep the suitability spider in step with every cut (no-op if hidden)
+  drawBenchGauges();                      // and the bench dials
   const s=coreStats();
   const el=document.getElementById('benchOut');
   if (!s){ el.textContent=''; return; }
@@ -10981,6 +11007,11 @@ function showView(name){
   document.getElementById('coreSpider').classList.toggle('on', ['cleave','brute','facet','polish'].includes(name) && !!activeCore);
   drawCoreSpider();
   document.getElementById('viewControls').classList.toggle('on',isMachine);
+  // Bench dials ride the four shaping benches; the thin pack track is redundant there (the
+  // IN-TEMPLATE/REFINE arcs ARE the meter), so hide it on those and keep it elsewhere.
+  const showBenchG=['cleave','brute','facet','polish'].includes(name);
+  document.getElementById('benchGauges').classList.toggle('on',showBenchG);
+  document.getElementById('packTrack').style.display=showBenchG?'none':'';
   document.getElementById('stationBar').classList.toggle('on',isShaping);
   document.getElementById('toolbar').classList.toggle('on',isMachine);
   document.getElementById('pad').classList.toggle('on',isExped);
