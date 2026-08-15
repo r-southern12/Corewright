@@ -121,11 +121,51 @@
   button.tiny{font-size:11px;padding:7px 10px;min-height:36px}
   button.danger{border-color:var(--danger);color:var(--danger)}
 
-  #status{position:fixed;top:210px;left:0;right:0;text-align:center;font-size:14px;
-    color:var(--dim);font-style:italic;pointer-events:none;z-index:9;transition:color .3s;padding:0 14px}
-  #status.good{color:var(--crystal)}
-  #status.warn{color:var(--amber)}
-  #status.bad{color:var(--danger)}
+  #status{display:none}   /* retired: the churning centre-screen status line is replaced by the signal system below */
+
+  /* ===== feedback overhaul: four signals, four surfaces (replaces the one churning line) ===== */
+  /* NOTABLE — a plate seats top-right for discoveries / rewards / milestones */
+  #notes{position:fixed;top:42px;right:12px;z-index:12;display:flex;flex-direction:column;gap:8px;
+    align-items:flex-end;max-width:330px;pointer-events:none}
+  .note{--tc:var(--brass);pointer-events:auto;cursor:pointer;display:flex;gap:11px;align-items:center;
+    background:linear-gradient(180deg,#212739,#151a26);border:1px solid var(--line);border-left:3px solid var(--tc);
+    padding:11px 14px 11px 12px;max-width:330px;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 9px 24px -11px rgba(0,0,0,.85);
+    animation:noteSeat .42s cubic-bezier(.2,.9,.25,1) both}
+  .note.out{animation:noteOut .28s ease forwards}
+  @keyframes noteSeat{0%{transform:translateX(26px);opacity:0}60%{transform:translateX(-4px)}100%{transform:translateX(0);opacity:1}}
+  @keyframes noteOut{to{transform:translateX(22px);opacity:0}}
+  .note .ni{width:28px;height:28px;flex:0 0 auto;border-radius:3px;background:var(--tc);display:grid;place-items:center;
+    color:#0b0f16;font:700 13px 'Courier New',monospace;box-shadow:0 0 11px color-mix(in srgb,var(--tc) 55%,transparent)}
+  .note .nt{min-width:0}
+  .note .nk{font:400 9px 'Courier New',monospace;letter-spacing:.2em;text-transform:uppercase;color:var(--tc)}
+  .note .nn{font-size:15.5px;color:#fff;line-height:1.2;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+  .note .nd{font-size:12px;color:var(--dim);font-style:italic}
+  .note.warn{--tc:var(--danger)} .note.warn .nn{color:#f4a79c}
+  .note.warn .ni{color:#2a0c08}
+  /* AMBIENT — routine gathers lift a number off the tile, no words */
+  #floats{position:fixed;inset:0;z-index:8;pointer-events:none;overflow:hidden}
+  .flt{position:absolute;font:14px 'Courier New',monospace;color:var(--crystal);white-space:nowrap;
+    text-shadow:0 0 7px rgba(79,227,193,.45),0 1px 0 #000;animation:fltRise 1s ease both}
+  @keyframes fltRise{0%{opacity:0;transform:translateY(2px)}18%{opacity:1}100%{opacity:0;transform:translateY(-24px)}}
+  /* LEDGER — the quiet log, on demand */
+  #ledgerBtn{position:fixed;bottom:10px;left:10px;z-index:11;font:10px 'Courier New',monospace;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--brass);cursor:pointer;
+    background:linear-gradient(180deg,#1b2130,#12161f);border:1px solid var(--line);padding:6px 12px;
+    clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)}
+  #ledgerBtn:hover{color:#fff;border-color:var(--brass-dark)}
+  #ledger{position:fixed;bottom:40px;left:10px;z-index:11;width:288px;max-height:44vh;overflow-y:auto;display:none;
+    background:linear-gradient(180deg,#191e2b,#11151d);border:1px solid var(--line);
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+    box-shadow:0 12px 34px -12px #000}
+  #ledger.on{display:block}
+  #ledger .lh{padding:9px 13px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#161b26;
+    font:10px 'Courier New',monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--brass)}
+  #ledger ul{list-style:none}
+  #ledger li{display:flex;gap:9px;padding:6px 13px;font:12px 'Courier New',monospace;color:var(--dim);
+    border-bottom:1px solid rgba(42,51,82,.35)}
+  #ledger li b{color:var(--ink);font-weight:400} #ledger li .q{color:var(--crystal);margin-left:auto}
 
   #nudge{position:fixed;right:8px;top:150px;z-index:9;display:none;
     background:rgba(11,14,26,.82);border:1px solid var(--line);border-radius:10px;padding:8px}
@@ -727,6 +767,10 @@
 </div>
 
 <div id="status"></div>
+<div id="notes"></div>
+<div id="floats"></div>
+<div id="ledger"><div class="lh">Take · this descent</div><ul id="ledgerList"></ul></div>
+<div id="ledgerBtn">ledger</div>
 
 <div id="nudge">
   <div class="ntitle">move template</div>
@@ -5986,7 +6030,7 @@ function breakTile(tx,ty,t,silent){
   for (let i=0;i<3;i++)
     particles.push({x:tx+0.5,y:ty+0.5,vx:(Math.random()-0.5)*0.16,
       vy:-Math.random()*0.14,life:22,col});
-  tileYield(t,silent,nodeCoreSeed(tx,ty));    // a node yields the very core drawn in the wall
+  tileYield(t,silent,nodeCoreSeed(tx,ty),tx,ty);    // a node yields the very core drawn in the wall
   // 200% rung: matching-tier material gives up a second yield (a fresh, distinct core)
   if (setChargeFor(t)>=SET_YIELD) tileYield(t,true);
 }
@@ -6013,25 +6057,27 @@ function bitYieldChance(){
   if (!b||b.tin===undefined) return 0;
   return (1-tinHardness(b.tin))*0.5;      // up to +50% chance at min tin
 }
-function tileYield(t,silent,coreSeed){
-  if (t===T_COPPER){ metals.copper+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Copper ore pried loose.'); }
-  else if (t===T_IRON){ metals.iron+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Iron ore chipped free.'); }
-  else if (t===T_TIN){ metals.tin+=1+(Math.random()<bitYieldChance()?1:0); dust+=1; updateMeters(); if(!silent) say('Tin ore — soft and bright.'); }
-  else if (t===T_VST){ metals.vst++; dust+=2; updateMeters(); say('Voidsteel. The pack feels heavier than it should.','good'); }
-  else if (t===T_ADT){ metals.adamant++; dust+=2; updateMeters(); say('Adamant ore — dense and unyielding.','good'); }
-  else if (t===T_AETH){ metals.aether++; dust+=3; updateMeters(); say('Aether ore. It barely seems to be there at all.','good'); }
+function tileYield(t,silent,coreSeed,tx,ty){
+  const q=()=>1+(Math.random()<bitYieldChance()?1:0);
+  if (t===T_COPPER){ const n=q(); metals.copper+=n; dust+=1; updateMeters(); mat('Copper',1,n,silent,tx,ty); }
+  else if (t===T_IRON){ const n=q(); metals.iron+=n; dust+=1; updateMeters(); mat('Iron',2,n,silent,tx,ty); }
+  else if (t===T_TIN){ const n=q(); metals.tin+=n; dust+=1; updateMeters(); mat('Tin',2,n,silent,tx,ty); }
+  else if (t===T_VST){ metals.vst++; dust+=2; updateMeters(); mat('Voidsteel',3,1,silent,tx,ty); }
+  else if (t===T_ADT){ metals.adamant++; dust+=2; updateMeters(); mat('Adamant',4,1,silent,tx,ty); }
+  else if (t===T_AETH){ metals.aether++; dust+=3; updateMeters(); mat('Aether',5,1,silent,tx,ty); }
   else if (NODE_TILE[t]){
     const tier=NODE_TILE[t];
     inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
-    say(`Raw core recovered — ${TIERS[tier].name}. It hums in the pack.`,'good');
+    // a core is always a real find — a seated plate, never silent
+    notify(`${TIERS[tier].name} core`, {kick:'Core recovered', tier, desc:'A raw core — it hums in the pack.', ledger:'core'});
   }
-  else if (t===T_MOSS){ reagents.moss++; if(!silent) say('Lumen moss gathered.'); }
-  else if (t===T_SALT){ reagents.salt++; if(!silent) say('Void salt chipped free.'); }
-  else if (t===T_CINDER){ reagents.cinder++; say('Cinder scale prised off the seam. It is still hot.','good'); }
-  else if (t===T_RIME){ reagents.rime++; say('Rime salt — it pulls the warmth out of your gloves.','good'); }
-  else if (t===T_CLAY){ reagents.clay++; if(!silent) say('Binding clay dug out.'); }
-  else if (t===T_MICA){ reagents.mica++; if(!silent) say('Splitting mica — it sheets apart in your hand.'); }
-  else if (t===T_BRINE){ reagents.brine++; say('Deep brine. It eats the stone around it.','good'); }
+  else if (t===T_MOSS){ reagents.moss++; mat('Lumen moss',1,1,silent,tx,ty); }
+  else if (t===T_SALT){ reagents.salt++; mat('Void salt',2,1,silent,tx,ty); }
+  else if (t===T_CINDER){ reagents.cinder++; mat('Cinder scale',3,1,silent,tx,ty); }
+  else if (t===T_RIME){ reagents.rime++; mat('Rime salt',3,1,silent,tx,ty); }
+  else if (t===T_CLAY){ reagents.clay++; mat('Binding clay',1,1,silent,tx,ty); }
+  else if (t===T_MICA){ reagents.mica++; mat('Mica',3,1,silent,tx,ty); }
+  else if (t===T_BRINE){ reagents.brine++; mat('Deep brine',3,1,silent,tx,ty); }
 }
 world2d.addEventListener('mousedown',e=>{
   if (e.button===2){ aim.x=e.clientX; aim.y=e.clientY; throwPhial(); return; }
@@ -10033,7 +10079,7 @@ function renderTx(){
   const sb=document.getElementById('txSeedBtn'); if (sb) sb.onclick=txSeed;
 }
 function qbar(v){ return `<div class="qbar"><div class="qfill" style="width:${Math.round(v*100)}%"></div></div>`; }
-const TIER_COL={0:'#2c3550',1:'#4FE3C1',2:'#8B7CF6',3:'#E8A33D'};
+const TIER_COL={0:'#2c3550',1:'#4FE3C1',2:'#8B7CF6',3:'#E8A33D',4:'#D9586A',5:'#4FD6C4'};
 /* A seat's picture. Frame and bit get a fixed silhouette; the two core seats
    draw a rough of the carved shape, tinted by tier and brightened by output, so
    a well-worked core visibly reads as one. Sized for a sprite to replace it. */
@@ -10911,7 +10957,67 @@ document.getElementById('x_lapidary').onclick=()=>showView('lab');
 
 // ---------- shared ui glue ----------
 const statusEl=document.getElementById('status');
-function say(t,mood){ statusEl.textContent=t; statusEl.className=mood||''; }
+// ===== feedback overhaul =====
+// The one churning centre-screen line is gone. Events are split by how much they matter:
+//   • warn/bad  -> a brief red CAUTION chip (flash), self-clearing
+//   • good      -> a seated NOTABLE plate (notify), rests then recedes
+//   • plain      -> the quiet LEDGER only (never the screen)
+// Routine gathers are handled diegetically at their source (floatGain + ledger), so most
+// say() calls that used to spam the line now just quietly log.
+// (TIER_COL is defined once above, extended to tiers 4/5)
+const _notesEl=document.getElementById('notes');
+function _pushNote(html, cls, ttl){
+  if (!_notesEl) return;
+  const el=document.createElement('div'); el.className='note'+(cls?' '+cls:''); el.innerHTML=html;
+  _notesEl.appendChild(el);
+  const kill=()=>{ if(!el.parentNode) return; el.classList.add('out'); setTimeout(()=>el.remove(),300); };
+  const timer=setTimeout(kill, ttl||3600); el.onclick=()=>{ clearTimeout(timer); kill(); };
+  while (_notesEl.children.length>4) _notesEl.firstChild.remove();
+}
+// NOTABLE: a discovery / reward / milestone. opt = {kick, tier, color, icon, desc}
+function notify(title, opt){ opt=opt||{};
+  const col=opt.color || (opt.tier?TIER_COL[opt.tier]:'var(--brass)');
+  const icon=opt.icon || (opt.tier?['','I','II','III','IV','V'][opt.tier]:'✦');
+  logTake(title, opt.ledger||'');
+  _pushNote(`<div class="ni" style="--tc:${col}">${icon}</div>`+
+    `<div class="nt"><div class="nk" style="color:${col}">${opt.kick||'Notable'}</div>`+
+    `<div class="nn">${title}</div>${opt.desc?`<div class="nd">${opt.desc}</div>`:''}</div>`, '', opt.ttl||3800);
+}
+// CAUTION: a terse red chip
+function flash(msg){ _pushNote(`<div class="ni">!</div><div class="nt"><div class="nn">${msg}</div></div>`, 'warn', 1900); }
+// LEDGER: the quiet running log
+const _ledgerList=document.getElementById('ledgerList');
+function logTake(text, note){
+  if (!_ledgerList) return;
+  const li=document.createElement('li'); li.innerHTML=`<b>${text}</b>${note?` <span class="q">${note}</span>`:''}`;
+  _ledgerList.insertBefore(li, _ledgerList.firstChild);
+  while (_ledgerList.children.length>50) _ledgerList.lastChild.remove();
+}
+// AMBIENT: a number lifting off a world tile (exped view only)
+function floatGain(txt, tx, ty, col){
+  const el=document.getElementById('floats'); if (!el || view!=='exped') return;
+  const f=document.createElement('div'); f.className='flt'; f.textContent=txt;
+  if (col) f.style.color=col;
+  f.style.left=Math.round(tx*TS-camX)+'px'; f.style.top=Math.round(ty*TS-camY)+'px';
+  el.appendChild(f); setTimeout(()=>f.remove(),1000);
+}
+// first-time discovery gate (so a material announces once, then goes quiet)
+const _seenTake=new Set();
+function firstTake(key){ if (_seenTake.has(key)) return false; _seenTake.add(key); return true; }
+// A routine gather: log it quietly; announce the FIRST of each material with a plate, then
+// go diegetic — a number lifts off the tile, colour-keyed to the tier. Never a screen toast.
+function mat(label, tier, qty, silent, tx, ty){
+  logTake(label + (qty>1?' ×'+qty:''));
+  if (firstTake(label)){ notify(label, {kick:'First find', tier, ledger:'first find'}); return; }
+  if (!silent && tx!=null) floatGain('+'+qty, tx, ty, TIER_COL[tier]);
+}
+// The retired say(): route by mood into the new surfaces.
+function say(t,mood){
+  if (mood==='warn'||mood==='bad'){ flash(t); return; }
+  if (mood==='good'){ notify(t,{kick:'Notable'}); return; }
+  logTake(t);                       // plain chatter -> ledger only, never the screen
+}
+document.getElementById('ledgerBtn').onclick=()=>document.getElementById('ledger').classList.toggle('on');
 function updateStock(){
   const inf=tut.on||adminOn;
   for (const k in POTIONS){
