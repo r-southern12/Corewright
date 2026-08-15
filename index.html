@@ -6537,6 +6537,21 @@ function bakeTile(x,y,t,TS){
   if (t===T_CLAY) bakeClay(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // matte clay pocket, static
   if (t===T_SALT) bakeSalt(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // pale salt cubes, static
   if (t===T_MICA) bakeMica(c,TS,(Math.imul(x,131)^Math.imul(y,17))>>>0);   // reflective mica sheets, static
+  // STATIC FOG, baked in. The biome/planet tint wash and the depth-darkening depend only on
+  // this cell (its element and how deep it sits), never on the player — so they belong in the
+  // cached base, not in a per-frame fillRect on every revealed tile. Only the player-distance
+  // falloff stays live, as one radial vignette in drawWorld. Self-lit gems and gate walls are
+  // excluded here exactly as the live fog excluded them, so their glow/art still reads full.
+  if (t!==T_WALL && !SELF_LIT.has(t)){
+    const e=getElem(x,y);
+    const tint = e===1?ELEM.fire.tint : e===2?ELEM.ice.tint : (planet.palette&&planet.palette.tint);
+    if (tint && tint!=='rgba(0,0,0,0)'){ c.fillStyle=tint; c.fillRect(0,0,TS,TS); }
+    const depthT=y-surfaceY[x];
+    if (depthT>1){
+      const dark=Math.min(0.55,depthT*0.012), rgb=_FOGRGB[(TILE_TIER[t]||1)>=3?2:(TILE_TIER[t]||1)>=2?1:0];
+      c.fillStyle=`rgba(${rgb[0]},${rgb[1]},${rgb[2]},${dark})`; c.fillRect(0,0,TS,TS);
+    }
+  }
   return cv;
 }
 function tileBaseFor(x,y,t,TS){
@@ -6849,17 +6864,9 @@ function drawGate(px,py,TS,tier,locked,seed,reclaimed,now){
   if (reclaimed) drawGateReclaimed(px,py,TS,TC,RGB,num,locked,seed,now);
   else drawGateGlyph(px,py,TS,TC,RGB,num,locked,seed,now);
 }
-// Depth-fog colour, precomputed. The fog fill runs on every revealed tile every frame,
-// and building `rgba(r,g,b,${dark})` inline allocated ~900 short-lived strings PER FRAME —
-// steady garbage that made the GC pause periodically and read as mining stutter. Quantise
-// the darkness to 32 levels (imperceptible) and cache the strings once, so the hot loop just
-// indexes. Three bands: T1 neutral, T2 cool, T3+ indigo — the tier hue the fog already used.
+// Tier-hued fog RGB by band: T1 neutral, T2 cool, T3+ indigo. Used both by the STATIC
+// depth-darkening baked into each tile (below, in bakeTile) and, historically, the live fog.
 const _FOGRGB=[[4,6,14],[6,10,22],[11,7,24]];
-const _FOGLEV=32;
-const _fogCache=_FOGRGB.map(([r,g,b])=>{ const a=new Array(_FOGLEV);
-  for(let i=0;i<_FOGLEV;i++) a[i]=`rgba(${r},${g},${b},${(i/_FOGLEV).toFixed(3)})`; return a; });
-function fogColor(ti,dark){ const band=ti>=3?2:ti>=2?1:0; let i=(dark*_FOGLEV)|0;
-  if(i<0)i=0; else if(i>=_FOGLEV)i=_FOGLEV-1; return _fogCache[band][i]; }
 function drawWorld(now){
   vpSize();
   const w=world2d.width=Math.round(VW), h=world2d.height=Math.round(VH);
@@ -6936,28 +6943,23 @@ function drawWorld(now){
         // ore/clay/salt/mica are baked into the base already, so plain stone needs no deposit call at all.
         else if (selfLit) drawWorldDeposit(x,y,t,px,py,now);
       }
-      // (T_WALL caches are drawn in a separate 2x2 pass after the tile loop, so the
-      //  big vault art isn't overpainted by neighbouring tile bases.)
-      // biome / planet tint wash: a translucent colour laid over the stone so each
-      // zone reads distinct at a glance. Skips self-lit gems and gate-walls. Reads
-      // the element recorded per cell at generation, not a re-sampled noise field.
-      if (t!==T_WALL&&!selfLit){
-        const e=elem[y];
-        const tint = e===1 ? ELEM.fire.tint
-                   : e===2 ? ELEM.ice.tint
-                   : (planet.palette&&planet.palette.tint);
-        if (tint&&tint!=='rgba(0,0,0,0)'){ ctx.fillStyle=tint; ctx.fillRect(px,py,TS,TS); }
-      }
-      const depthT=y-surf;
-      if (depthT>1&&!selfLit){
-        const ex=x+0.5-pfx, ey=y+0.5-pfy, d=Math.sqrt(ex*ex+ey*ey);   // sqrt, not hypot (hypot's overflow guard is slower)
-        const dark=Math.min(0.93,Math.max(0,(d-2.2)/6)+Math.min(0.55,depthT*0.012));
-        // the deep fog takes a cool TIER hue, so descending through the bands shifts the mood: neutral T1
-        // topsoil, a cool cast through the T2 soft-stone band, a deep indigo through the T3 hard stone.
-        ctx.fillStyle = fogColor(TILE_TIER[t]||1, dark);   // cached, quantised — no per-tile string alloc
-        ctx.fillRect(px,py,TS,TS);
-      }
+      // (Tint wash + depth-darkening are now BAKED into the tile base — see bakeTile — and the
+      //  player-distance falloff is one vignette pass below, so the per-tile fog fills are gone.
+      //  T_WALL caches draw in a separate 2x2 pass so their art isn't overpainted.)
     }
+  }
+
+  // DISTANCE fog: one radial vignette centred on the player instead of a per-revealed-tile
+  // fillRect. The depth+tint parts are baked into each base, so this single gradient supplies
+  // only the player-centred falloff `(d-2.2)/6` that used to cost a fill (and an alpha compute)
+  // on every drawn tile. Player is screen-centred (camX/camY track it). Underground only — the
+  // surface has little fog and a vignette on open sky reads wrong. Drawn BEFORE the cache/scanner
+  // passes so vault art and pings stay bright, matching how the old fog excluded them.
+  if (player.y > surfaceY[Math.floor(player.x)]+1){
+    const cxp=w/2, cyp=h/2, inR=2.2*TS, outR=8.6*TS;      // transparent within ~2.2 tiles, ~0.82 at ~8.6
+    const vg=ctx.createRadialGradient(cxp,cyp,inR,cxp,cyp,outR);
+    vg.addColorStop(0,'rgba(9,7,20,0)'); vg.addColorStop(1,'rgba(9,7,20,0.82)');
+    ctx.fillStyle=vg; ctx.fillRect(0,0,w,h);
   }
 
   // ---- 2x2 ANCIENT CACHE vaults: one big, detailed vault per group, over the bases.
