@@ -6349,17 +6349,16 @@ function autoMine(tx,ty){
   if (gateReqTier(tx,ty)) return;           // locked gate — needs the tier
   const spd=tileMineSpeed(t,tx,ty);
   if (spd<=0) return;                       // assembly can't mark it
+  // Bitten FACE from the DIG INTENT — which way the player is PUSHING — not the live player->tile
+  // vector. The vector flips sign as the player sinks past the tile centre (which mirrored the
+  // crumble); the intent is stable per direction, so a downward dig always eats from the top, AND it
+  // re-faces the instant the player digs the same block from a new side ("register from the character").
+  const dirX=keys.right?1:keys.left?-1:0, dirY=keys.down?1:keys.jump?-1:0;
+  let bx=dirX||(dirY?0:player.face), by=dirY; const l=Math.hypot(bx,by)||1; bx/=l; by/=l;
   if (!mine||mine.tx!==tx||mine.ty!==ty){
     const need=(16+TILE_INFO[t].resist*20)/spd;
-    // Lock the bitten FACE now and keep it for the whole dig: erosion is traversable, so the player
-    // sinks into the block and the live player->tile vector would flip sign past the tile centre,
-    // mirroring the crumble. Resume the face the tile is ALREADY eaten from if it's a partial.
-    const ex=tileDmg.get(dmgKey(tx,ty));
-    let bx,by;
-    if (ex){ bx=ex.dx; by=ex.dy; }
-    else { const ddx=tx+0.5-player.x, ddy=ty+0.5-(player.y-0.5), dl=Math.hypot(ddx,ddy)||1; bx=ddx/dl; by=ddy/dl; }
     mine={tx,ty,progress:dmgFrac(tx,ty)*need,need,bx,by};   // resume prior partial drilling
-  }
+  } else { mine.bx=bx; mine.by=by; }   // same tile, new push direction → re-face the crumble
 }
 // Resolve the held direction keys into ONE dig target (supports diagonals). This
 // replaces the old scattered per-collision autoMine calls, which fought over `mine`
