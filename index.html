@@ -6368,6 +6368,7 @@ function digAim(){
   if (dirY<0) return {tx:col+dirX, ty:Math.floor(player.y-1.05)};      // up: the tile ABOVE the head (‑0.95 hit the body's own tile, which is air in a shaft, so nothing mined)
   return {tx:col+(dirX||player.face), ty:Math.floor(player.y-0.45)};   // horizontal (dir, else facing)
 }
+let lastDigDir='';   // held dig direction last frame; a change lets the aim move to a new tile mid-dig
 function stepPlayer(dt){
   if (tut.on){ player.vx=0; player.vy=0; return; }   // pinned during the tutorial
   const acc=0.035, maxv=0.22;
@@ -6377,7 +6378,19 @@ function stepPlayer(dt){
   // ONE dig target per frame from the held directions (incl. diagonals), so combined
   // keys never fight over `mine` and stall. autoMine no-ops on air, so holding dig in
   // open space just walks; against rock it tunnels in the chosen direction.
-  if (keys.dig){ const a=digAim(); if (a) autoMine(a.tx,a.ty); }
+  // LOCK the target to the tile in progress until it breaks or the dig DIRECTION changes:
+  // erosion is now traversable, so the player sinks/advances INTO the block being drilled, which
+  // would roll digAim's floor() onto the block BEHIND and start it before the first is finished.
+  if (keys.dig){
+    const a=digAim();
+    if (a){
+      const dir=(keys.right?'R':keys.left?'L':'')+(keys.down?'D':keys.jump?'U':'');
+      const curValid = mine && getTile(mine.tx,mine.ty)!==T_AIR && !gateReqTier(mine.tx,mine.ty)
+        && Math.hypot(mine.tx+0.5-player.x, mine.ty+0.5-(player.y-0.5))<=REACH+0.3;
+      if (!curValid || dir!==lastDigDir) autoMine(a.tx,a.ty);   // retarget only on a real change
+      lastDigDir=dir;
+    }
+  } else lastDigDir='';
   if (keys.jump) player.vy=Math.max(-0.3,player.vy-0.055);
   player.vy=Math.min(0.5,player.vy+0.028);
   const half=0.38;
