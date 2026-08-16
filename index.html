@@ -6203,9 +6203,9 @@ function mineTick(){
   const t=getTile(mine.tx,mine.ty);
   if (t===T_AIR){ mine=null; return; }
   const dx=mine.tx+0.5-player.x, dy=mine.ty+0.5-(player.y-0.5);
-  if (Math.hypot(dx,dy)>REACH+0.3){ mine=null; return; }
+  if (Math.hypot(dx,dy)>REACH+0.3){ mine=null; return; }   // current distance, for REACH only
   mine.progress++;
-  const dl=Math.hypot(dx,dy)||1, ux=dx/dl, uy=dy/dl, frac=Math.min(1,mine.progress/mine.need);
+  const ux=mine.bx, uy=mine.by, frac=Math.min(1,mine.progress/mine.need);   // LOCKED bitten face (see autoMine)
   const dk=dmgKey(mine.tx,mine.ty);
   // Bound the map: every tile you graze but don't finish persists its crumble, and each
   // on-screen one redraws every frame — left unbounded a long session accumulates hundreds
@@ -6217,7 +6217,7 @@ function mineTick(){
     particles.push({x:fx,y:fy,vx:(Math.random()-0.5)*0.08,vy:-Math.random()*0.06,life:14,col:'#8b90a8'});
   }
   if (mine.progress>=mine.need){
-    const bx=mine.tx, by=mine.ty, horiz=Math.abs(dx)>=Math.abs(dy);
+    const bx=mine.tx, by=mine.ty, horiz=Math.abs(ux)>=Math.abs(uy);   // locked bite dir picks the bonus neighbours
     breakTile(bx,by,t,false);
     // Ladder bonuses fire from the PLAYER'S dig only — bonus-cleared tiles do
     // not cascade, or one strike could eat a whole stratum.
@@ -6351,7 +6351,14 @@ function autoMine(tx,ty){
   if (spd<=0) return;                       // assembly can't mark it
   if (!mine||mine.tx!==tx||mine.ty!==ty){
     const need=(16+TILE_INFO[t].resist*20)/spd;
-    mine={tx,ty,progress:dmgFrac(tx,ty)*need,need};   // resume prior partial drilling
+    // Lock the bitten FACE now and keep it for the whole dig: erosion is traversable, so the player
+    // sinks into the block and the live player->tile vector would flip sign past the tile centre,
+    // mirroring the crumble. Resume the face the tile is ALREADY eaten from if it's a partial.
+    const ex=tileDmg.get(dmgKey(tx,ty));
+    let bx,by;
+    if (ex){ bx=ex.dx; by=ex.dy; }
+    else { const ddx=tx+0.5-player.x, ddy=ty+0.5-(player.y-0.5), dl=Math.hypot(ddx,ddy)||1; bx=ddx/dl; by=ddy/dl; }
+    mine={tx,ty,progress:dmgFrac(tx,ty)*need,need,bx,by};   // resume prior partial drilling
   }
 }
 // Resolve the held direction keys into ONE dig target (supports diagonals). This
@@ -7174,8 +7181,10 @@ function drawWorld(now){
       const active = mine&&mine.tx===x&&mine.ty===y;
       if (active){
         const mseed=(Math.imul(x,131)^Math.imul(y,17))>>>0;
-        const ddx=x+0.5-pfx, ddy=y+0.5-pfy, dl=Math.hypot(ddx,ddy)||1;
-        drawMineFracture(px,py,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx/dl,ddy/dl);
+        // Use the LOCKED bite direction (mine.bx/by), not the live player->tile vector, or the
+        // crumble mirrors as the player sinks past the tile centre. Falls back to a downward bite.
+        const ddx=mine.bx||0, ddy=(mine.bx||mine.by)?mine.by:1;
+        drawMineFracture(px,py,TS,Math.min(1,mine.progress/mine.need),mseed,true,ddx,ddy);
         drawDepositOverCrumble(x,y,t,px,py,now);
       } else {
         const dmg = hasDmg ? tileDmg.get(x*WH+y) : null;
