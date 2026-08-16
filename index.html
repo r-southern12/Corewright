@@ -1665,8 +1665,18 @@ const METALS={
 const metalTier=k=>METALS[k]?METALS[k].tier:1;
 // Ores worth showing in the forge's metal stores, ordered by tier then name.
 const FORGE_ORE_ORDER=Object.keys(METALS).sort((a,b)=>METALS[a].tier-METALS[b].tier||a.localeCompare(b));
+let _railSig='';
 function renderRail(){
-  const rr=document.getElementById('reagentRail');
+  const rr=document.getElementById('reagentRail'), orr=document.getElementById('oreRail');
+  if (!rr&&!orr) return;
+  // updateMeters() runs this EVERY frame, but the rail only changes when a count changes. Rebuilding
+  // 13 elements of innerHTML per frame forced a full style-recalc/layout/paint of the (chamfered,
+  // gradient-filled, transitioned) tiles ~60x a second — the overworld's real jank. Guard on a cheap
+  // signature of the counts so the DOM is touched only when stock actually moves.
+  let sig=''; for(const k in REAGENT_INFO) sig+=(reagents[k]||0)+','; sig+='|';
+  for(const k in ORE_INFO) sig+=(metals[k]||0)+',';
+  if (sig===_railSig) return;
+  _railSig=sig;
   if (rr){
     rr.innerHTML=Object.keys(REAGENT_INFO).map(k=>{
       const i=REAGENT_INFO[k], n=reagents[k]||0;
@@ -1677,7 +1687,6 @@ function renderRail(){
         style="--lvl:${lvl};${n?'':'opacity:.35'}"><b>${n}</b></div>`;
     }).join('');
   }
-  const orr=document.getElementById('oreRail');
   if (orr){
     orr.innerHTML=Object.keys(ORE_INFO).map(k=>{
       const i=ORE_INFO[k], n=metals[k]||0;
