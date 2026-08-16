@@ -5903,19 +5903,46 @@ function tileAt(x,y){
   if (y<0||y>=WH) return T_S3;
   return getTile(Math.floor(x),Math.floor(y));
 }
-// PLAYER collision, erosion-aware. A tile drilled past PASS_ERODE has its near face crumbled away
-// (drawMineFracture eats it from the bitten edge inward), so the player should be able to move INTO
-// that opening as they dig instead of hovering against an invisible full-tile wall. The visible
-// chunks stay — they just stop blocking once most of the block is gone. Bedrock and cache walls
-// never soften. Reads the same tileDmg map the crumble draws from. Enemies/projectiles keep the
-// plain `solid` test so they don't slip through a hole you opened for yourself.
-const PASS_ERODE=0.6;
+// PLAYER collision, erosion-aware at SUB-TILE resolution. A drilled tile crumbles from the bitten
+// face inward (drawMineFracture, keyed by the same tileDmg{p,dx,dy}); the eaten portion should stop
+// blocking so the player advances into the opening layer by layer, resting on the rock that's still
+// standing — NOT sinking through the whole block. `solidAt` answers "is THIS point still rock": it
+// reprises the crumble's own front function f (0 at the bitten face, 1 far) and calls the point
+// eaten where f < p. Bedrock and cache walls never soften. Enemies/projectiles keep the plain
+// `solid` test so they can't slip through a hole you opened for yourself.
+function tileErosionF(fx,fy,x,y,d){          // crumble front value at a point inside tile (fx,fy)
+  const dx=d.dx||0, dy=d.dy||0; if(!dx&&!dy) return 1;   // unknown bite: treat as whole-tile
+  const maxProj=0.375*(Math.abs(dx)+Math.abs(dy))+1e-6;
+  return 0.5+((x-fx-0.5)*dx+(y-fy-0.5)*dy)/(2*maxProj);
+}
 function solidAt(x,y){
-  const t=tileAt(x,y);
+  const fx=Math.floor(x), fy=Math.floor(y);
+  const t=(y<0||y>=WH)?T_S3:getTile(fx,fy);
   if (t===T_AIR) return false;
   if (t===T_BEDROCK||t===T_WALL) return true;
-  if (tileDmg.size){ const d=tileDmg.get(Math.floor(x)*WH+Math.floor(y)); if (d&&d.p>=PASS_ERODE) return false; }
+  if (tileDmg.size){ const d=tileDmg.get(fx*WH+fy);
+    if (d&&d.p>0 && tileErosionF(fx,fy,x,y,d)<d.p) return false; }   // this sub-cell has crumbled away
   return true;
+}
+// The standable top surface of the tile under a foot, for landing. A tile drilled from ABOVE has its
+// top eaten down to the crumble front, so the player rests THERE and sinks as the dig deepens; a tile
+// drilled from the side/below keeps its top face, so you stand on it normally. null = no surface here
+// (air, or eaten right through) so the foot keeps falling.
+function surfaceTopY(x,y){
+  const fx=Math.floor(x), fy=Math.floor(y);
+  if (y<0||y>=WH) return fy;
+  const t=getTile(fx,fy);
+  if (t===T_AIR) return null;
+  if (t===T_BEDROCK||t===T_WALL) return fy;
+  const d=tileDmg.size?tileDmg.get(fx*WH+fy):null;
+  if (!d||!d.p) return fy;
+  const dy=d.dy||0, dx=d.dx||0;
+  if (dy>0.25){                              // eaten from the top down — the standable surface recedes
+    const maxProj=0.375*(Math.abs(dx)+Math.abs(dy))+1e-6;
+    const top=fy+0.5+(d.p-0.5)*2*maxProj/dy;
+    return top>=fy+0.94 ? null : Math.max(fy,top);
+  }
+  return d.p>=0.999 ? null : fy;             // side/below dig: top face still stands
 }
 // A gate cell yields only when the drill's power meets the stamped tier's demand.
 // mineSpeed already encodes the 0.95-readiness threshold per resist; here we ask
@@ -6348,9 +6375,15 @@ function stepPlayer(dt){
   player.x=nx;               // no horizontal bound: the world scrolls forever
   let ny=player.y+player.vy;
   if (player.vy>0){
-    if (solidAt(player.x-half+0.05,ny)||solidAt(player.x+half-0.05,ny)){
-      ny=Math.floor(ny)-0.001; player.vy=0; player.onGround=true;   // digAim handles down-sink
-    } else player.onGround=false;
+    // Land on the HIGHEST standable surface under either foot — the crumble front on a tile you're
+    // digging down through, or the tile top otherwise — so you sink one drilled layer at a time and
+    // rest on the rock still standing instead of dropping through the whole block.
+    const s1=surfaceTopY(player.x-half+0.05,ny), s2=surfaceTopY(player.x+half-0.05,ny);
+    let top=null;
+    if (s1!==null) top=s1;
+    if (s2!==null) top=(top===null)?s2:Math.min(top,s2);
+    if (top!==null && ny>=top){ ny=top-0.001; player.vy=0; player.onGround=true; }
+    else player.onGround=false;
   } else if (player.vy<0){
     if (solidAt(player.x-half+0.05,ny-0.95)||solidAt(player.x+half-0.05,ny-0.95)){
       ny=player.y; player.vy=0;                 // digAim handles digging up
