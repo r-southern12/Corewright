@@ -2141,16 +2141,23 @@ function drawBattery(c,x,y,w,h,val){
   c.textAlign='right'; c.font="bold 15px 'Courier New',monospace";
   c.fillStyle='rgba(0,0,0,0.5)'; c.fillText(Math.floor(val)+'⚡',x+w+1,y-5); c.fillStyle=col; c.fillText(Math.floor(val)+'⚡',x+w,y-6);
 }
+let _hudSig='';
 function drawHudCluster(){
   const cv=document.getElementById('hudClusterCv'); if(!cv) return;
-  const c=cv.getContext('2d'), W=cv.width, H=cv.height;
-  c.clearRect(0,0,W,H); c.textBaseline='alphabetic';
-  // DRILL: arc = progress toward the next tier it can't yet breach; readout = the tier it CAN mine now.
+  // This runs every frame, and a canvas repaint dirties its compositor layer even when the picture
+  // is identical. The dials only move on a whole-unit change (air ticks by the second, hp/power are
+  // integers, drill power is fixed between gear swaps), so skip the redraw unless a shown value
+  // actually changed — most frames underground are a no-op string compare.
   const dp=drillPower(); let target=1,lbl='I';
   if(dp/1>=0.95){target=2;lbl='II';} if(dp/2>=0.95){target=3;lbl='III';}
   if(dp/3>=0.95){target=4;lbl='IV';} if(dp/4>=0.95){target=5;lbl='V';}
   const prog=Math.min(1,dp/target/0.95);
   const airF=Math.max(0,Math.min(1,air/maxAir)), hpF=Math.max(0,Math.min(1,hp/100));
+  const sig=lbl+'|'+fmtAir(air)+'|'+Math.max(0,Math.ceil(hp))+'|'+Math.floor(powerBank)+'|'+prog.toFixed(2);
+  if(sig===_hudSig) return;
+  _hudSig=sig;
+  const c=cv.getContext('2d'), W=cv.width, H=cv.height;
+  c.clearRect(0,0,W,H); c.textBaseline='alphabetic';
   drawMiniDial(c, 92,104,38,prog, prog>=0.999?'#4FE3C1':'#E8A33D', 'DRILL', lbl);
   drawBigGauge(c,324,102,54,airF, air<20?'#E0523D':air<40?'#E8A33D':'#4FE3C1', 'AIR', fmtAir(air), 0.18);
   drawMiniDial(c,556,104,38,hpF,  _gaugeCol(hpF), 'HULL', String(Math.max(0,Math.ceil(hp))));
