@@ -5903,6 +5903,20 @@ function tileAt(x,y){
   if (y<0||y>=WH) return T_S3;
   return getTile(Math.floor(x),Math.floor(y));
 }
+// PLAYER collision, erosion-aware. A tile drilled past PASS_ERODE has its near face crumbled away
+// (drawMineFracture eats it from the bitten edge inward), so the player should be able to move INTO
+// that opening as they dig instead of hovering against an invisible full-tile wall. The visible
+// chunks stay — they just stop blocking once most of the block is gone. Bedrock and cache walls
+// never soften. Reads the same tileDmg map the crumble draws from. Enemies/projectiles keep the
+// plain `solid` test so they don't slip through a hole you opened for yourself.
+const PASS_ERODE=0.6;
+function solidAt(x,y){
+  const t=tileAt(x,y);
+  if (t===T_AIR) return false;
+  if (t===T_BEDROCK||t===T_WALL) return true;
+  if (tileDmg.size){ const d=tileDmg.get(Math.floor(x)*WH+Math.floor(y)); if (d&&d.p>=PASS_ERODE) return false; }
+  return true;
+}
 // A gate cell yields only when the drill's power meets the stamped tier's demand.
 // mineSpeed already encodes the 0.95-readiness threshold per resist; here we ask
 // the same question against the tier the gate requires. Returns the required tier
@@ -6327,18 +6341,18 @@ function stepPlayer(dt){
   let nx=player.x+player.vx;
   if (player.vx!==0){
     const ahead=player.vx>0?nx+half:nx-half;
-    if (solid(tileAt(ahead,player.y-0.1))||solid(tileAt(ahead,player.y-0.85))){
+    if (solidAt(ahead,player.y-0.1)||solidAt(ahead,player.y-0.85)){
       nx=player.x; player.vx=0;                 // blocked; digAim above handles the mining
     }
   }
   player.x=nx;               // no horizontal bound: the world scrolls forever
   let ny=player.y+player.vy;
   if (player.vy>0){
-    if (solid(tileAt(player.x-half+0.05,ny))||solid(tileAt(player.x+half-0.05,ny))){
+    if (solidAt(player.x-half+0.05,ny)||solidAt(player.x+half-0.05,ny)){
       ny=Math.floor(ny)-0.001; player.vy=0; player.onGround=true;   // digAim handles down-sink
     } else player.onGround=false;
   } else if (player.vy<0){
-    if (solid(tileAt(player.x-half+0.05,ny-0.95))||solid(tileAt(player.x+half-0.05,ny-0.95))){
+    if (solidAt(player.x-half+0.05,ny-0.95)||solidAt(player.x+half-0.05,ny-0.95)){
       ny=player.y; player.vy=0;                 // digAim handles digging up
     }
   }
