@@ -7210,10 +7210,11 @@ function drawWorld(now){
   // DISTANCE fog: one radial vignette centred on the player instead of a per-revealed-tile
   // fillRect. The depth+tint parts are baked into each base, so this single gradient supplies
   // only the player-centred falloff `(d-2.2)/6` that used to cost a fill (and an alpha compute)
-  // on every drawn tile. Player is screen-centred (camX/camY track it). Underground only — the
-  // surface has little fog and a vignette on open sky reads wrong. Drawn BEFORE the cache/scanner
-  // passes so vault art and pings stay bright, matching how the old fog excluded them.
-  if (player.y > surfaceY[Math.floor(player.x)]+1){
+  // on every drawn tile. Player is screen-centred (camX/camY track it). Drawn ALWAYS, above and
+  // below ground alike — gating it to underground made the pool snap off the instant you surfaced,
+  // which read as jarring; the lamp pool now travels with you everywhere. Drawn BEFORE the
+  // cache/scanner passes so vault art and pings stay bright.
+  {
     const cxp=w/2, cyp=h/2, inR=1.9*TS, outR=7.2*TS;      // tight lit pool, fog closes in fast for a moodier hull-lamp read
     const vg=ctx.createRadialGradient(cxp,cyp,inR,cxp,cyp,outR);
     vg.addColorStop(0,'rgba(7,5,16,0)'); vg.addColorStop(0.5,'rgba(7,5,16,0.42)'); vg.addColorStop(1,'rgba(7,5,16,0.94)');
