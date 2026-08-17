@@ -287,6 +287,18 @@
     font-size:13px;color:var(--dim);font-style:italic}
   #expedHud.on{display:block}
   #expedHud b{color:var(--crystal);font-family:'Courier New',monospace;font-style:normal}
+  /* Consumable pack — a small brass chip row for one-time cache finds, bottom-centre above the hint. */
+  #pack{position:fixed;bottom:172px;left:50%;transform:translateX(-50%);z-index:8;display:none;
+    gap:8px;pointer-events:auto}
+  #pack.on{display:flex}
+  .packItem{pointer-events:auto;font:12px Georgia,serif;color:#f0d38a;cursor:pointer;
+    background:linear-gradient(180deg,#2a3145,#151a26);border:1px solid #8f6938;
+    clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+    padding:6px 12px;box-shadow:inset 0 1px 0 rgba(255,235,190,.14),0 3px 10px #0007;transition:transform .05s}
+  .packItem:hover{border-color:var(--brass);color:#fff}
+  .packItem:active{transform:translateY(1px)}
+  .packItem .pg{color:var(--crystal);margin-right:3px}
+  .packItem b{color:#fff;font-family:'Courier New',monospace}
   /* Field instrument cluster — the expedition HUD as a milled brass gauge panel (dials in the
      seat-gauge idiom), replacing the italic hp/dust/power/air/drill text strip while underground.
      Two opposite corners chamfered (machined plate, not a div); inset highlight + drop edge for
@@ -1065,6 +1077,9 @@
 <!-- Field instrument cluster: drill-readiness / air / hull dials + dust & power odometers,
      drawn to one canvas each frame while on expedition (see drawHudCluster). -->
 <div id="hudCluster"><canvas id="hudClusterCv" width="648" height="248" style="width:324px;height:124px"></canvas></div>
+
+<!-- Consumable pack: one-time cache finds usable in the field (Bore / Render / Lodestone). -->
+<div id="pack"></div>
 
 <button id="tutMin" aria-label="Show tutorial">?</button>
 <div id="tut">
@@ -1919,7 +1934,7 @@ const OVERKILL_MAX=20;
 const TIER_GATE=[0,0,0,1.5,2.95,4.4];  // wall N sits just above tier (N-1)'s BELOW: admits tier N-1 gear, blocks N-2
 function mineSpeed(resist, tier){
   const P=drillPower();
-  if (tier && P<TIER_GATE[tier]) return 0;         // hard tier wall — lower tiers can't breach it
+  if (tier && P<TIER_GATE[tier] && boreTiles<=0) return 0;   // hard tier wall — a Bore Charge breaches it (resist readiness still applies)
   const r=P/resist;
   if (r<0.60) return 0;
   if (r<0.95) return 0.12+0.48*(r-0.60)/0.35;
@@ -2977,12 +2992,63 @@ function tankCapMult(){   return owned('tank3')?3 : owned('tank2')?2 : 1; }     
 function scanBonus(){     return (owned('scan2')?4:0)+(owned('scan3')?5:0); }    // extra scanner tiles
 function forgeMetalOwned(k){ const t=metalTier(k);                              // deep metals need the forge unlock
   return t<4 || (t===4?owned('adamantForge'):owned('aetherForge')); }
+
+/* ============================================================
+   CONSUMABLES — the cache OVERFLOW reward. Once a cache tier's tools are all owned,
+   the vault pays a one-time consumable instead (grade = the tier it dropped from,
+   which sets strength). Kept as small live counters the subsystems read. Only the
+   IMPLEMENTED ids are in the roll table; the rest of the SPEC's table joins as it's
+   built. Beyond consumables, a cache falls back to materials so it's never dead.
+   ============================================================ */
+const consumables={};                          // id -> {grade, charges}
+let boreTiles=0, renderOres=0;                 // active world effects (persist across saves)
+let lodeX=null, lodeY=null, lodeT=0;           // lodestone ping target + seconds remaining
+const CONSUMABLE_INFO={
+  bore:     {label:'Bore Charge',     glyph:'⛏', note:'breach the tier wall — mine a tier above your gear for a stretch'},
+  render:   {label:'Ore Render',      glyph:'◈', note:'the next ores you dig yield double'},
+  lodestone:{label:'Lodestone Pulse', glyph:'❖', note:'points to the nearest rich adamant / aether pocket'}
+};
+const CONSUMABLE_ROLL={                         // which consumables a tier-N cache can roll (themed)
+  1:['render','bore'], 2:['bore','lodestone'], 3:['bore','render'], 4:['lodestone','bore'], 5:['render','lodestone']
+};
+function giveConsumable(id,grade){ const c=consumables[id]||(consumables[id]={grade:0,charges:0});
+  c.grade=Math.max(c.grade,grade); c.charges++; }
+function rollConsumable(tier){ const p=CONSUMABLE_ROLL[tier]||[]; return p.length?p[(Math.random()*p.length)|0]:null; }
+function lodestonePing(g){
+  const px=Math.floor(player.x), py=Math.floor(player.y-0.5), R=50+g*20; let best=null, bd=1e18;
+  for (let dx=-R;dx<=R;dx++) for (let dy=-R;dy<=R;dy++){ const x=px+dx, y=py+dy; if (y<0||y>=WH) continue;
+    const t=getTile(x,y); if (t===T_ADT||t===T_AETH||t===T_NODE4||t===T_NODE5){ const d=dx*dx+dy*dy; if (d<bd){ bd=d; best=[x,y]; } } }
+  if (best){ lodeX=best[0]; lodeY=best[1]; lodeT=6+g*3; say('The lodestone hums — a rich pocket lies that way.','good'); }
+  else say('The lodestone finds nothing rich within range.','warn');
+}
+function useConsumable(id){
+  const c=consumables[id]; if (!c||c.charges<=0) return;
+  const g=c.grade||1;
+  if (id==='bore'){ boreTiles=5*g; say(`Bore charge — breach the tier wall for the next ${boreTiles} tiles.`,'good'); }
+  else if (id==='render'){ renderOres=5*g; say(`Ore Render — the next ${renderOres} ores yield double.`,'good'); }
+  else if (id==='lodestone'){ lodestonePing(g); }
+  else return;
+  c.charges--; if (c.charges<=0) delete consumables[id];
+  renderPack();
+}
+const _ROMAN=['','I','II','III','IV','V'];
+function renderPack(){
+  const el=document.getElementById('pack'); if (!el) return;
+  const ids=Object.keys(consumables).filter(id=>consumables[id].charges>0 && CONSUMABLE_INFO[id]);
+  el.innerHTML=ids.map(id=>{ const c=consumables[id], info=CONSUMABLE_INFO[id];
+    return `<button class="packItem" data-use="${id}" title="${info.note} — grade ${_ROMAN[c.grade]||c.grade}">`+
+      `<span class="pg">${info.glyph}</span>${info.label} <b>×${c.charges}</b></button>`; }).join('');
+  el.querySelectorAll('[data-use]').forEach(btn=>btn.onclick=()=>useConsumable(btn.dataset.use));
+  el.classList.toggle('on', ids.length>0 && view==='exped');   // field consumables only show on expedition
+}
 function grantUnlock(k){ unlocks.add(k); applyUnlock(k); }
-function unlockAll(){ for (const t in UNLOCK_POOL) for (const k of UNLOCK_POOL[t]) grantUnlock(k); }   // admin
+function unlockAll(){ for (const t in UNLOCK_POOL) for (const k of UNLOCK_POOL[t]) grantUnlock(k);   // admin
+  for (const id in CONSUMABLE_INFO) if (!consumables[id]) consumables[id]={grade:5,charges:3}; renderPack(); }   // + a few consumables to test
 // The next reward a tier-N cache pays: the next unowned tool from its pool, else materials.
 function nextCacheReward(tier){
   for (const k of (UNLOCK_POOL[tier]||[])) if (!unlocks.has(k)) return {type:'unlock', key:k};
-  return {type:'materials', tier};
+  const c=rollConsumable(tier); if (c) return {type:'consumable', id:c};   // tier's tools all owned -> a consumable
+  return {type:'materials', tier};                                          // (materials only if the tier rolls nothing)
 }
 
 /* ============================================================
@@ -6336,6 +6402,7 @@ function applySetAreaBonus(tx,ty,t,horiz){
 function breakTile(tx,ty,t,silent){
   if (t===T_BEDROCK) return;                 // world floor never yields
   if (t===T_WALL){ breakVault(tx,ty); return; }   // caches are 2x2: drilling any cell removes all four
+  if (boreTiles>0 && TILE_TIER[t] && drillPower()<TIER_GATE[TILE_TIER[t]]){ boreTiles--; }   // spent a Bore tile only when it actually breached the wall
   tileDmg.delete(dmgKey(tx,ty));             // damage clears with the tile
   setTile(tx,ty,T_AIR);
   setSeen(tx,ty,1);
@@ -6378,6 +6445,10 @@ function breakVault(tx,ty){
     grantUnlock(rw.key); const info=UNLOCK_INFO[rw.key];
     notify(info.label, {kick:'Recovered', tier, desc:info.note+' — recovered from a tier-'+['','I','II','III','IV','V'][tier]+' cache.', ledger:'unlock'});
     if (view==='lapidary') renderLapidary();
+  } else if (rw.type==='consumable'){
+    giveConsumable(rw.id, tier); const info=CONSUMABLE_INFO[rw.id];
+    notify(info.label, {kick:'Consumable', tier, desc:`grade ${['','I','II','III','IV','V'][tier]} — ${info.note}.`, ledger:'consumable'});
+    renderPack();
   } else {
     // pool cleared for this tier — a never-empty materials payout (a consumable layer lands here later)
     const oreKey=['','copper','iron','vst','adamant','aether'][tier]||'copper';
@@ -6394,13 +6465,14 @@ function bitYieldChance(){
   return (1-tinHardness(b.tin))*0.5;      // up to +50% chance at min tin
 }
 function tileYield(t,silent,coreSeed,tx,ty){
-  const q=()=>1+(Math.random()<bitYieldChance()?1:0);
+  const rm=()=>{ if (renderOres>0){ renderOres--; return 2; } return 1; };   // Ore Render doubles the next few ores
+  const q=()=>(1+(Math.random()<bitYieldChance()?1:0))*rm();
   if (t===T_COPPER){ const n=q(); metals.copper+=n; dust+=1; updateMeters(); mat('Copper',1,n,silent,tx,ty); }
   else if (t===T_IRON){ const n=q(); metals.iron+=n; dust+=1; updateMeters(); mat('Iron',2,n,silent,tx,ty); }
   else if (t===T_TIN){ const n=q(); metals.tin+=n; dust+=1; updateMeters(); mat('Tin',2,n,silent,tx,ty); }
-  else if (t===T_VST){ metals.vst++; dust+=2; updateMeters(); mat('Voidsteel',3,1,silent,tx,ty); }
-  else if (t===T_ADT){ metals.adamant++; dust+=2; updateMeters(); mat('Adamant',4,1,silent,tx,ty); }
-  else if (t===T_AETH){ metals.aether++; dust+=3; updateMeters(); mat('Aether',5,1,silent,tx,ty); }
+  else if (t===T_VST){ const n=rm(); metals.vst+=n; dust+=2; updateMeters(); mat('Voidsteel',3,n,silent,tx,ty); }
+  else if (t===T_ADT){ const n=rm(); metals.adamant+=n; dust+=2; updateMeters(); mat('Adamant',4,n,silent,tx,ty); }
+  else if (t===T_AETH){ const n=rm(); metals.aether+=n; dust+=3; updateMeters(); mat('Aether',5,n,silent,tx,ty); }
   else if (NODE_TILE[t]){
     const tier=NODE_TILE[t];
     inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
@@ -6528,6 +6600,7 @@ function stepPlayer(dt){
   }
   player.y=ny;
   player.iFrames=Math.max(0,player.iFrames-dt);
+  if (lodeT>0){ lodeT=Math.max(0,lodeT-dt); if (lodeT===0){ lodeX=lodeY=null; } }   // lodestone ping fades
   mineTick(); reveal(); checkCorpse(); animTick(dt); labTick(dt);
   const depth=Math.max(0,Math.floor(player.y-surfaceY[Math.floor(player.x)]+1));
   document.getElementById('depthVal').textContent=depth+'m';
@@ -7424,6 +7497,24 @@ function drawWorld(now){
         can?'rgba(79,227,193,0.6)':'rgba(224,82,61,0.55)';
       ctx.lineWidth=2;
       ctx.strokeRect(tx*TS-camX+1,ty*TS-camY+1,TS-2,TS-2);
+    }
+  }
+
+  // Lodestone Pulse: a compass needle from the player toward the nearest rich pocket + a marker on it.
+  if (lodeT>0 && lodeX!=null){
+    const pcx=player.x*TS-camX, pcy=(player.y-0.5)*TS-camY;
+    const tcx=(lodeX+0.5)*TS-camX, tcy=(lodeY+0.5)*TS-camY;
+    const a=Math.atan2(tcy-pcy,tcx-pcx), pulse=0.55+0.45*Math.abs(Math.sin(now*0.006));
+    ctx.strokeStyle=`rgba(216,88,106,${pulse})`; ctx.lineWidth=3; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(pcx+Math.cos(a)*TS*0.9,pcy+Math.sin(a)*TS*0.9);
+    ctx.lineTo(pcx+Math.cos(a)*TS*2.0,pcy+Math.sin(a)*TS*2.0); ctx.stroke();
+    const hx=pcx+Math.cos(a)*TS*2.0, hy=pcy+Math.sin(a)*TS*2.0;             // arrowhead
+    ctx.fillStyle=`rgba(216,88,106,${pulse})`; ctx.beginPath();
+    ctx.moveTo(hx,hy); ctx.lineTo(hx-Math.cos(a-0.5)*TS*0.5,hy-Math.sin(a-0.5)*TS*0.5);
+    ctx.lineTo(hx-Math.cos(a+0.5)*TS*0.5,hy-Math.sin(a+0.5)*TS*0.5); ctx.closePath(); ctx.fill();
+    if (tcx>-TS&&tcx<world2d.width+TS&&tcy>-TS&&tcy<world2d.height+TS){    // pocket on screen -> ring it
+      ctx.strokeStyle=`rgba(216,88,106,${pulse})`; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(tcx,tcy,TS*0.7,0,7); ctx.stroke();
     }
   }
 
@@ -11275,6 +11366,7 @@ function showView(name){
   document.getElementById('meters').style.display=(name==='forgeb'||name==='brewb'||isExped)?'none':'';
   document.getElementById('hudCluster').classList.toggle('on',isExped);
   document.getElementById('expedHud').classList.toggle('on',isExped);
+  renderPack();                                          // field consumables ride the expedition HUD
   document.getElementById('nudge').classList.remove('on');
   document.getElementById('alignChip').classList.remove('lit');
   gizmo.visible=false;
@@ -11759,7 +11851,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=19;  // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=20;  // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -11814,6 +11906,7 @@ function saveGame(){
       forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
       unlocks:[...unlocks],                    // the cache-tool ledger
+      consumables:{...consumables}, boreTiles, renderOres,   // one-shot cache overflow rewards + their live effect counters
 
       inv:inventory.map(packCore),
       active:activeCore?activeCore.id:null,
@@ -11873,6 +11966,9 @@ function loadGame(){
     if (d.seenTiles) for (const t of d.seenTiles) seenTiles.add(t);
     for (const k in d.machines) if (MACHINES[k]) MACHINES[k].unlocked=d.machines[k];
     unlocks.clear(); if (d.unlocks) for (const k of d.unlocks) grantUnlock(k);
+    for (const k in consumables) delete consumables[k];
+    if (d.consumables) Object.assign(consumables, d.consumables);
+    boreTiles=d.boreTiles||0; renderOres=d.renderOres||0; lodeX=lodeY=null; lodeT=0; renderPack();
     inventory=d.inv.map(unpackCore);
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
