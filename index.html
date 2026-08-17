@@ -299,6 +299,14 @@
   .packItem:active{transform:translateY(1px)}
   .packItem .pg{color:var(--crystal);margin-right:3px}
   .packItem b{color:#fff;font-family:'Courier New',monospace}
+  /* Bench consumables ride the toolbar itself, not fixed to the screen — a flat wrapping chip row. */
+  #benchPack{display:none;flex-wrap:wrap;gap:6px;align-items:center;margin:3px 0 1px}
+  #benchPack.on{display:flex}
+  #benchPack .packItem{padding:4px 9px;font-size:11px}
+  .packStat{font:11px 'Courier New',monospace;color:var(--dim);letter-spacing:.3px;
+    padding:3px 7px;border:1px solid #45403a;clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)}
+  .packStat.on{color:var(--crystal);border-color:#2f6a5e}       /* timed seal counting down */
+  .packStat.hot{color:var(--amber);border-color:#7a5a24}        /* super-sand rush counting down */
   /* Field instrument cluster — the expedition HUD as a milled brass gauge panel (dials in the
      seat-gauge idiom), replacing the italic hp/dust/power/air/drill text strip while underground.
      Two opposite corners chamfered (machined plate, not a div); inset highlight + drop edge for
@@ -850,6 +858,9 @@
   <!-- Bench dials: IN-TEMPLATE (how much of the core sits inside the pattern) and REFINE (surface
        toward the tier ceiling), in the seat-gauge idiom. Shown on the shaping benches; drawn each cut. -->
   <div id="benchGauges"><canvas id="benchGaugeCv" width="452" height="176" style="width:226px;height:88px"></canvas></div>
+  <!-- Bench consumables (Template Wards, Super Sandblast) + their live budget/timer readouts. Shown on the
+       carving stations; click a chip to spend one. -->
+  <div id="benchPack"></div>
   <div id="tools_cleave" style="display:none">
     <div class="row">
       <button class="potion" id="p_h">Level<span class="count mono" id="c_h"></span></button>
@@ -2211,6 +2222,7 @@ function clearBench(){
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
   voxels=[]; dying=[];
+  protCharged.clear();   // ward dedup holds mesh refs from THIS core; the next core rebuilds fresh meshes
   // The drawn representation outlives the shard list unless it is torn down
   // here too — otherwise the old core hangs in the air over the new one.
   if (typeof disposeBatches==='function'){ disposeBatches(); batchMass=-1; batchTint=-1; }
@@ -3001,19 +3013,45 @@ function forgeMetalOwned(k){ const t=metalTier(k);                              
    built. Beyond consumables, a cache falls back to materials so it's never dead.
    ============================================================ */
 const consumables={};                          // id -> {grade, charges}
-let boreTiles=0, renderOres=0;                 // active world effects (persist across saves)
+let boreTiles=0, renderOres=0;                 // active FIELD effects (persist across saves)
 let lodeX=null, lodeY=null, lodeT=0;           // lodestone ping target + seconds remaining
+// BENCH effects. protectCubes is a PERSISTENT budget — a Template Ward shields the next N template cubes a
+// tool would cut, spent one per distinct cube saved (protCharged dedups repeated grazes so a hold doesn't
+// drain it on one cube). protUntil/superUntil are TIMED windows (performance.now ms), transient — they run
+// out on a clock, not on a count, so they don't survive a reload. This is the admin protect/super-sand
+// mechanic (protectOn / adminSuperSand) made finite: same shield, same scoop, just metered.
+let protectCubes=0; let protUntil=0, superUntil=0; const protCharged=new Set();
+const CARVE_VIEWS=new Set(['dig','cleave','brute','facet','polish']);   // where the bench pack rides
+// place:'field' -> rides the expedition HUD (#pack); place:'bench' -> rides the lapidary toolbar (#benchPack).
 const CONSUMABLE_INFO={
-  bore:     {label:'Bore Charge',     glyph:'⛏', note:'breach the tier wall — mine a tier above your gear for a stretch'},
-  render:   {label:'Ore Render',      glyph:'◈', note:'the next ores you dig yield double'},
-  lodestone:{label:'Lodestone Pulse', glyph:'❖', note:'points to the nearest rich adamant / aether pocket'}
+  bore:     {label:'Bore Charge',      glyph:'⛏', place:'field', note:'breach the tier wall — mine a tier above your gear for a stretch'},
+  render:   {label:'Ore Render',       glyph:'◈', place:'field', note:'the next ores you dig yield double'},
+  lodestone:{label:'Lodestone Pulse',  glyph:'❖', place:'field', note:'points to the nearest rich adamant / aether pocket'},
+  ward:     {label:'Template Ward',    glyph:'▣', place:'bench', note:'shields the next few template cubes a tool would cut — persistent, spent per cube saved'},
+  wardT:    {label:'Warding Flux',     glyph:'⬢', place:'bench', note:'seals ALL template crystal for a short window — nothing can be cut from the pattern until it fades'},
+  supersand:{label:'Super Sandblast',  glyph:'≋', place:'bench', note:'the sandblast works a whole scoop per hit for a short, frantic window — clean fast, but it can chew through a Template Ward'}
 };
-const CONSUMABLE_ROLL={                         // which consumables a tier-N cache can roll (themed)
-  1:['render','bore'], 2:['bore','lodestone'], 3:['bore','render'], 4:['lodestone','bore'], 5:['render','lodestone']
+// Cache OVERFLOW table: once a tier's tools are all recovered, further caches of that tier pay from this
+// weighted pool [type, key, weight]. Higher tiers lean into the fine potions and the strong Brine Jet the
+// user asked to be rewarding; the wards/super-sand thread through the mid+ tiers where a botched cut costs
+// most. 'potion' grants stock directly; 'consumable' banks a charge; the never-empty materials floor is the
+// fallback only if a tier's table is somehow empty.
+const OVERFLOW={
+  1:[['potion','h',3],['potion','sand',2],['consumable','ward',2],['consumable','render',2],['consumable','bore',1]],
+  2:[['potion','hMed',3],['potion','vMed',3],['consumable','ward',2],['consumable','supersand',2],['consumable','wardT',1],['consumable','bore',1],['consumable','lodestone',1]],
+  3:[['potion','brine',3],['potion','hHi',2],['potion','vHi',2],['consumable','wardT',2],['consumable','supersand',2],['consumable','ward',1],['consumable','render',1],['consumable','bore',1]],
+  4:[['potion','brine',4],['potion','hHi',2],['potion','vHi',2],['consumable','wardT',2],['consumable','supersand',2],['consumable','lodestone',2],['consumable','bore',1]],
+  5:[['potion','brine',4],['potion','hHi',3],['potion','vHi',3],['consumable','wardT',3],['consumable','supersand',2],['consumable','render',2],['consumable','lodestone',2]]
 };
 function giveConsumable(id,grade){ const c=consumables[id]||(consumables[id]={grade:0,charges:0});
   c.grade=Math.max(c.grade,grade); c.charges++; }
-function rollConsumable(tier){ const p=CONSUMABLE_ROLL[tier]||[]; return p.length?p[(Math.random()*p.length)|0]:null; }
+// Weighted pick from a tier's overflow table. Returns a reward descriptor for breakVault to pay out.
+function rollOverflow(tier){
+  const tbl=OVERFLOW[tier]||[]; if (!tbl.length) return {type:'materials', tier};
+  let tot=0; for (const e of tbl) tot+=(+e[2]); let r=Math.random()*tot;
+  for (const e of tbl){ r-=(+e[2]); if (r<=0){ return e[0]==='potion' ? {type:'potion', key:e[1]} : {type:'consumable', id:e[1]}; } }
+  return {type:'materials', tier};
+}
 function lodestonePing(g){
   const px=Math.floor(player.x), py=Math.floor(player.y-0.5), R=50+g*20; let best=null, bd=1e18;
   for (let dx=-R;dx<=R;dx++) for (let dy=-R;dy<=R;dy++){ const x=px+dx, y=py+dy; if (y<0||y>=WH) continue;
@@ -3027,28 +3065,76 @@ function useConsumable(id){
   if (id==='bore'){ boreTiles=5*g; say(`Bore charge — breach the tier wall for the next ${boreTiles} tiles.`,'good'); }
   else if (id==='render'){ renderOres=5*g; say(`Ore Render — the next ${renderOres} ores yield double.`,'good'); }
   else if (id==='lodestone'){ lodestonePing(g); }
+  else if (id==='ward'){ protectCubes+=10*g; if (typeof refreshTint==='function'&&CARVE_VIEWS.has(view)) refreshTint(); say(`Template Ward — ${10*g} more template cubes shielded (${protectCubes} banked).`,'good'); }
+  else if (id==='wardT'){ protUntil=performance.now()+(15+g*8)*1000; if (typeof refreshTint==='function'&&CARVE_VIEWS.has(view)) refreshTint(); say(`Warding Flux — the pattern is sealed for ${15+g*8}s.`,'good'); }
+  else if (id==='supersand'){ superUntil=performance.now()+(10+g*5)*1000; say(`Super Sandblast — a whole scoop per hit for ${10+g*5}s. Mind your ward.`,'good'); }
   else return;
   c.charges--; if (c.charges<=0) delete consumables[id];
   renderPack();
 }
 const _ROMAN=['','I','II','III','IV','V'];
+function _packChips(place){                     // shared chip markup for a subset of the pack
+  return Object.keys(consumables).filter(id=>consumables[id].charges>0 && CONSUMABLE_INFO[id] && CONSUMABLE_INFO[id].place===place)
+    .map(id=>{ const c=consumables[id], info=CONSUMABLE_INFO[id];
+      return `<button class="packItem" data-use="${id}" title="${info.note} — grade ${_ROMAN[c.grade]||c.grade}">`+
+        `<span class="pg">${info.glyph}</span>${info.label} <b>×${c.charges}</b></button>`; }).join('');
+}
 function renderPack(){
-  const el=document.getElementById('pack'); if (!el) return;
-  const ids=Object.keys(consumables).filter(id=>consumables[id].charges>0 && CONSUMABLE_INFO[id]);
-  el.innerHTML=ids.map(id=>{ const c=consumables[id], info=CONSUMABLE_INFO[id];
-    return `<button class="packItem" data-use="${id}" title="${info.note} — grade ${_ROMAN[c.grade]||c.grade}">`+
-      `<span class="pg">${info.glyph}</span>${info.label} <b>×${c.charges}</b></button>`; }).join('');
-  el.querySelectorAll('[data-use]').forEach(btn=>btn.onclick=()=>useConsumable(btn.dataset.use));
-  el.classList.toggle('on', ids.length>0 && view==='exped');   // field consumables only show on expedition
+  const el=document.getElementById('pack');
+  if (el){
+    el.innerHTML=_packChips('field');
+    el.querySelectorAll('[data-use]').forEach(btn=>btn.onclick=()=>useConsumable(btn.dataset.use));
+    el.classList.toggle('on', el.children.length>0 && view==='exped');   // field consumables only on expedition
+  }
+  const b=document.getElementById('benchPack');
+  if (b){
+    // A live status line for the metered bench effects, appended after the chips so you can watch a ward burn.
+    const nowMs=performance.now();
+    let status='';
+    if (protectCubes>0) status+=`<span class="packStat">▣ ward ${protectCubes}</span>`;
+    if (nowMs<protUntil) status+=`<span class="packStat on">⬢ sealed ${Math.ceil((protUntil-nowMs)/1000)}s</span>`;
+    if (nowMs<superUntil) status+=`<span class="packStat hot">≋ scoop ${Math.ceil((superUntil-nowMs)/1000)}s</span>`;
+    b.innerHTML=_packChips('bench')+status;
+    b.querySelectorAll('[data-use]').forEach(btn=>btn.onclick=()=>useConsumable(btn.dataset.use));
+    b.classList.toggle('on', b.children.length>0 && CARVE_VIEWS.has(view));
+  }
+}
+// Throttled bench-pack refresh for the tick loop: rebuild only when a chip count, the ward budget, or a
+// whole-second timer tick actually changes — so a settled bench costs nothing, but a ward visibly burns and
+// the seal/rush counters count down without a per-frame innerHTML churn.
+let _benchSig='';
+function tickBenchPack(){
+  if (!CARVE_VIEWS.has(view)) return;
+  const nowMs=performance.now();
+  const seal=nowMs<protUntil?Math.ceil((protUntil-nowMs)/1000):0;
+  const rush=nowMs<superUntil?Math.ceil((superUntil-nowMs)/1000):0;
+  const chips=Object.keys(consumables).filter(id=>consumables[id].charges>0&&CONSUMABLE_INFO[id]&&CONSUMABLE_INFO[id].place==='bench')
+    .map(id=>id+consumables[id].charges).join(',');
+  const sig=chips+'|'+protectCubes+'|'+seal+'|'+rush;
+  if (sig===_benchSig) return;
+  _benchSig=sig; renderPack();
 }
 function grantUnlock(k){ unlocks.add(k); applyUnlock(k); }
 function unlockAll(){ for (const t in UNLOCK_POOL) for (const k of UNLOCK_POOL[t]) grantUnlock(k);   // admin
   for (const id in CONSUMABLE_INFO) if (!consumables[id]) consumables[id]={grade:5,charges:3}; renderPack(); }   // + a few consumables to test
-// The next reward a tier-N cache pays: the next unowned tool from its pool, else materials.
+// The next reward a tier-N cache pays: the next unowned tool from its pool, else a weighted overflow roll.
 function nextCacheReward(tier){
   for (const k of (UNLOCK_POOL[tier]||[])) if (!unlocks.has(k)) return {type:'unlock', key:k};
-  const c=rollConsumable(tier); if (c) return {type:'consumable', id:c};   // tier's tools all owned -> a consumable
-  return {type:'materials', tier};                                          // (materials only if the tier rolls nothing)
+  return rollOverflow(tier);                     // tools all owned -> potion / consumable / (materials floor)
+}
+// Potion payouts. The bottled solvents (h/hMed/hHi/v/vMed/vHi) stock the phial count; sand & brine are the
+// persistent-tank tools, so they pour a bottle's worth straight into the tank (brine's 150 is why it reads
+// as a big prize). deferred to runtime so tank/potions/TANKS are all defined.
+const POTION_LABEL={h:'Level Solvent',hMed:'Level Solvent II',hHi:'Level Solvent III',
+  v:'Standing Tincture',vMed:'Standing Tincture II',vHi:'Standing Tincture III',
+  sand:'Sandblast grit',brine:'Brine Jet charge'};
+function grantPotionReward(key){
+  if (key==='sand'||key==='brine'){                        // tank tools: pour a bottle in, clamp to capacity
+    const add=TANKS[key].per; tank[key]=Math.min(tankCap(key), (tank[key]||0)+add);
+    updateStock(); return `${add} charge poured into the ${TANKS[key].label} tank.`;
+  }
+  const n=1+((Math.random()*2)|0); potions[key]=(potions[key]||0)+n; updateStock();   // 1–2 phials
+  return `${n} ${POTION_LABEL[key]||key} phial${n>1?'s':''} added to the shelf.`;
 }
 
 /* ============================================================
@@ -3453,9 +3539,13 @@ function dissolve(set){
   }
   return beforeN-voxels.length;
 }
-// Whether template-crystal protection is currently active: on during the tutorial, or forced on by the
-// admin toggle for testing a shielded carve.
-function protectOn(){ return tut.protect || adminProtect; }
+// Whether template-crystal protection is currently active: on during the tutorial, forced on by the admin
+// toggle, or paid for by a Template Ward — the timed Warding Flux (protUntil) seals everything, and the
+// persistent cube-budget ward (protectCubes) shields the next N cubes. When the budget hits 0 and no timed
+// seal is up, protection simply ends (the ward is spent), so a rushed super-sand can cut the pattern again.
+function protectUnlimited(){ return tut.protect || adminProtect || performance.now()<protUntil; }
+function protectOn(){ return protectUnlimited() || protectCubes>0; }
+function superActive(){ return adminSuperSand || performance.now()<superUntil; }
 // During the tutorial (or with the admin guard on), a cut that would eat template material is REFUSED.
 // Returns true if the action should be blocked.
 function tutBlocks(set){
@@ -3485,12 +3575,20 @@ function tutBlocks(set){
 // predicate as tutBlocks. Returns the allowed subset (may be empty — caller then just skips the tick).
 function tutAllow(set){
   if (!protectOn()) return set;
+  const unlimited=protectUnlimited();      // tutorial / admin / timed seal: shield every template cube, free
   const out=new Set();
   for (const v of voxels){
     if (!set.has(v.mesh)) continue;
     if (isMatrix(v.cell)) { out.add(v.mesh); continue; }   // dirt/stone: never protected
-    if (!(view==='dig'||inTemplate(v.cell))) out.add(v.mesh); // crystal OUTSIDE the template is waste — fair to trim
-    // else: crystal inside the template (or any crystal at the dig bench) — protected, omit it
+    if (!(view==='dig'||inTemplate(v.cell))) { out.add(v.mesh); continue; }   // crystal OUTSIDE the template is waste — fair to trim
+    // Template crystal (or any crystal at the dig bench): protected. Under the persistent cube-budget ward,
+    // spend one charge per DISTINCT cube saved — protCharged dedups so holding on one cube doesn't drain it,
+    // and once the budget is gone a newly-threatened cube falls through (removed). This is exactly the "blow
+    // through the ward" a rushed super-sand scoop causes: it presents many new template cubes at once.
+    if (unlimited) continue;               // sealed: omit (spare), no cost
+    if (protCharged.has(v.mesh)) continue; // already paid for this cube — keep sparing it free
+    if (protectCubes>0){ protCharged.add(v.mesh); protectCubes--; continue; }  // spend a charge to save it
+    out.add(v.mesh);                       // ward spent for this cube — let the tool take it
   }
   return out;
 }
@@ -4214,11 +4312,13 @@ function sandAt(cx,cy,now){
   if (!v) return;
   const one=new Set([targetMesh]);
   if (protectOn() && tutAllow(one).size===0) return;   // guarded cube: skip it but KEEP blasting the rest of the sweep
-  // ADMIN super-sand: the SAME sandblast mechanic (refine coarse grain a step finer; only grain already at
-  // the floor is worn away) applied to a whole scoop at once, not a single cube — fast cleanup for testing.
-  // It must NOT act like the brute: it never dissolves coarse crystal, it breaks it down first. Still spares
-  // protected template crystal so it pairs with the protect toggle. Reach scales with the tier's grain.
-  if (adminSuperSand){
+  // SUPER-SAND: the SAME sandblast mechanic (refine coarse grain a step finer; only grain already at the
+  // floor is worn away) applied to a whole scoop at once, not a single cube. Admin toggle for testing, or the
+  // Super Sandblast consumable's timed window (superUntil). It must NOT act like the brute: it never dissolves
+  // coarse crystal, it breaks it down first. It still routes through tutAllow — so a live Template Ward spares
+  // what it can, and the scoop is exactly what BURNS a budget ward fast (many template cubes at once). Reach
+  // scales with the tier's grain.
+  if (superActive()){
     const reach=(activeCore?TIERS[activeCore.tier].vox:0.55)*3;
     const p0={x:v.cell.px,y:v.cell.py,z:v.cell.pz};
     let scoop=[]; for (const vv of voxels){ if (cellDist(vv.cell,p0)<=reach) scoop.push(vv); }
@@ -6449,6 +6549,9 @@ function breakVault(tx,ty){
     giveConsumable(rw.id, tier); const info=CONSUMABLE_INFO[rw.id];
     notify(info.label, {kick:'Consumable', tier, desc:`grade ${['','I','II','III','IV','V'][tier]} — ${info.note}.`, ledger:'consumable'});
     renderPack();
+  } else if (rw.type==='potion'){
+    const desc=grantPotionReward(rw.key);
+    notify(POTION_LABEL[rw.key]||rw.key, {kick:'Cache stores', tier, desc, ledger:'take'});
   } else {
     // pool cleared for this tier — a never-empty materials payout (a consumable layer lands here later)
     const oreKey=['','copper','iron','vst','adamant','aether'][tier]||'copper';
@@ -11296,6 +11399,9 @@ function newRun(){
   // Starters need no cache (dig/cleave/brute/seat); the rest is earned from ancient caches.
   unlocks.clear();
   for (const k in MACHINES) MACHINES[k].unlocked=(k==='dig'||k==='cleave'||k==='brute'||k==='seatbench');
+  for (const k in consumables) delete consumables[k];   // the consumable pack + its live effects start empty
+  boreTiles=0; renderOres=0; protectCubes=0; protUntil=0; superUntil=0; protCharged.clear();
+  lodeX=lodeY=null; lodeT=0; renderPack();
 
   // world actors
   enemies=[]; projectiles=[]; particles=[];
@@ -11851,7 +11957,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=20;  // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=21;  // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -11906,7 +12012,7 @@ function saveGame(){
       forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
       unlocks:[...unlocks],                    // the cache-tool ledger
-      consumables:{...consumables}, boreTiles, renderOres,   // one-shot cache overflow rewards + their live effect counters
+      consumables:{...consumables}, boreTiles, renderOres, protectCubes,   // cache overflow rewards + live effect counters (timed seals/rush are transient, not saved)
 
       inv:inventory.map(packCore),
       active:activeCore?activeCore.id:null,
@@ -11968,7 +12074,8 @@ function loadGame(){
     unlocks.clear(); if (d.unlocks) for (const k of d.unlocks) grantUnlock(k);
     for (const k in consumables) delete consumables[k];
     if (d.consumables) Object.assign(consumables, d.consumables);
-    boreTiles=d.boreTiles||0; renderOres=d.renderOres||0; lodeX=lodeY=null; lodeT=0; renderPack();
+    boreTiles=d.boreTiles||0; renderOres=d.renderOres||0; protectCubes=d.protectCubes||0;
+    protUntil=superUntil=0; protCharged.clear(); lodeX=lodeY=null; lodeT=0; renderPack();
     inventory=d.inv.map(unpackCore);
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
@@ -12102,6 +12209,7 @@ let t=0, lastNow=0;
   updateWheel(dt);
   applyShake();
   carveTick();            // one carving sample per frame, from the latest touch position
+  tickBenchPack();        // burn a ward / count a seal or super-sand window down, cheaply
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
   if (view==='brewb') brewTick(dt);      // the brewing line: the active station's minigame
