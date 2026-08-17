@@ -986,7 +986,7 @@
     </span>
     <button class="act" id="fbPair" style="display:none">⇄ Pestle</button>
     <span id="fbAdmin" style="display:none">
-      <button class="act" id="fbAutoBronze" title="Admin: instantly fill &amp; finish this part in bronze">⚙ Bronze</button>
+      <button class="act" id="fbAutoBronze" title="Admin: instantly fill &amp; finish this part in copper (Tier I)">⚙ Copper</button>
       <button class="act" id="fbAutoIron" title="Admin: instantly fill &amp; finish this part in iron">⚙ Iron</button>
       <button class="act" id="fbAutoVst" title="Admin: instantly fill &amp; finish this part in voidsteel">⚙ Voidsteel</button>
     </span>
@@ -6831,6 +6831,50 @@ function bakeTile(x,y,t,TS){
   }
   return cv;
 }
+// A small standalone icon of a tile's ACTUAL look — the real material noise plus its ore flecks, or
+// a faceted gem / embers for a self-lit tile — for the hardness-spectrum swatches (they were flat
+// colour boxes with a generic speckle). Deterministic, so cache one per tile type.
+const _tileIcon={};
+function tileIconURL(t){
+  if (_tileIcon[t]) return _tileIcon[t];
+  const W=30, H=42, cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const c=cv.getContext('2d'), m=matClass(t)||1, base=TERR_TINT[m]||TERR_TINT[1];
+  const ox=t*37, oy=t*61;                     // a fixed sample origin per tile type so each reads distinct
+  const img=c.createImageData(W,H), d=img.data;
+  for (let ly=0;ly<H;ly++) for (let lx=0;lx<W;lx++){
+    const wx=ox+lx, wy=oy+ly;                  // same material formula as bakeTile, so the icon matches the ground
+    const grain=0.66+terrGrain(wx*1.5,wy*1.5)*0.6, patch=0.82+terrPatch(wx*0.018,wy*0.018)*0.4;
+    const cr=terrCrack(wx*0.9,wy*0.9), crack=(cr>0.30&&cr<0.345)?0.6:1, mm=grain*patch*crack;
+    let R=base[0]*mm, G=base[1]*mm, B=base[2]*mm;
+    if (m===3&&terrFleck(wx*3.5,wy*3.5)>0.83){R+=55;G+=38;B+=105;}
+    if (m===1&&terrGrain(wx*3,wy*3+5)>0.82){R*=0.72;G*=0.72;B*=0.72;}
+    const i=(ly*W+lx)*4; d[i]=R; d[i+1]=G; d[i+2]=B; d[i+3]=255;
+  }
+  c.putImageData(img,0,0);
+  const seed=(t*2654435761)>>>0;
+  if (METAL_PAL[t]) bakeMetal(c,W,METAL_PAL[t],seed);       // the ore's own faceted flecks
+  else if (t===T_CLAY) bakeClay(c,W,seed);
+  else if (t===T_SALT) bakeSalt(c,W,seed);
+  else if (t===T_MICA) bakeMica(c,W,seed);
+  if (SELF_LIT.has(t)){                        // nodes glow a gem; the biome tiles glow embers/dots
+    const cx=W/2, cy=H/2;
+    const hue = NODE_TILE[t] ? (TIER_COL[NODE_TILE[t]]||'#4FE3C1')
+      : t===T_MOSS?'#57c98a' : t===T_BRINE?'#5ac8dc' : t===T_CINDER?'#e8663d' : t===T_RIME?'#6fb8e8' : '#4FE3C1';
+    c.fillStyle='rgba(5,9,15,0.5)'; c.beginPath(); c.ellipse(cx,cy,W*0.36,H*0.3,0,0,7); c.fill();   // dark socket
+    const g=c.createRadialGradient(cx,cy,1,cx,cy,W*0.45); g.addColorStop(0,hue); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.globalAlpha=0.55; c.fillStyle=g; c.fillRect(0,0,W,H); c.globalAlpha=1;                          // bloom
+    if (NODE_TILE[t]){
+      const r=W*0.28;
+      c.fillStyle=hue; c.beginPath(); c.moveTo(cx,cy-r); c.lineTo(cx+r*0.68,cy); c.lineTo(cx,cy+r); c.lineTo(cx-r*0.68,cy); c.closePath(); c.fill();
+      c.strokeStyle='rgba(255,255,255,0.7)'; c.lineWidth=1; c.stroke();
+      c.fillStyle='#fff'; c.beginPath(); c.arc(cx-r*0.22,cy-r*0.3,r*0.18,0,7); c.fill();
+    } else {
+      for (let k=0;k<5;k++){ const a=k*1.7, rx=cx+Math.cos(a)*W*0.24, ry=cy+Math.sin(a)*H*0.24;
+        c.fillStyle=hue; c.beginPath(); c.arc(rx,ry,1.6,0,7); c.fill(); }
+    }
+  }
+  return (_tileIcon[t]=cv.toDataURL());
+}
 function tileBaseFor(x,y,t,TS){
   if (!tileBake||TS!==tileBakeTS){ tileBake=new Map(); tileBakeTS=TS; }  // resize rebakes all
   const k=x*WH+y; let e=tileBake.get(k);       // numeric key: no per-tile string allocation in the draw loop
@@ -9532,7 +9576,7 @@ function adminForgeFill(mat){
   for (let id=0; id<FG_N; id++){
     if (!fgMould[id]) continue;
     fgFill[id]=1; fgTemp[id]=0; if (typeof fgLocked!=='undefined') fgLocked[id]=0;
-    fgMetal[id] = mat==='iron' ? 2 : mat==='vst' ? 3 : (((id*2654435761)>>>0)%10 < 3 ? 1 : 0);
+    fgMetal[id] = mat==='iron' ? 2 : mat==='vst' ? 3 : mat==='bronze' ? (((id*2654435761)>>>0)%10 < 3 ? 1 : 0) : 0;   // 'copper' -> all 0 = pure copper (Tier I)
     n++;
   }
   if (!n){ say('No mould here to fill.','warn'); return; }
@@ -10570,18 +10614,14 @@ function renderLab(){
             background:rgba(214,74,60,.16)"></div>
           ${spec.map(m=>{
             const st=mineState(m.resist);
-            /* Each swatch is drawn as the material itself — its world colour with
-               a speckle pattern keyed to its kind — so the spectrum reads as rock
-               rather than anonymous chips. Sized for a sprite to drop straight in. */
+            // Each swatch is a real render of the material — its actual noise texture plus its ore
+            // flecks, or a gem/embers for a self-lit tile (see tileIconURL) — so the spectrum reads
+            // as the ground itself rather than anonymous chips.
             const state=st===2?'mines at full speed':st===1?'slow going':`needs ${(m.resist*MINE_BITE).toFixed(2)} drill power`;
-            const speck=SELF_LIT.has(m.t)?`radial-gradient(circle at 30% 35%, #ffffffcc 1.2px, transparent 1.6px),
-                 radial-gradient(circle at 68% 70%, #ffffff88 1px, transparent 1.4px),`:
-                 `radial-gradient(circle at 35% 30%, #ffffff55 1px, transparent 1.3px),
-                  radial-gradient(circle at 70% 65%, #00000066 1.1px, transparent 1.5px),`;
             return `<span title="${m.name} — resist ${m.resist}; ${state}"
-              style="position:absolute;left:${pos(m.resist)}%;top:3px;width:14px;height:20px;
-              margin-left:-7px;border-radius:2px;
-              background:${speck} ${m.col};
+              style="position:absolute;left:${pos(m.resist)}%;top:2px;width:15px;height:22px;
+              margin-left:-7.5px;border-radius:2px;overflow:hidden;
+              background-image:url(${tileIconURL(m.t)});background-size:100% 100%;
               border:1px solid ${st===2?'#4fe3c1':st===1?'#e8a33d':'#d64a3c'};
               opacity:${st?1:.5}"></span>`;
           }).join('')}
@@ -11241,7 +11281,7 @@ document.getElementById('x_forge').onclick=()=>showView('lab');
 // The hand-forge: enter the 3D press to shape a copper frame by placing and
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
-document.getElementById('fbAutoBronze').onclick=()=>adminForgeFill('bronze');
+document.getElementById('fbAutoBronze').onclick=()=>adminForgeFill('copper');
 document.getElementById('fbAutoIron').onclick=()=>adminForgeFill('iron');
 document.getElementById('fbAutoVst').onclick=()=>adminForgeFill('vst');
 // Mortar & Pestle are two separate models forged in the same press — this toggles which one you're on,
