@@ -1929,7 +1929,7 @@ function mineSpeed(resist, tier){
   const rr=r*(1+RESONANCE_MAX*frameResonance());
   return Math.min(OVERKILL_MAX,Math.pow(rr,OVERKILL_EXP));
 }
-function scanRange(){ const o=suitOutput('coil'); return o?3+suitTier('coil')*2+o*4:0; }
+function scanRange(){ if (!owned('scanner')) return 0; const o=suitOutput('coil'); return o?3+suitTier('coil')*2+o*4:0; }   // scanner is a cache unlock
 // Ward Prism → elemental burn resistance. Aegis Torus → impact/melee armor.
 // Both cap well under 1 so the suit is never invulnerable.
 function wardResist(){ const o=suitOutput('forgePrism'); return o?Math.min(0.6,0.15+0.45*o):0; }
@@ -2927,6 +2927,43 @@ const MACHINES={
 };
 // The four shaping stations, switchable from the bench without a trip to the lab.
 const SHAPING_STATIONS=['cleave','brute','facet','polish','seatbench'];
+
+/* ============================================================
+   UNLOCK LEDGER — the reward economy. The bench TOOLS aren't bought any more;
+   they're recovered from ANCIENT CACHES (the tier-gated 2x2 vaults). Breaking a
+   tier-N cache grants the next tool you don't own from that tier's pool; once a
+   tier's pool is cleared it pays a materials fallback (a consumable layer slots
+   in here later), so a cache is never a dead find. Admin owns everything.
+   The starters (dig / cleave / brute / seat / base solvents / drill+power
+   templates / life support) never need a cache.
+   ============================================================ */
+const unlocks=new Set();                       // tool keys the player has recovered
+function owned(k){ return adminOn || unlocks.has(k); }
+const UNLOCK_POOL={                            // which cache tier yields which tool, in grant order
+  1:['facet','sand','jet','brewing','scanner'],
+  2:['polish','brine'],
+  3:[], 4:[], 5:[]
+};
+const UNLOCK_INFO={
+  facet:  {label:'Faceting Saw',   note:'the twin-blade saw — split the grain finer'},
+  polish: {label:'Polishing Lamp', note:'the lapping plane — mirror every face'},
+  jet:    {label:'Jet Rinse',      note:'a precision hose — strips matrix off a raw core'},
+  sand:   {label:'Sandblast',      note:'an abrasive jet — refines the grain wherever it touches'},
+  brine:  {label:'Brine Jet',      note:'the deep-strata blast — enough charge for a tier-III rind'},
+  brewing:{label:'Brewing Kit',    note:'mortar & calcinator — brew your own solvents from core powder'},
+  scanner:{label:'Scanner',        note:'pings cores through the rock so you can steer to them'}
+};
+function applyUnlock(k){                        // flip the concrete switch a tool reads (beyond owned())
+  if (k==='facet') MACHINES.facet.unlocked=true;
+  else if (k==='polish') MACHINES.polish.unlocked=true;
+}
+function grantUnlock(k){ unlocks.add(k); applyUnlock(k); }
+function unlockAll(){ for (const t in UNLOCK_POOL) for (const k of UNLOCK_POOL[t]) grantUnlock(k); }   // admin
+// The next reward a tier-N cache pays: the next unowned tool from its pool, else materials.
+function nextCacheReward(tier){
+  for (const k of (UNLOCK_POOL[tier]||[])) if (!unlocks.has(k)) return {type:'unlock', key:k};
+  return {type:'materials', tier};
+}
 
 /* ============================================================
    THE SEATING BENCH — the housing is a REAL OBJECT in the scene,
@@ -5782,6 +5819,9 @@ function labWingAt(px,py){
 }
 // Walk into a wing. Each maps to the screen that wing houses.
 function enterWing(wing){
+  if (wing.key==='brewing' && !owned('brewing')){        // the brewing kit is a cache unlock
+    say('The brewing station is sealed — its kit is recovered from an ancient cache.','warn'); return;
+  }
   keys.jump=false;
   showView(wing.view);
   renderWingNav();
@@ -5854,7 +5894,7 @@ addEventListener('keydown',e=>{
     e.preventDefault();
     if (tut.on) tutEnd();
     adminOn=true; adminGlow=true;
-    for (const k in MACHINES) MACHINES[k].unlocked=true;
+    for (const k in MACHINES) MACHINES[k].unlocked=true; unlockAll();   // admin retains every cache tool
     dust=9999; powerBank=9999;
     for (const k in potions) potions[k]=99;
     for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
@@ -6301,6 +6341,7 @@ function breakTile(tx,ty,t,silent){
 // A cache is a 2x2 group of T_WALL: breaking any cell clears all four at once. Find
 // the group's top-left (step left/up once if a wall neighbour is there), then void it.
 function breakVault(tx,ty){
+  const tier=getGate(tx,ty)||1;               // the cache's tier, read BEFORE the gate is cleared
   let ax=tx, ay=ty;
   if (getTile(ax-1,ay)===T_WALL) ax--;
   if (getTile(ax,ay-1)===T_WALL) ay--;
@@ -6311,7 +6352,17 @@ function breakVault(tx,ty){
     setTile(cx,cy,T_AIR); setSeen(cx,cy,1); setGate(cx,cy,0);
     for (let i=0;i<6;i++) particles.push({x:cx+0.5,y:cy+0.5,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.16,life:28,col:'#8598b8'});
   }
-  say('Ancient cache breached.','good');      // reward contents are a later system
+  const rw=nextCacheReward(tier);
+  if (rw.type==='unlock'){
+    grantUnlock(rw.key); const info=UNLOCK_INFO[rw.key];
+    notify(info.label, {kick:'Recovered', tier, desc:info.note+' — recovered from a tier-'+['','I','II','III','IV','V'][tier]+' cache.', ledger:'unlock'});
+    if (view==='lapidary') renderLapidary();
+  } else {
+    // pool cleared for this tier — a never-empty materials payout (a consumable layer lands here later)
+    const oreKey=['','copper','iron','vst','adamant','aether'][tier]||'copper';
+    const n=1+((Math.random()*2)|0); metals[oreKey]=(metals[oreKey]||0)+n; dust+=8*tier; updateMeters();
+    notify(ORE_INFO[oreKey]?ORE_INFO[oreKey].label:oreKey, {kick:'Cache stores', tier, desc:`This tier's tech is already yours — the vault held ${n} ${oreKey} and some dust.`, ledger:'take'});
+  }
 }
 /* Toughness -> yield. A soft bronze bit (low tin) shatters ore less and gives a
    chance at an extra unit; a hard bit (high tin) trades that away for bite. Only
@@ -10904,8 +10955,12 @@ function renderLapidary(){
       btn.disabled=!cleanBench||dark;
       btn.onclick=()=>showView(key);
     } else {
-      btn.textContent='Install ◈'+m.cost; btn.disabled=dust<m.cost;
-      btn.onclick=()=>{ dust-=m.cost; m.unlocked=true; updateMeters(); renderLapidary(); };
+      // No longer bought with dust — the tool is recovered from an ancient cache in the world.
+      btn.className='act'; btn.textContent='◇ sealed'; btn.disabled=true;
+      btn.title='Recovered from an ancient cache — hunt the tier-gated vaults underground.';
+      div.classList.add('t3');
+      const sub=div.querySelector('.sub');
+      if (sub) sub.innerHTML+=' <span style="color:var(--brass)">· sealed until recovered from an ancient cache</span>';
     }
     div.appendChild(btn); list.appendChild(div);
   }
@@ -10997,7 +11052,7 @@ document.getElementById('stripBtn').onclick=()=>{
   }
 })();
 document.getElementById('unlockBtn').onclick=()=>{
-  for (const k in MACHINES) MACHINES[k].unlocked=true;
+  for (const k in MACHINES) MACHINES[k].unlocked=true; unlockAll();   // admin retains every cache tool
   dust=9999; powerBank=9999;
   for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
   metals.copper=99; metals.iron=99; metals.vst=99;
@@ -11108,7 +11163,7 @@ function newRun(){
   for (const k in reagents) reagents[k]=0;
   for (const k in powder){ powder[k]=10; powderGrade[k]=1; powderGradeMass[k]=10; }   // fresh larder: 10 dust of each colour, tier-I grade
   for (const k in potions) delete potions[k];
-  potions.h=3; potions.v=3; potions.jet=2; potions.blast=2;
+  potions.h=3; potions.v=3; potions.blast=2;   // starters: base Level/Standing solvent + a blast phial. Jet/Sand/Brine are cache unlocks now.
   // brewing progress does NOT carry into a new run: recorded potency, the fitted line, the dust grade, tanks
   for (const k in potionStr) delete potionStr[k];
   for (const k in brewEquip) brewEquip[k]=null;
@@ -11122,7 +11177,9 @@ function newRun(){
   forgedParts=[];                                        // the forged-parts shelf starts empty
   for (const k in suitFrames) suitFrames[k]=null;
   equip.coil=null; equip.forgePrism=null; equip.alembic=null;
-  for (const k in MACHINES) MACHINES[k].unlocked=(k==='dig'||k==='cleave'||k==='brute');
+  // Starters need no cache (dig/cleave/brute/seat); the rest is earned from ancient caches.
+  unlocks.clear();
+  for (const k in MACHINES) MACHINES[k].unlocked=(k==='dig'||k==='cleave'||k==='brute'||k==='seatbench');
 
   // world actors
   enemies=[]; projectiles=[]; particles=[];
@@ -11390,11 +11447,19 @@ function say(t,mood){
   logTake(t);                       // plain chatter -> ledger only, never the screen
 }
 document.getElementById('ledgerBtn').onclick=()=>document.getElementById('ledger').classList.toggle('on');
+const POTION_UNLOCK={digjet:'jet', brinejet:'brine', sand:'sand'};   // these fine tools are cache unlocks
 function updateStock(){
   const inf=tut.on||adminOn;
   for (const k in POTIONS){
     const cnt=document.getElementById('c_'+k), btn=document.getElementById('p_'+k);
     if (!cnt||!btn) continue;
+    const req=POTION_UNLOCK[k];
+    if (req && !owned(req) && !inf){        // sealed until recovered from an ancient cache
+      cnt.textContent='◇'; btn.disabled=true;
+      btn.title='Sealed — recover the '+UNLOCK_INFO[req].label+' from an ancient cache.';
+      continue;
+    }
+    btn.title='';
     const stock=potionStock(k);
     cnt.textContent=inf?'∞':'×'+stock;
     btn.disabled=inf?false:stock===0;
@@ -11638,7 +11703,7 @@ document.getElementById('tutSkip').onclick=tutEnd;
 document.getElementById('tutAdmin').onclick=()=>{
   tutEnd();
   adminOn=true; adminGlow=true;
-  for (const k in MACHINES) MACHINES[k].unlocked=true;
+  for (const k in MACHINES) MACHINES[k].unlocked=true; unlockAll();   // admin retains every cache tool
   dust=9999; powerBank=9999;
   for (const k in potions) potions[k]=99;
   for (const k in reagents) reagents[k]=99; for (const k in powder) powder[k]=99;
@@ -11668,7 +11733,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=18;  // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=19;  // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -11722,6 +11787,8 @@ function saveGame(){
       powerBank:q3(powerBank), forgeAnvil, seenTiles:[...seenTiles], tank:{...tank}, lab:{...lab}, suitFrames:{...suitFrames},
       forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
+      unlocks:[...unlocks],                    // the cache-tool ledger
+
       inv:inventory.map(packCore),
       active:activeCore?activeCore.id:null,
       corpse:corpse?{x:q3(corpse.x),y:q3(corpse.y),
@@ -11779,6 +11846,7 @@ function loadGame(){
     seenTiles.clear();
     if (d.seenTiles) for (const t of d.seenTiles) seenTiles.add(t);
     for (const k in d.machines) if (MACHINES[k]) MACHINES[k].unlocked=d.machines[k];
+    unlocks.clear(); if (d.unlocks) for (const k of d.unlocks) grantUnlock(k);
     inventory=d.inv.map(unpackCore);
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
