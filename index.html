@@ -8006,7 +8006,11 @@ const _calcSeat=(px,py,pz)=>{ if (py<-1.01||py>8.7) return false; return Math.hy
 // an optional extra void unioned with the core socket (the bit's throat, a vessel's open bowl). `ghostP`
 // is a revolved outer profile [y,r] for the wireframe (vessels); box/cone build their own.
 const FORGE_SHAPES={
-  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box', bowlDrop:0.6},
+  // bowlDrop 0: the box's core socket is a narrow VOID the cast wraps around (it forms by construction as
+  // the melt routes past the fgSeat cells), NOT an open bowl to keep clear — so the RAW stone must be a
+  // solid lump. A nonzero bowlDrop steered the seeded nugget off the socket columns, carving an ugly
+  // socket-shaped notch into the raw ore. Vessels with a real open bowl (mortar/calcinator) keep it.
+  box:{hx:FORGE_HX,      hy:FORGE_HY,     hz:FORGE_HZ,      castHx:FORGE_HX,                 castHy:FORGE_HY,      castHz:FORGE_HZ,                 bodyP:_boxBodyP, socketComp:SEAT_COMP, socketPer:SEAT_PER,          socketPy:FORGE_SEAT_PY,     ghost:'box', bowlDrop:0},
   bit:{hx:FORGE_BIT_RMAX,hy:FORGE_BIT_HY, hz:FORGE_BIT_RMAX,castHx:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, castHy:FORGE_BIT_HY+0.6, castHz:FORGE_BIT_RMAX+BIT_RIDGE_PROUD+0.6, bodyP:_bitBodyP, socketComp:'cell',    socketPer:FORGE_BIT_SEAT_PER, socketPy:FORGE_BIT_SEAT_PY, ghost:'cone', bowlDrop:0.6,
     seatExtra:(px,py,pz)=> Math.hypot(px,pz)<=_BIT_SOCK_R && py>=FORGE_BIT_SEAT_PY && py<=FORGE_BIT_HY+0.6,   // the drill-bit throat
     insert:{c:[0,FORGE_BIT_HY,0], axis:[0,1,0], r:_BIT_SOCK_R, depth:FORGE_BIT_HY-FORGE_BIT_SEAT_PY-_BIT_SOCK_R}},   // core drops in the TOP
