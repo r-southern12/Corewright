@@ -1626,7 +1626,7 @@ let dust=0, hp=100, hardcore=true, corpse=null;
 // (Superseded the earlier "cells are consumable, dumped into the bank" model at the player's request.)
 let powerBank=0;
 let maxAir=120, air=120;
-const metals={copper:0,iron:0,vst:0,tin:0,adamant:0,aether:0};
+const metals={copper:0,iron:0,vst:0,tin:0,adamant:0,aether:0,mang:0,umbr:0,chro:0,quin:0};
 // Expanded for excavation. Each reagent has a depth and a job, so the
 // potion you can brew is a function of where you've been able to dig.
 const reagents={moss:0,salt:0,clay:0,mica:0,brine:0,cinder:0,rime:0};
@@ -1673,7 +1673,12 @@ const ORE_INFO={
   iron:  {label:'Iron ore',   note:'banded through grey stone',  col:'#8a94b8'},
   vst:   {label:'Voidsteel ore',note:'deep strata only',         col:'#6f5fa8'},
   adamant:{label:'Adamant ore',note:'tier-IV strata; rare, in rich pockets', col:'#c8586a'},
-  aether:{label:'Aether ore', note:'tier-V; the deepest metal there is',      col:'#4fd6c4'}
+  aether:{label:'Aether ore', note:'tier-V; the deepest metal there is',      col:'#4fd6c4'},
+  // ALLOY AGENTS — each pairs with its tier's base metal in the crucible (see METALS.agent), never forged solo.
+  mang: {label:'Manganese ore', note:'brittle grey, seams the soft stone; alloys iron into steel', col:'#7a7486'},
+  umbr: {label:'Umbrite ore',   note:'light-drinking violet-black; alloys voidsteel',              col:'#5b4d78'},
+  chro: {label:'Chromite ore',  note:'tier-IV; a hard lustre that alloys adamant',                 col:'#6f8a86'},
+  quin: {label:'Quintessence',  note:'tier-V; the rarest agent, alloys aether into empyrean',      col:'#ece4b6'}
 };
 /* METALS — the single source of truth for a metal's TIER, role and colour. The forge
    reads tier off here (metalTier), so the forge scales to five tiers and more metals
@@ -1687,7 +1692,27 @@ const METALS={
   vst:   {name:'Voidsteel', tier:3, agent:false},
   adamant:{name:'Adamant',  tier:4, agent:false},   // tier-IV deep strata
   aether: {name:'Aether',   tier:5, agent:false},   // tier-V, the bottom of the world
+  // one alloy agent per tier — the tin-analogue that upgrades that tier's base metal. `agent:true` is now
+  // load-bearing: alloyAgentFor(base) finds a base's canonical partner, and the forge names the pair.
+  mang:   {name:'Manganese', tier:2, agent:true},   // + iron  -> Steel
+  umbr:   {name:'Umbrite',   tier:3, agent:true},   // + voidsteel -> Umbrasteel
+  chro:   {name:'Chromite',  tier:4, agent:true},   // + adamant   -> Adamantine
+  quin:   {name:'Quintessence',tier:5, agent:true}, // + aether    -> Empyrean
 };
+// A base metal's canonical alloy agent (same tier, the tin-analogue). Data-derived so adding a metal+agent
+// pair needs no code here; tin is copper's agent even though both are tier 1.
+const ALLOY_AGENT={ copper:'tin', iron:'mang', vst:'umbr', adamant:'chro', aether:'quin' };
+function alloyAgentFor(base){ return ALLOY_AGENT[base]||null; }
+const _baseForAgent=(()=>{ const m={}; for (const b in ALLOY_AGENT) m[ALLOY_AGENT[b]]=b; return m; })();
+// The canonical alloy this metal takes part in, as {partner, alloy} — for the forge's learn-the-ladder note.
+// Works from either side: a base names its agent, an agent names its base. Defined up here (near the data)
+// but only called from renderForge, long after ALLOY_NAMES exists.
+function alloyPairing(k){
+  const partner = ALLOY_AGENT[k] || _baseForAgent[k]; if (!partner) return null;
+  const pair=[k,partner].sort().join('+');
+  const alloy=ALLOY_NAMES[pair]; if (!alloy) return null;
+  return { partner, partnerName:(METALS[partner]?METALS[partner].name:partner), alloy };
+}
 const metalTier=k=>METALS[k]?METALS[k].tier:1;
 // Ores worth showing in the forge's metal stores, ordered by tier then name.
 const FORGE_ORE_ORDER=Object.keys(METALS).sort((a,b)=>METALS[a].tier-METALS[b].tier||a.localeCompare(b));
@@ -2020,7 +2045,9 @@ const ALLOY_NAMES={ 'copper+tin':'Bronze', 'iron+vst':'Darksteel', 'copper+vst':
   'copper+iron':'Gunmetal', 'iron+tin':'Bell-metal', 'tin+vst':'Voidpewter',
   // deep-tier alloys (keys are the sorted metal-id pair)
   'adamant+vst':'Blacksteel', 'adamant+tin':'Adamantine', 'adamant+iron':'Ferradamant',
-  'adamant+aether':'Godalloy', 'aether+vst':'Voidglass', 'aether+tin':'Aetherpewter' };
+  'adamant+aether':'Godalloy', 'aether+vst':'Voidglass', 'aether+tin':'Aetherpewter',
+  // CANONICAL base + tier-agent alloys — the ladder each tier's dedicated agent makes (see ALLOY_AGENT)
+  'iron+mang':'Steel', 'umbr+vst':'Umbrasteel', 'adamant+chro':'Adamantine', 'aether+quin':'Empyrean' };
 /* THE TIN FRACTION. Bronze-family recipes (alloyBase/alloyAgent) are forged at a
    chosen tin percentage. Historically bronze is ~12% tin; the player may run
    8-20%. The fraction drives three things at once:
@@ -5500,7 +5527,11 @@ const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=
       T_MOSS=9,T_SALT=10,T_CINDER=11,T_COPPER=12,T_IRON=13,T_VST=14,
       T_CLAY=15,T_MICA=16,T_BRINE=17,T_WALL=18,T_BEDROCK=19,T_RIME=20,T_TIN=21,
       // deep tiers: S4/S5 stone, NODE4/5 cores, adamant/aether smeltable ore
-      T_S4=22,T_S5=23,T_NODE4=24,T_NODE5=25,T_ADT=26,T_AETH=27;
+      T_S4=22,T_S5=23,T_NODE4=24,T_NODE5=25,T_ADT=26,T_AETH=27,
+      // ALLOY AGENTS — one per tier's base metal, the tin-analogue that upgrades it in the crucible.
+      // Each seams its base metal's band and is deliberately rarer, so an alloy stays a gated shortcut:
+      // manganese→iron=Steel, umbrite→voidsteel=Umbrasteel, chromite→adamant=Adamantine, quintessence→aether=Empyrean.
+      T_MANG=28,T_UMBR=29,T_CHRO=30,T_QUIN=31;
 // T_CINDER / T_RIME are the ELEMENT-BIOME materials. They only generate inside a
 // fire or ice zone respectively, so possessing them is proof you were there.
 // Each is dual-purpose: a forge metal-analogue for elemental gear AND a brewing
@@ -5526,6 +5557,9 @@ const TILE_INFO={
   [T_S4]:{col:'#241f38',resist:3.4},[T_S5]:{col:'#181228',resist:4.2},
   [T_NODE4]:{col:'#3a1622',resist:3.4},[T_NODE5]:{col:'#123a37',resist:4.2},
   [T_ADT]:{col:'#4a2028',resist:3.2},[T_AETH]:{col:'#123a37',resist:4.0},
+  // alloy agents — each sits with its base metal's band, so a band's gear mines both the base and its agent
+  [T_MANG]:{col:'#34384a',resist:1.1},[T_UMBR]:{col:'#2f2a48',resist:2.2},
+  [T_CHRO]:{col:'#26302c',resist:3.3},[T_QUIN]:{col:'#3a3620',resist:4.1},
   [T_WALL]:{col:'#1c2740',resist:3.4},[T_BEDROCK]:{col:'#0a0d16',resist:999}
 };
 /* THE HARDNESS SPECTRUM — every material the player has actually LAID EYES ON,
@@ -5545,7 +5579,8 @@ const TILE_NAMES={
   [T_BRINE]:'Deep brine',[T_VST]:'Voidsteel',[T_NODE3]:'Rich node',[T_CINDER]:'Cinder scale',
   [T_S3]:'Deep stone',[T_RIME]:'Rime salt',[T_WALL]:'Gate wall',
   [T_S4]:'Abyssal stone',[T_NODE4]:'Adamant node',[T_ADT]:'Adamant',
-  [T_S5]:'Nether stone',[T_NODE5]:'Aether node',[T_AETH]:'Aether'
+  [T_S5]:'Nether stone',[T_NODE5]:'Aether node',[T_AETH]:'Aether',
+  [T_MANG]:'Manganese',[T_UMBR]:'Umbrite',[T_CHRO]:'Chromite',[T_QUIN]:'Quintessence'
 };
 // 2 = full speed, 1 = slow going, 0 = cannot break it
 function mineState(resist){
@@ -5570,10 +5605,10 @@ function hardnessSpectrum(){
    and reagents carry the band's tier so the bonus lands on everything in reach. */
 const TILE_TIER={
   [T_DIRT]:1,[T_CLAY]:1,[T_MOSS]:1,[T_COPPER]:1,[T_NODE1]:1,[T_ORE]:1,
-  [T_S1]:2,[T_IRON]:2,[T_SALT]:2,[T_NODE2]:2,[T_TIN]:2,
-  [T_S2]:3,[T_S3]:3,[T_MICA]:3,[T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_RIME]:3,
-  [T_S4]:4,[T_NODE4]:4,[T_ADT]:4,
-  [T_S5]:5,[T_NODE5]:5,[T_AETH]:5
+  [T_S1]:2,[T_IRON]:2,[T_SALT]:2,[T_NODE2]:2,[T_TIN]:2,[T_MANG]:2,
+  [T_S2]:3,[T_S3]:3,[T_MICA]:3,[T_BRINE]:3,[T_VST]:3,[T_NODE3]:3,[T_CINDER]:3,[T_RIME]:3,[T_UMBR]:3,
+  [T_S4]:4,[T_NODE4]:4,[T_ADT]:4,[T_CHRO]:4,
+  [T_S5]:5,[T_NODE5]:5,[T_AETH]:5,[T_QUIN]:5
 };
 const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
 // The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
@@ -5581,7 +5616,7 @@ const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_CINDER,T_RIME,
 // cores worth digging rather than being swamped by a ping on every scrap of ore.
 const NODE_TILE={[T_NODE1]:1,[T_NODE2]:2,[T_NODE3]:3,[T_NODE4]:4,[T_NODE5]:5};
 const RESOURCE=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_MOSS,T_SALT,T_CINDER,T_RIME,
-  T_COPPER,T_IRON,T_VST,T_ADT,T_AETH,T_CLAY,T_MICA,T_BRINE,T_TIN]);
+  T_COPPER,T_IRON,T_VST,T_ADT,T_AETH,T_CLAY,T_MICA,T_BRINE,T_TIN,T_MANG,T_UMBR,T_CHRO,T_QUIN]);
 // rolled fresh for a new run; loaded from the save when one exists
 let WORLD_SEED=(Math.random()*2**31)|0;
 // The world had almost no tin (it was band-locked and rare), so bronze was near-impossible to source.
@@ -5672,6 +5707,9 @@ const PLANET_TERRA={
   // so a material's tier matches the band it sits in — a T1 set only multi-breaks dirt, T2 the soft stone, T3
   // the hard stone. (T1 cores come from the topsoil node1 seam; they don't seam the stone.)
   deep:[
+    // ALLOY-AGENT seams, rarest and highest priority: manganese in the soft-stone (T2) band, umbrite in the
+    // banded/deep (T3) stone. Each is its tier base's tin-analogue (iron→Steel, voidsteel→Umbrasteel).
+    [0.014, (d,r,base)=> d<26 ? T_MANG : T_UMBR],
     [0.035, oreVein(0.035)],
     [0.055, d=> d<26 ? T_IRON  : T_VST],                    // iron seams the soft-stone (T2) band; voidsteel below (T3)
     [0.028, (d,r,base)=> d<26 ? T_TIN : base],              // tin runs with iron in the T2 band
@@ -5727,6 +5765,8 @@ const PLANET_FERRIC={
   // stone: voidsteel, node3, mica, brine. (Iron also seams the topsoil here — the iron-rich crust — but the
   // deep progression follows the bands.)
   deep:[
+    // alloy-agent seams (see Terra): manganese in soft stone, umbrite in the banded/deep T3 stone
+    [0.016, (d,r,base)=> d<20 ? T_MANG : T_UMBR],
     [0.045, oreVein(0.045)],
     [0.075, d=> d<20 ? T_IRON  : T_VST],                    // iron in the soft-stone (T2) band; voidsteel below (T3)
     [0.055, d=> d<20 ? T_NODE2 : T_NODE3],                  // T2 cores in the soft stone, T3 cores deeper
@@ -5857,8 +5897,12 @@ function genColumn(x){
       // ore is the concentrated payoff of a pocket; nodes (carveable cores) stay a rarer find
       const oreC =rich>0.62 ? (t4?0.28:0.32) : (t4?0.022:0.030);
       const nodeC=rich>0.62 ? (t4?0.045:0.055) : (t4?0.006:0.008);
+      // the alloy AGENT for this tier (chromite for adamant, quintessence for aether) — a thin slice of the
+      // pocket, rarer than the base ore, so the deep-tier upgrade is a find within a find.
+      const agentC=rich>0.62 ? (t4?0.05:0.055) : (t4?0.004:0.005);
       if (r<oreC) t=t4?T_ADT:T_AETH;
       else if (r<oreC+nodeC) t=t4?T_NODE4:T_NODE5;
+      else if (r<oreC+nodeC+agentC) t=t4?T_CHRO:T_QUIN;
     } else {
       const topsoil=(bio&&bio.topsoil)||p.topsoil;
       const deep=(bio&&bio.deep)||p.deep;
@@ -6573,9 +6617,13 @@ function tileYield(t,silent,coreSeed,tx,ty){
   if (t===T_COPPER){ const n=q(); metals.copper+=n; dust+=1; updateMeters(); mat('Copper',1,n,silent,tx,ty); }
   else if (t===T_IRON){ const n=q(); metals.iron+=n; dust+=1; updateMeters(); mat('Iron',2,n,silent,tx,ty); }
   else if (t===T_TIN){ const n=q(); metals.tin+=n; dust+=1; updateMeters(); mat('Tin',2,n,silent,tx,ty); }
+  else if (t===T_MANG){ const n=q(); metals.mang+=n; dust+=1; updateMeters(); mat('Manganese',2,n,silent,tx,ty); }
   else if (t===T_VST){ const n=rm(); metals.vst+=n; dust+=2; updateMeters(); mat('Voidsteel',3,n,silent,tx,ty); }
+  else if (t===T_UMBR){ const n=rm(); metals.umbr+=n; dust+=2; updateMeters(); mat('Umbrite',3,n,silent,tx,ty); }
   else if (t===T_ADT){ const n=rm(); metals.adamant+=n; dust+=2; updateMeters(); mat('Adamant',4,n,silent,tx,ty); }
+  else if (t===T_CHRO){ const n=rm(); metals.chro+=n; dust+=2; updateMeters(); mat('Chromite',4,n,silent,tx,ty); }
   else if (t===T_AETH){ const n=rm(); metals.aether+=n; dust+=3; updateMeters(); mat('Aether',5,n,silent,tx,ty); }
+  else if (t===T_QUIN){ const n=rm(); metals.quin+=n; dust+=3; updateMeters(); mat('Quintessence',5,n,silent,tx,ty); }
   else if (NODE_TILE[t]){
     const tier=NODE_TILE[t];
     inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
@@ -6971,7 +7019,12 @@ const METAL_PAL={
   [T_IRON]  :['#e6ebf4','#aab4c8','#6f7a92','#3a4356'],
   [T_VST]   :['#c9b8ff','#8b7cd0','#5a4b90','#2a2148'],
   [T_ADT]   :['#ffb0bc','#d9586a','#a83048','#5f1826'],   // adamant — deep red
-  [T_AETH]  :['#b0fff2','#4fd6c4','#2a9a90','#0f4a45']     // aether — luminous teal
+  [T_AETH]  :['#b0fff2','#4fd6c4','#2a9a90','#0f4a45'],    // aether — luminous teal
+  // alloy agents — flecks tinted toward each agent's identity so they read distinct in the seam
+  [T_MANG]  :['#d8d2e0','#9a94a8','#6b6478','#3a3646'],   // manganese — brittle grey-violet
+  [T_UMBR]  :['#b9a8e0','#7a68a8','#4a3d70','#241d40'],   // umbrite — light-drinking violet
+  [T_CHRO]  :['#cfe6df','#7fa89e','#4f6f68','#243834'],   // chromite — hard green lustre
+  [T_QUIN]  :['#fff7d0','#e8dc9a','#b0a060','#5f5828']    // quintessence — pale luminous gold
 };
 
 // ---------- overworld tile bake cache ----------
@@ -7879,7 +7932,10 @@ function renderForge(){
   const ol=document.getElementById('forgeOreList');
   if (ol) ol.innerHTML=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,note:''};
     const locked=!forgeMetalOwned(k);   // tier-IV/V metals until the Adamant/Aether Forge is recovered
-    const note=locked?`<span style="color:var(--brass)">sealed — needs the ${metalTier(k)===5?'Aether':'Adamant'} Forge (ancient cache)</span>`:oi.note;
+    // learn-the-ladder: show each metal's canonical alloy partner (base names its agent, agent names its base)
+    const pr=alloyPairing(k);
+    const ladder = (!locked && pr) ? ` <span style="color:var(--crystal)">+ ${pr.partnerName} → ${pr.alloy}</span>` : '';
+    const note=locked?`<span style="color:var(--brass)">sealed — needs the ${metalTier(k)===5?'Aether':'Adamant'} Forge (ancient cache)</span>`:oi.note+ladder;
     return `<div class="card t${metalTier(k)}"${locked?' style="opacity:.5"':''}><div class="info">${oi.label}<div class="sub">${note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
   }).join('');
   // the tin slider shows only when a bronze recipe is available to forge
@@ -8842,22 +8898,31 @@ const FORGE_LOCK_COL={
   1:new THREE.Color(0x9fb2cc),   // tin -> frozen pewter
   2:new THREE.Color(0x3a4a6a),   // iron -> frozen dark steel
   3:new THREE.Color(0x6a4fb2),   // voidsteel -> frozen violet
+  6:new THREE.Color(0x5f5870),   // manganese -> frozen grey-violet
+  7:new THREE.Color(0x3d3260),   // umbrite -> frozen deep violet
+  8:new THREE.Color(0x3f5f58),   // chromite -> frozen green
+  10:new THREE.Color(0x8f8850),  // quintessence -> frozen gold
   9:F_LOCK_ALLOY,                // crucible alloy
 };
 // Metal render id stored per cell in fgMetal (0 = copper framework default). A fed ore
 // nugget carries its own id; the crucible blend uses FORGE_ALLOY_ID. Each id has a SET
 // colour — how the metal reads once cooled — so a mixed feed shows its constituents and
 // the alloy housing reads apart from the copper.
-const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3, adamant:4, aether:5};
+// ids 6/7/8/10 are the alloy AGENTS (9 is reserved for the crucible alloy blend)
+const FORGE_METAL_ID={copper:0, tin:1, iron:2, vst:3, adamant:4, aether:5, mang:6, umbr:7, chro:8, quin:10};
 const FORGE_ALLOY_ID=9;
 const forgeMetalId=k=>FORGE_METAL_ID[k]!==undefined?FORGE_METAL_ID[k]:0;
-const ID_TO_METAL={0:'copper',1:'tin',2:'iron',3:'vst',4:'adamant',5:'aether'};   // reverse of FORGE_METAL_ID (for material derivation)
+const ID_TO_METAL={0:'copper',1:'tin',2:'iron',3:'vst',4:'adamant',5:'aether',6:'mang',7:'umbr',8:'chro',10:'quin'};   // reverse of FORGE_METAL_ID (for material derivation)
 const FORGE_METAL_SET={
   1:new THREE.Color(0xc2ccd6),        // tin  -> bright pewter
   2:new THREE.Color(0x59657a),        // iron -> dark steel
   3:new THREE.Color(0x7a5bc0),        // voidsteel -> void violet
   4:new THREE.Color(0xc8586a),        // adamant -> deep red
   5:new THREE.Color(0x4fd6c4),        // aether -> luminous teal
+  6:new THREE.Color(0x8a83a0),        // manganese -> grey-violet
+  7:new THREE.Color(0x5a4a88),        // umbrite -> deep violet
+  8:new THREE.Color(0x6f9a8e),        // chromite -> green lustre
+  10:new THREE.Color(0xe8dc9a),       // quintessence -> pale gold
 };
 // Incandescence ramp: what a heating patch looks like as temperature climbs, and —
 // run backwards as it cools — how it fades. Cold raw ore is dark copper; heat drives
@@ -11957,7 +12022,7 @@ addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); }
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=21;  // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=22;  // v22: per-tier alloy agents (manganese/umbrite/chromite/quintessence) — new ore tiles change virgin gen   // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
