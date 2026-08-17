@@ -1929,7 +1929,7 @@ function mineSpeed(resist, tier){
   const rr=r*(1+RESONANCE_MAX*frameResonance());
   return Math.min(OVERKILL_MAX,Math.pow(rr,OVERKILL_EXP));
 }
-function scanRange(){ if (!owned('scanner')) return 0; const o=suitOutput('coil'); return o?3+suitTier('coil')*2+o*4:0; }   // scanner is a cache unlock
+function scanRange(){ if (!owned('scanner')) return 0; const o=suitOutput('coil'); return o?3+suitTier('coil')*2+o*4+scanBonus():0; }   // scanner + range plates are cache unlocks
 // Ward Prism → elemental burn resistance. Aegis Torus → impact/melee armor.
 // Both cap well under 1 so the suit is never invulnerable.
 function wardResist(){ const o=suitOutput('forgePrism'); return o?Math.min(0.6,0.15+0.45*o):0; }
@@ -2941,8 +2941,10 @@ const unlocks=new Set();                       // tool keys the player has recov
 function owned(k){ return adminOn || unlocks.has(k); }
 const UNLOCK_POOL={                            // which cache tier yields which tool, in grant order
   1:['facet','sand','jet','brewing','scanner'],
-  2:['polish','brine'],
-  3:[], 4:[], 5:[]
+  2:['polish','brine','facet2'],
+  3:['facet5','polish2','tank2','scan2'],
+  4:['adamantForge','polish5','scan3'],
+  5:['aetherForge','tank3']
 };
 const UNLOCK_INFO={
   facet:  {label:'Faceting Saw',   note:'the twin-blade saw — split the grain finer'},
@@ -2951,12 +2953,30 @@ const UNLOCK_INFO={
   sand:   {label:'Sandblast',      note:'an abrasive jet — refines the grain wherever it touches'},
   brine:  {label:'Brine Jet',      note:'the deep-strata blast — enough charge for a tier-III rind'},
   brewing:{label:'Brewing Kit',    note:'mortar & calcinator — brew your own solvents from core powder'},
-  scanner:{label:'Scanner',        note:'pings cores through the rock so you can steer to them'}
+  scanner:{label:'Scanner',        note:'pings cores through the rock so you can steer to them'},
+  // higher-tier UPGRADES — plates that speed a bench, wider tanks, deeper scanner, deep-metal forging
+  facet2: {label:'Faceting 2× plate',  note:'the saw closes twice as fast'},
+  facet5: {label:'Faceting 5× plate',  note:'the saw closes five times as fast'},
+  polish2:{label:'Polishing 2× plate', note:'the lap laps twice as fast'},
+  polish5:{label:'Polishing 5× plate', note:'the lap laps five times as fast'},
+  tank2:  {label:'Tank Capacity II',   note:'jet / brine / sand tanks hold twice as much charge'},
+  tank3:  {label:'Tank Capacity III',  note:'jet / brine / sand tanks hold three times as much charge'},
+  scan2:  {label:'Scanner Range II',   note:'the scanner reaches deeper'},
+  scan3:  {label:'Scanner Range III',  note:'the scanner reaches deeper still'},
+  adamantForge:{label:'Adamant Forge', note:'the press can take tier-IV adamant heat'},
+  aetherForge: {label:'Aether Forge',  note:'the press can take tier-V aether heat'}
 };
 function applyUnlock(k){                        // flip the concrete switch a tool reads (beyond owned())
   if (k==='facet') MACHINES.facet.unlocked=true;
   else if (k==='polish') MACHINES.polish.unlocked=true;
 }
+// Upgrade multipliers, all read live from the ledger (admin owns them via owned()).
+function facetSpeedMax(){ return owned('facet5')?5 : owned('facet2')?2 : 1; }   // fastest saw speed available
+function polishMult(){    return owned('polish5')?5 : owned('polish2')?2 : 1; }  // lap ticks per cooldown
+function tankCapMult(){   return owned('tank3')?3 : owned('tank2')?2 : 1; }      // jet/brine/sand tank size
+function scanBonus(){     return (owned('scan2')?4:0)+(owned('scan3')?5:0); }    // extra scanner tiles
+function forgeMetalOwned(k){ const t=metalTier(k);                              // deep metals need the forge unlock
+  return t<4 || (t===4?owned('adamantForge'):owned('aetherForge')); }
 function grantUnlock(k){ unlocks.add(k); applyUnlock(k); }
 function unlockAll(){ for (const t in UNLOCK_POOL) for (const k of UNLOCK_POOL[t]) grantUnlock(k); }   // admin
 // The next reward a tier-N cache pays: the next unowned tool from its pool, else materials.
@@ -3482,7 +3502,7 @@ const SAW_SPEED=1.1;             // world units per second
    not the cut rate, not the power cost — only how fast you arrive. */
 const SAW_SPEEDS=[1,2,5];
 let sawSpeedIdx=0;
-const benchSpeed=()=>(view==='facet')?SAW_SPEEDS[sawSpeedIdx]:1;
+const benchSpeed=()=>(view==='facet')?Math.min(SAW_SPEEDS[sawSpeedIdx],facetSpeedMax()):1;   // 2x/5x are cache plates
 const SAW_MIN=0.12;
 
 function sawCentre(){ return sawAxis==='x'?gx:gy; }
@@ -3853,6 +3873,7 @@ const TANKS={
   sand: {recipe:'sand',     per:300, cap:900, label:'Sandblast'}
 };
 const tank={jet:0, brine:0, sand:0};          // current charge, persisted
+function tankCap(id){ return Math.round(TANKS[id].cap*tankCapMult()); }   // base × Tank Capacity II/III cache plates
 // Brew one bottle of a potion straight into its tank, if the reagents are there.
 function fillTank(id){
   const T=TANKS[id]; if (!T) return false;
@@ -3864,7 +3885,7 @@ function fillTank(id){
     }
   }
   for (const k in rec.needs) ingSpend(k,rec.needs[k]);
-  tank[id]=Math.min(T.cap,tank[id]+T.per);
+  tank[id]=Math.min(tankCap(id),tank[id]+T.per);
   updateMeters(); updateStock();
   say(`${T.label} tank topped up: ${tank[id]} charge.`,'good');
   return true;
@@ -3917,7 +3938,7 @@ function updateJetBar(){
     if (!wrap||!fill) continue;
     const show=jetArmed && jetSelected();
     wrap.style.display=show?'flex':'none';
-    const pct=infinite?100:Math.max(0,Math.min(100,(tank[jetTankId()]/TANKS[jetTankId()].cap)*100));
+    const pct=infinite?100:Math.max(0,Math.min(100,(tank[jetTankId()]/tankCap(jetTankId()))*100));
     fill.style.width=pct+'%';
     fill.style.background=pct<25?'linear-gradient(90deg,#e88b3f,#e8c04f)':'linear-gradient(90deg,#3fa9e8,#4fe3c1)';
   }
@@ -4275,7 +4296,7 @@ function updatePolishHud(){
 // one lap tick: mirror every exposed, unpolished face on the shards under the
 // cursor. Marks ALL open faces of a touched shard so a swept core fills in.
 function polishAt(x,y,now){
-  if (now-lastPolish<POLISH_CD) return;
+  if (now-lastPolish<POLISH_CD/polishMult()) return;   // 2x/5x are cache plates
   if (view!=='polish'||!activeCore) return;
   const infinite=tut.on||adminOn;
   if (dust<POLISH_DUST_PER&&!infinite){ say('No dust for the slurry.','warn'); polishing=false; return; }
@@ -7663,7 +7684,9 @@ function renderForge(){
   // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
   const ol=document.getElementById('forgeOreList');
   if (ol) ol.innerHTML=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,note:''};
-    return `<div class="card t${metalTier(k)}"><div class="info">${oi.label}<div class="sub">${oi.note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
+    const locked=!forgeMetalOwned(k);   // tier-IV/V metals until the Adamant/Aether Forge is recovered
+    const note=locked?`<span style="color:var(--brass)">sealed — needs the ${metalTier(k)===5?'Aether':'Adamant'} Forge (ancient cache)</span>`:oi.note;
+    return `<div class="card t${metalTier(k)}"${locked?' style="opacity:.5"':''}><div class="info">${oi.label}<div class="sub">${note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
   }).join('');
   // the tin slider shows only when a bronze recipe is available to forge
   const hasBronze=FORGE_TEMPLATES.some(m=>m.alloyBase);
@@ -9681,6 +9704,8 @@ function forgeFeedReserved(k){ let n=0; for (const f of forgeFeed) if (!f.used&&
 function forgeAddFeed(metalKey){
   const cap=forgeOreCount();
   if (forgeFeed.length>=cap){ say('The feed is full ('+cap+' ore).','warn'); return; }
+  if (!forgeMetalOwned(metalKey)){                 // tier-IV/V metals need the Adamant/Aether Forge unlock
+    say(`The press can't take ${ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey} yet — recover the ${metalTier(metalKey)===5?'Aether':'Adamant'} Forge from an ancient cache.`,'warn'); return; }
   if (!adminOn && (metals[metalKey]||0)<=forgeFeedReserved(metalKey)){
     say('No more '+(ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey)+' in stores.','warn'); return; }
   forgeFeed.push({metal:metalKey,used:false}); renderForgeFeed(); updateForgeHud();
@@ -10157,7 +10182,7 @@ function brewFinish(){
   const gear=brewGearFactor();
   const potency=grade*(0.4+0.6*skill)*(0.5+0.5*gear);
   potionStr[pt.id]=Math.max(potionStr[pt.id]||0, potency);
-  if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(T.cap, tank[pt.tank]+Math.round(T.per*(0.5+0.7*skill))); }
+  if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(tankCap(pt.tank), tank[pt.tank]+Math.round(T.per*(0.5+0.7*skill))); }
   else { potions[pt.id]=(potions[pt.id]||0)+1; }
   updateMeters(); updateStock();
   say(`${pt.label} brewed — potency ${potency.toFixed(1)} (grade T${Math.round(grade)} · ${Math.round(skill*100)}% craft · ${Math.round(gear*100)}% gear).`,'good');
@@ -10451,7 +10476,7 @@ function renderBrewStores(){
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
   el.innerHTML=BREW_POTIONS.map(pt=>{
     const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
-    const held=pt.tank?`${tank[pt.tank]}/${TANKS[pt.tank].cap} in tank`:`× ${potions[pt.id]||0} held`;
+    const held=pt.tank?`${tank[pt.tank]}/${tankCap(pt.tank)} in tank`:`× ${potions[pt.id]||0} held`;
     const strength=potionStr[pt.id]?`best potency ×${potionStr[pt.id].toFixed(1)}`:'never brewed';
     return `<div class="card" style="display:flex;justify-content:space-between;align-items:center">
       <div class="info"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)};margin-right:6px"></span>${pt.label}
@@ -11476,7 +11501,8 @@ document.getElementById('tinSlider').oninput=e=>{
   renderForge();                 // cost and quality shift with the fraction
 };
 document.getElementById('sawSpeedBtn').onclick=()=>{
-  sawSpeedIdx=(sawSpeedIdx+1)%SAW_SPEEDS.length;
+  const max=facetSpeedMax();                    // only cycle through speed plates you've recovered
+  do { sawSpeedIdx=(sawSpeedIdx+1)%SAW_SPEEDS.length; } while (SAW_SPEEDS[sawSpeedIdx]>max);
   const m=SAW_SPEEDS[sawSpeedIdx];
   document.querySelector('#sawSpeedBtn b').textContent=m+'×';
   document.getElementById('sawSpeedBtn').classList.toggle('lit',m>1);
