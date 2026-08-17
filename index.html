@@ -6389,9 +6389,20 @@ function digAim(){
   const dirX = keys.right?1:keys.left?-1:0;
   const dirY = keys.down?1:keys.jump?-1:0;
   const col=Math.floor(player.x);
-  if (dirY>0) return {tx:col+dirX, ty:Math.floor(player.y+0.35)};      // down: the floor tile under the body
-  if (dirY<0) return {tx:col+dirX, ty:Math.floor(player.y-1.05)};      // up: the tile ABOVE the head (‑0.95 hit the body's own tile, which is air in a shaft, so nothing mined)
-  return {tx:col+(dirX||player.face), ty:Math.floor(player.y-0.45)};   // horizontal (dir, else facing)
+  // Erosion is traversable, so the player advances INTO the half-drilled block — its own cell now
+  // holds the remaining rock. So prefer FINISHING the cell the player occupies (feet/head/body) when
+  // it still has rock, and only step to the neighbour when that cell is open air. Otherwise standing
+  // up to the leftover half would target the block BEHIND it.
+  if (dirY>0){                                                          // DOWN
+    const tx=col+dirX, feet=Math.floor(player.y-0.001);
+    return getTile(tx,feet)!==T_AIR ? {tx,ty:feet} : {tx,ty:feet+1};    // finish the block underfoot, else the floor below
+  }
+  if (dirY<0){                                                          // UP
+    const tx=col+dirX, head=Math.floor(player.y-0.95);
+    return getTile(tx,head)!==T_AIR ? {tx,ty:head} : {tx,ty:head-1};    // finish the block at the head, else the ceiling above
+  }
+  const f=dirX||player.face, ty=Math.floor(player.y-0.45);              // HORIZONTAL
+  return getTile(col,ty)!==T_AIR ? {tx:col,ty} : {tx:col+f,ty};         // finish the block you're standing in, else the wall ahead
 }
 let lastDigDir='';   // held dig direction last frame; a change lets the aim move to a new tile mid-dig
 function stepPlayer(dt){
