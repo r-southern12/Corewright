@@ -283,7 +283,9 @@
   #pad button span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#c9a45c}
   /* SCAN / BLAST — round machined-brass control knobs, right edge above the drill compass. Same instrument
      bezel as the pad knobs; icons are inline SVG so they stay crisp. */
-  #fieldActions{position:fixed;right:30px;bottom:224px;z-index:8;display:none;gap:16px;pointer-events:auto}
+  /* Centred over the drill: drill is right:16 + 200/2 = 116px from the edge; the 64+16+64 pair is 144 wide,
+     so right = 116 - 72 = 44px lines their shared centre up with the compass centre. */
+  #fieldActions{position:fixed;right:44px;bottom:230px;z-index:8;display:none;gap:16px;pointer-events:auto}
   #fieldActions.on{display:flex}
   #fieldActions button{position:relative;width:64px;height:64px;border-radius:50%;padding:0;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer;
@@ -295,7 +297,12 @@
   #fieldActions button span{font-size:9px;letter-spacing:.14em;color:#c9a45c;font-family:'Courier New',monospace}
   #k_scan{color:var(--crystal)} #k_scan svg{stroke:var(--crystal);fill:none;filter:drop-shadow(0 0 4px rgba(79,227,193,.55))}
   #k_throw{color:var(--amber)} #k_throw svg{fill:var(--amber);stroke:none;filter:drop-shadow(0 0 4px rgba(232,163,61,.55))}
-  #blastCount{position:absolute;top:4px;right:8px;font-size:11px;color:#f2d78e;font-family:'Courier New',monospace}
+  /* A proper brass ammo badge on the blast knob — a milled disc with the phial count, not a bare digit. */
+  #blastCount{position:absolute;top:-5px;right:-5px;min-width:20px;height:20px;padding:0 4px;box-sizing:border-box;
+    display:flex;align-items:center;justify-content:center;font:bold 11px 'Courier New',monospace;color:#1a1206;
+    background:radial-gradient(circle at 38% 30%,#f7e6a8,#caa24f 68%,#8a5f2c);border:1.5px solid #3a280f;border-radius:50%;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 4px rgba(0,0,0,.6)}
+  #blastCount:empty{display:none}
   #hudClusterCv{cursor:pointer;touch-action:none;user-select:none}
   #expedHud{position:fixed;bottom:142px;left:18%;right:18%;text-align:center;z-index:8;display:none;
     font-size:13px;color:var(--dim);font-style:italic}
