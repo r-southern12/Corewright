@@ -283,7 +283,7 @@
   #pad button span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#c9a45c}
   /* SCAN / BLAST — round machined-brass control knobs, right edge above the drill compass. Same instrument
      bezel as the pad knobs; icons are inline SVG so they stay crisp. */
-  #fieldActions{position:fixed;right:26px;bottom:344px;z-index:8;display:none;gap:14px;pointer-events:auto}
+  #fieldActions{position:fixed;right:30px;bottom:224px;z-index:8;display:none;gap:16px;pointer-events:auto}
   #fieldActions.on{display:flex}
   #fieldActions button{position:relative;width:64px;height:64px;border-radius:50%;padding:0;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer;
@@ -325,19 +325,22 @@
      seat-gauge idiom), replacing the italic hp/dust/power/air/drill text strip while underground.
      Two opposite corners chamfered (machined plate, not a div); inset highlight + drop edge for
      thickness; one warm light from top-left. */
-  /* DRILL radial — bottom-right, the centrepiece field control. */
-  #hudCluster{position:fixed;bottom:150px;right:22px;z-index:8;display:none;padding:4px 6px 5px;
-    background:linear-gradient(158deg,#d9cfb6 0 2.5%,#8b8374 3.5%,#20263a 8% 90%,#121728 100%);
-    border:1px solid #8f6938;clip-path:polygon(11px 0,100% 0,100% calc(100% - 11px),calc(100% - 11px) 100%,0 100%,0 11px);
-    box-shadow:inset 0 1px 0 rgba(255,235,190,.16),inset 0 0 0 2px #111725,0 5px 20px #0009}
+  /* The field HUD FLOATS on the scene — no hard chamfered plates. A single soft organic vignette darkens the
+     bottom-right corner so the instruments stay legible over bright terrain, exactly the reference's look. */
+  #hudGlow{position:fixed;right:0;bottom:0;width:560px;height:600px;z-index:7;display:none;pointer-events:none;
+    background:radial-gradient(125% 100% at 82% 88%, rgba(6,10,16,0.93) 0%, rgba(6,10,16,0.66) 40%, rgba(6,10,16,0) 72%)}
+  #hudGlow.on{display:block}
+  /* A matching soft wash under the top-right condition bank. */
+  #condGlow{position:fixed;right:0;top:0;width:340px;height:170px;z-index:7;display:none;pointer-events:none;
+    background:radial-gradient(130% 130% at 88% 0%, rgba(6,10,16,0.88) 0%, rgba(6,10,16,0.5) 46%, rgba(6,10,16,0) 74%)}
+  #condGlow.on{display:block}
+  /* DRILL compass — flush to the bottom-right corner, filling the dead space. No plate. */
+  #hudCluster{position:fixed;bottom:10px;right:16px;z-index:8;display:none}
   #hudCluster.on{display:block}
-  /* Player CONDITION — upper-right, replacing the italic meters strip on expedition. */
-  #condHud{position:fixed;top:50px;right:22px;z-index:8;display:none;padding:4px 8px 5px;
-    background:linear-gradient(158deg,#d9cfb6 0 3%,#8b8374 4.5%,#20263a 10% 90%,#121728 100%);
-    border:1px solid #8f6938;clip-path:polygon(11px 0,100% 0,100% calc(100% - 11px),calc(100% - 11px) 100%,0 100%,0 11px);
-    box-shadow:inset 0 1px 0 rgba(255,235,190,.16),inset 0 0 0 2px #111725,0 5px 20px #0009}
-  #condHud.on{display:block}
   #hudCluster canvas{display:block}
+  /* Player CONDITION — top-right, floating. */
+  #condHud{position:fixed;top:16px;right:16px;z-index:8;display:none}
+  #condHud.on{display:block}
 
   #dev{position:fixed;left:6px;top:120px;z-index:11;display:none;
     font-family:'Courier New',monospace;font-size:9px;line-height:1.45;
@@ -1092,6 +1095,10 @@
 </div>
 <div id="expedHud">depth <b id="depthVal">0m</b> · stick to move &amp; aim · <b>⛏</b> hold to mine · <b>◎</b> blast</div>
 
+<!-- Soft organic vignettes the floating field HUD sits on (no hard plates). -->
+<div id="hudGlow"></div>
+<div id="condGlow"></div>
+
 <!-- Player CONDITION (upper-right): health / oxygen / suit-temperature dial gauges (drawCondHud). -->
 <div id="condHud"><canvas id="condCv" width="468" height="184" style="width:234px;height:92px"></canvas></div>
 
@@ -1107,7 +1114,7 @@
 </div>
 
 <!-- DRILL compass — the centrepiece field control; a VISUAL replacement for the Mine button (drawHudCluster). -->
-<div id="hudCluster"><canvas id="hudClusterCv" width="360" height="360" style="width:180px;height:180px"></canvas></div>
+<div id="hudCluster"><canvas id="hudClusterCv" width="400" height="400" style="width:200px;height:200px"></canvas></div>
 
 <!-- Consumable pack: one-time cache finds usable in the field (Bore / Render / Lodestone). -->
 <div id="pack"></div>
@@ -2310,6 +2317,82 @@ function drawHudCluster(){
   const c=cv.getContext('2d'), W=cv.width, H=cv.height;
   c.clearRect(0,0,W,H); c.textBaseline='alphabetic';
   drawDrillDial(c, W/2, H/2, W*0.44, press);
+}
+// A holographic targeting reticle: corner brackets + edge diamonds around a tile cell. No fill.
+function _drawReticle(ctx,bx,by,S,col,t){
+  ctx.save(); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=2; ctx.lineCap='round';
+  const m=S*0.30, o=3, pulse=0.6+0.4*Math.abs(Math.sin(t*0.005));
+  ctx.globalAlpha=pulse;
+  for(const [x,y,sx,sy] of [[bx-o,by-o,1,1],[bx+S+o,by-o,-1,1],[bx-o,by+S+o,1,-1],[bx+S+o,by+S+o,-1,-1]]){
+    ctx.beginPath(); ctx.moveTo(x+sx*m,y); ctx.lineTo(x,y); ctx.lineTo(x,y+sy*m); ctx.stroke(); }
+  const cxp=bx+S/2, cyp=by+S/2, d=3;
+  for(const [mx,my] of [[cxp,by-o],[cxp,by+S+o],[bx-o,cyp],[bx+S+o,cyp]]){
+    ctx.beginPath(); ctx.moveTo(mx,my-d); ctx.lineTo(mx+d,my); ctx.lineTo(mx,my+d); ctx.lineTo(mx-d,my); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+// Small drill glyph for the "needs a better drill" graphic (a downward gold/red bit).
+function _glyphDrill(ctx,cx,cy,s,col){
+  ctx.save(); ctx.fillStyle=col; ctx.strokeStyle=col; ctx.lineWidth=Math.max(1,s*0.12); ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(cx,cy+s*0.6); ctx.lineTo(cx+s*0.42,cy-s*0.2); ctx.lineTo(cx-s*0.42,cy-s*0.2); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.rect(cx-s*0.3,cy-s*0.6,s*0.6,s*0.4); ctx.fill();
+  ctx.restore();
+}
+// VEIN CALLOUT — the tile UNDER THE CURSOR, as a holographic bracket panel (thin cyan frame, transparent
+// interior — never a solid plate). Shows the material + tier, and when it can't be mined, a graphic of the
+// gear needed: the required drill tier in red with an up-chevron, plus a readiness bar. Drawn on world2d.
+function drawVeinCallout(ctx,now){
+  if (!aim || aim.x==null) return;
+  const tx=Math.floor((aim.x+camX)/TS), ty=Math.floor((aim.y+camY)/TS);
+  if (ty<0||ty>=WH) return;
+  // only the near field — you ID what's in reach, and this also skips the default (0,0) cursor in the corner
+  const pdx=tx-player.x, pdy=ty-(player.y-0.5); if (pdx*pdx+pdy*pdy > 150) return;
+  const t=getTile(tx,ty);
+  if (t===T_AIR||t===T_BEDROCK) return;
+  const name=TILE_NAMES[t]; if(!name) return;
+  const tier=TILE_TIER[t]||0, resist=(TILE_INFO[t]||{}).resist||1, P=drillPower();
+  const gated = tier && P < (TIER_GATE[tier]||0);
+  const r = resist? P/resist : 1;
+  const state = gated ? 'locked' : r>=0.95 ? 'full' : r>=0.60 ? 'slow' : 'weak';
+  const col = state==='full'?'#4FE3C1' : state==='slow'?'#E8A33D' : '#E0523D';
+  const bx=tx*TS-camX, by=ty*TS-camY;
+  _drawReticle(ctx,bx,by,TS,col,now);
+  // panel: to the right of the tile, flipped left near the screen edge, clamped on-screen
+  const PW=196, PH=96, gap=16;
+  let px = bx+TS+gap, flip=false;
+  if (px+PW > world2d.width-8){ px = bx-gap-PW; flip=true; }
+  let py = Math.max(8, Math.min(world2d.height-PH-8, by+TS/2-PH/2));
+  ctx.save();
+  // connector from reticle to panel
+  ctx.strokeStyle=`rgba(79,227,193,0.5)`; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(flip?bx:bx+TS, by+TS/2); ctx.lineTo(flip?px+PW:px, py+PH/2); ctx.stroke();
+  // faint holographic fill (NOT opaque)
+  ctx.fillStyle='rgba(8,22,22,0.42)'; ctx.fillRect(px,py,PW,PH);
+  // thin frame + bright corner brackets
+  ctx.strokeStyle='rgba(79,227,193,0.28)'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,PW-1,PH-1);
+  ctx.strokeStyle='#4FE3C1'; ctx.lineWidth=2; ctx.lineCap='round'; const bl=16;
+  for(const [x,y,sx,sy] of [[px,py,1,1],[px+PW,py,-1,1],[px,py+PH,1,-1],[px+PW,py+PH,-1,-1]]){
+    ctx.beginPath(); ctx.moveTo(x+sx*bl,y); ctx.lineTo(x,y); ctx.lineTo(x,y+sy*bl); ctx.stroke(); }
+  // content
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#4FE3C1'; ctx.font='bold 15px Georgia'; ctx.fillText(name.toUpperCase(), px+14, py+26);
+  ctx.fillStyle='rgba(140,205,195,0.75)'; ctx.font='12px "Courier New",monospace'; ctx.fillText('TIER '+(_ROMAN[tier]||tier||'—'), px+14, py+43);
+  ctx.strokeStyle='rgba(79,227,193,0.25)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(px+14,py+52); ctx.lineTo(px+PW-14,py+52); ctx.stroke();
+  // status row
+  if (state==='locked'){
+    _glyphDrill(ctx, px+24, py+72, 9, '#E0523D');
+    ctx.fillStyle='#E0523D'; ctx.font='bold 12px Georgia'; ctx.fillText('▲ DRILL TIER '+(_ROMAN[tier]||tier), px+40, py+72);
+    ctx.fillStyle='rgba(224,82,61,0.7)'; ctx.font='10px "Courier New",monospace'; ctx.fillText('gear up to breach', px+40, py+86);
+  } else {
+    // readiness bar
+    const barX=px+14, barY=py+64, barW=PW-28, barH=9, f=Math.max(0,Math.min(1,r/1.05));
+    ctx.fillStyle='rgba(120,140,150,0.2)'; ctx.fillRect(barX,barY,barW,barH);
+    ctx.fillStyle=col; ctx.fillRect(barX,barY,barW*f,barH);
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.strokeRect(barX+0.5,barY+0.5,barW-1,barH-1);
+    ctx.fillStyle=col; ctx.font='bold 11px "Courier New",monospace';
+    ctx.fillText(state==='full'?'MINABLE':state==='slow'?'SLOW GOING':'UNDERPOWERED', barX, py+88);
+    ctx.textAlign='right'; ctx.fillText(Math.round(r*100)+'%', barX+barW, py+88); ctx.textAlign='left';
+  }
+  ctx.restore();
 }
 function gainDust(shards){ dust+=shards*(activeCore?TIERS[activeCore.tier].dustPer:1); updateMeters(); }
 function drawPower(cost){
@@ -7874,6 +7957,8 @@ function drawWorld(now){
   { const vg=ctx.createRadialGradient(w*0.5,h*0.52,Math.min(w,h)*0.32,w*0.5,h*0.52,Math.max(w,h)*0.72);
     vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(2,4,10,0.55)');
     ctx.fillStyle=vg; ctx.fillRect(0,0,w,h); }
+
+  drawVeinCallout(ctx,now);   // holographic ID of the tile under the cursor, on top of the scene
 }
 
 /* ============================================================
@@ -11626,6 +11711,8 @@ function showView(name){
   document.getElementById('hudCluster').classList.toggle('on',isExped);
   document.getElementById('condHud').classList.toggle('on',isExped);
   document.getElementById('fieldActions').classList.toggle('on',isExped);
+  document.getElementById('hudGlow').classList.toggle('on',isExped);
+  document.getElementById('condGlow').classList.toggle('on',isExped);
   document.getElementById('expedHud').classList.toggle('on',isExped);
   renderPack();                                          // field consumables ride the expedition HUD
   document.getElementById('nudge').classList.remove('on');
