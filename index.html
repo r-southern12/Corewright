@@ -6949,123 +6949,230 @@ function stepPlayer(dt){
 /* Placeholder lab art. Each wing is drawn procedurally at exactly the size a
    sprite will occupy (2x2 tiles), so swapping in real artwork later is a texture
    draw at the same rect and nothing else moves. */
-// ---- procedural machinery silhouettes glimpsed through each wing window (drawn in a local frame) ----
+// ========================= DEPLOYED LAB — detailed procedural sprite =========================
+// A pressure-sealed modular hull rendered at the character model's level of detail: weathered bone plating
+// with heavy dark-metal framing, brass corner brackets, rivets and engraved arcane circles; a busy pipework
+// roof (power-core dome, smokestack, valve wheels, antenna); a vault airlock with a real staircase and rail;
+// hydraulic landing legs; and four reinforced window bays each showing detailed backlit machinery. Footprint
+// unchanged (8x4 tiles / 4 two-tile bays), so clickLabWing / landing / save are untouched — this is the sprite.
+const _STEEL=['#c6cbd4','#7a8290','#3f4652','#20242c'];   // hi, lit, body, shadow
+function _steelLin(c,x0,y0,x1,y1){ const g=c.createLinearGradient(x0,y0,x1,y1);
+  g.addColorStop(0,'#c6cbd4'); g.addColorStop(0.4,'#828a98'); g.addColorStop(0.75,'#4a515d'); g.addColorStop(1,'#262b34'); return g; }
+function _labBolt(c,x,y,r){ c.fillStyle='#2e2a20'; c.beginPath(); c.arc(x,y,r,0,7); c.fill();
+  c.fillStyle='#b9ad8a'; c.beginPath(); c.arc(x-r*0.28,y-r*0.28,r*0.5,0,7); c.fill(); }
+function _labRivets(c,x0,y0,x1,y1,step,r){ const dx=x1-x0,dy=y1-y0,n=Math.max(1,Math.round(Math.hypot(dx,dy)/step));
+  for(let i=0;i<=n;i++) _labBolt(c,x0+dx*i/n,y0+dy*i/n,r); }
+function _labPipe(c,pts,wd,col){ c.lineCap='round'; c.lineJoin='round';
+  c.strokeStyle='#4a3216'; c.lineWidth=wd; c.beginPath(); c.moveTo(pts[0],pts[1]); for(let i=2;i<pts.length;i+=2) c.lineTo(pts[i],pts[i+1]); c.stroke();
+  c.strokeStyle=col||'#c9a24f'; c.lineWidth=Math.max(1,wd*0.5); c.beginPath(); c.moveTo(pts[0],pts[1]); for(let i=2;i<pts.length;i+=2) c.lineTo(pts[i],pts[i+1]); c.stroke(); }
+function _labValve(c,x,y,r){ c.strokeStyle='#5a3f1e'; c.lineWidth=Math.max(1.5,r*0.24); c.beginPath(); c.arc(x,y,r,0,7); c.stroke();
+  c.strokeStyle='#caa24f'; c.lineWidth=Math.max(1,r*0.16); for(let k=0;k<6;k++){const a=k*Math.PI/3; c.beginPath(); c.moveTo(x,y); c.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r); c.stroke();}
+  c.fillStyle='#8a5f2c'; c.beginPath(); c.arc(x,y,r*0.3,0,7); c.fill(); }
+function _labGear(c,x,y,r,teeth,col,dk){ c.save(); c.translate(x,y);
+  c.fillStyle=dk; for(let i=0;i<teeth;i++){ c.save(); c.rotate(i/teeth*Math.PI*2); c.fillRect(-r*0.17,-r*1.16,r*0.34,r*0.34); c.restore(); }
+  c.beginPath(); c.arc(0,0,r,0,7); c.fill();
+  c.strokeStyle=col; c.lineWidth=1.3; c.stroke();
+  c.lineWidth=1.1; for(let k=0;k<5;k++){const a=k/5*Math.PI*2; c.beginPath(); c.moveTo(Math.cos(a)*r*0.34,Math.sin(a)*r*0.34); c.lineTo(Math.cos(a)*r*0.76,Math.sin(a)*r*0.76); c.stroke();}
+  c.fillStyle=col; c.beginPath(); c.arc(0,0,r*0.24,0,7); c.fill(); c.fillStyle=dk; c.beginPath(); c.arc(0,0,r*0.1,0,7); c.fill();
+  c.restore(); }
+function _labGauge(c,x,y,r,col){ c.fillStyle='#10161e'; c.beginPath(); c.arc(x,y,r,0,7); c.fill();
+  c.strokeStyle='#caa24f'; c.lineWidth=1.3; c.beginPath(); c.arc(x,y,r,0,7); c.stroke();
+  c.strokeStyle=col; c.lineWidth=1.2; c.beginPath(); c.moveTo(x,y); c.lineTo(x+Math.cos(-0.7)*r*0.7,y+Math.sin(-0.7)*r*0.7); c.stroke();
+  c.fillStyle='#caa24f'; c.beginPath(); c.arc(x,y,r*0.18,0,7); c.fill(); }
+function _labArcane(c,x,y,r){ c.save(); c.strokeStyle='rgba(70,54,30,0.45)'; c.lineWidth=1;
+  c.beginPath(); c.arc(x,y,r,0,7); c.stroke(); c.beginPath(); c.arc(x,y,r*0.6,0,7); c.stroke();
+  for(let k=0;k<8;k++){const a=k*Math.PI/4; c.beginPath(); c.moveTo(x+Math.cos(a)*r*0.6,y+Math.sin(a)*r*0.6); c.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r); c.stroke();}
+  c.beginPath(); for(let k=0;k<3;k++){const a=-Math.PI/2+k*2*Math.PI/3,pxx=x+Math.cos(a)*r*0.48,pyy=y+Math.sin(a)*r*0.48; k?c.lineTo(pxx,pyy):c.moveTo(pxx,pyy);} c.closePath(); c.stroke(); c.restore(); }
+// a brass L-bracket reinforcing a corner; (fx,fy) point inward from corner (x,y)
+function _labBracket(c,x,y,s,t,fx,fy){ c.fillStyle=_goldLin(c,x,y,x+fx*s,y+fy*s);
+  c.fillRect(x,y,fx*s,fy*t); c.fillRect(x,y,fx*t,fy*s);
+  c.strokeStyle='#4a3216'; c.lineWidth=1; c.strokeRect(x,y,fx*s,fy*t); c.strokeRect(x,y,fx*t,fy*s);
+  _labBolt(c,x+fx*s*0.7,y+fy*t*0.5,1.4); _labBolt(c,x+fx*t*0.5,y+fy*s*0.7,1.4); }
+
+// Detailed machinery glimpsed through a wing window, backlit by the wing colour (drawn in a local frame,
+// already clipped to the window). Metallic parts in steel/brass; glowing accents (crystal/fire/liquid/visor).
 function _labWingMachine(ctx,i,cx,cy,r,col,now){
-  ctx.save(); ctx.translate(cx,cy);
-  const glow=`${col}`; ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=1.4; ctx.lineJoin='round';
-  const dk='rgba(0,0,0,0.55)';
-  if (i===0){            // LAPIDARY — a faceted crystal on a wheel
-    ctx.fillStyle=dk; ctx.beginPath(); ctx.arc(-r*0.5,r*0.5,r*0.5,0,7); ctx.fill();
-    ctx.strokeStyle=col; ctx.beginPath(); ctx.arc(-r*0.5,r*0.5,r*0.5,0,7); ctx.stroke();
-    ctx.fillStyle=dk; ctx.strokeStyle=col;
-    ctx.beginPath(); ctx.moveTo(r*0.35,-r*0.7); ctx.lineTo(r*0.75,-r*0.1); ctx.lineTo(r*0.35,r*0.55); ctx.lineTo(-r*0.05,-r*0.1); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(r*0.35,-r*0.7); ctx.lineTo(r*0.35,r*0.55); ctx.moveTo(-r*0.05,-r*0.1); ctx.lineTo(r*0.75,-r*0.1); ctx.stroke();
-  } else if (i===1){     // FORGE — an anvil over a fire glow
-    const g=ctx.createRadialGradient(0,r*0.5,1,0,r*0.5,r); g.addColorStop(0,'rgba(255,180,90,0.9)'); g.addColorStop(1,'rgba(232,120,40,0)');
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,r*0.55,r,0,7); ctx.fill();
-    ctx.fillStyle=dk; ctx.strokeStyle=col;
-    ctx.beginPath(); ctx.moveTo(-r*0.7,-r*0.2); ctx.lineTo(r*0.7,-r*0.2); ctx.lineTo(r*0.45,r*0.05); ctx.lineTo(r*0.2,r*0.05); ctx.lineTo(r*0.15,r*0.4); ctx.lineTo(-r*0.15,r*0.4); ctx.lineTo(-r*0.2,r*0.05); ctx.lineTo(-r*0.5,r*0.05); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(r*0.7,-r*0.2); ctx.quadraticCurveTo(r*0.95,-r*0.45,r*0.7,-r*0.5); ctx.stroke();
-  } else if (i===2){     // BREWING — two flasks
-    ctx.fillStyle=dk; ctx.strokeStyle=col;
-    for(const s of [-1,1]){ ctx.beginPath(); ctx.moveTo(s*r*0.35-r*0.14,-r*0.6); ctx.lineTo(s*r*0.35+r*0.14,-r*0.6);
-      ctx.lineTo(s*r*0.35+r*0.14,-r*0.15); ctx.lineTo(s*r*0.35+r*0.4,r*0.55); ctx.lineTo(s*r*0.35-r*0.4,r*0.55); ctx.lineTo(s*r*0.35-r*0.14,-r*0.15); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-    ctx.fillStyle=col; ctx.globalAlpha=0.6; for(const s of [-1,1]){ ctx.beginPath(); ctx.moveTo(s*r*0.35-r*0.3,r*0.2); ctx.lineTo(s*r*0.35+r*0.3,r*0.2); ctx.lineTo(s*r*0.35+r*0.4,r*0.55); ctx.lineTo(s*r*0.35-r*0.4,r*0.55); ctx.closePath(); ctx.fill(); } ctx.globalAlpha=1;
-  } else {               // SUIT BAY — a standing hardsuit
-    ctx.fillStyle=dk; ctx.strokeStyle=col;
-    ctx.beginPath(); ctx.arc(0,-r*0.5,r*0.32,0,7); ctx.fill(); ctx.stroke();          // helmet
-    ctx.beginPath(); _rr(ctx,-r*0.34,-r*0.16,r*0.68,r*0.8,r*0.16); ctx.fill(); ctx.stroke();  // torso
-    ctx.beginPath(); ctx.moveTo(-r*0.2,r*0.64); ctx.lineTo(-r*0.2,r*0.95); ctx.moveTo(r*0.2,r*0.64); ctx.lineTo(r*0.2,r*0.95); ctx.stroke(); // legs
-    ctx.fillStyle=col; ctx.globalAlpha=0.8; ctx.beginPath(); ctx.arc(-r*0.1,-r*0.5,r*0.1,0,7); ctx.fill(); ctx.globalAlpha=1;  // visor glint
+  ctx.save(); ctx.translate(cx,cy); ctx.lineJoin='round';
+  const pulse=0.6+0.4*Math.abs(Math.sin(now*0.004+i));
+  if (i===0){            // LAPIDARY — a driven gear train + a lit crystal cluster on a bruting arm
+    _labPipe(ctx,[-r*1.1,-r*0.9,-r*0.2,-r*0.9,-r*0.2,-r*0.3],2.4);
+    _labGear(ctx,-r*0.45,r*0.35,r*0.62,10,'#b9c2cf','#3f4652');
+    _labGear(ctx,r*0.5,r*0.7,r*0.4,8,'#9aa4b2','#2b3038');
+    // crystal cluster, glowing
+    ctx.save(); ctx.shadowColor=col; ctx.shadowBlur=r*0.7;
+    for(const s of [[-0.1,-1.0,0.5],[0.35,-0.7,0.4],[0.05,-0.55,0.3]]){ ctx.fillStyle=`rgba(120,240,215,${0.5+0.4*pulse})`; ctx.strokeStyle='#dffcf5'; ctx.lineWidth=0.8;
+      const bx=r*s[0], by=r*s[1], hh=r*s[2]; ctx.beginPath(); ctx.moveTo(bx,by-hh); ctx.lineTo(bx+hh*0.5,by-hh*0.3); ctx.lineTo(bx+hh*0.3,by+hh*0.4); ctx.lineTo(bx-hh*0.3,by+hh*0.4); ctx.lineTo(bx-hh*0.5,by-hh*0.3); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+    _labGauge(ctx,r*0.9,-r*0.5,r*0.3,col);
+  } else if (i===1){     // FORGE — an anvil on a plinth over a glowing crucible, chimney + gauge
+    const g=ctx.createRadialGradient(-r*0.1,r*0.55,1,-r*0.1,r*0.55,r*1.3); g.addColorStop(0,`rgba(255,200,110,${0.6+0.35*pulse})`); g.addColorStop(0.5,'rgba(240,130,40,0.35)'); g.addColorStop(1,'rgba(180,70,20,0)');
+    ctx.fillStyle=g; ctx.fillRect(-r*1.3,-r*0.2,r*2.6,r*1.4);
+    // crucible mouth + flames
+    ctx.fillStyle='#20242c'; ctx.beginPath(); _rr(ctx,-r*0.55,r*0.5,r*1.1,r*0.5,r*0.1); ctx.fill();
+    ctx.fillStyle=`rgba(255,180,80,${0.7+0.3*pulse})`; for(const fx of [-0.3,0,0.3]){ ctx.beginPath(); ctx.moveTo(r*fx-r*0.12,r*0.55); ctx.quadraticCurveTo(r*fx,r*0.15,r*fx+r*0.05,r*0.55); ctx.fill(); }
+    // anvil
+    ctx.fillStyle=_steelLin(ctx,-r*0.7,-r*0.4,r*0.7,r*0.1); ctx.strokeStyle='#20242c'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-r*0.7,-r*0.35); ctx.lineTo(r*0.9,-r*0.35); ctx.lineTo(r*0.55,-r*0.12); ctx.lineTo(r*0.22,-r*0.12); ctx.lineTo(r*0.16,r*0.18); ctx.lineTo(-r*0.16,r*0.18); ctx.lineTo(-r*0.22,-r*0.12); ctx.lineTo(-r*0.5,-r*0.12); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#2b3038'; ctx.fillRect(-r*0.28,r*0.18,r*0.56,r*0.18);   // plinth
+    _labPipe(ctx,[r*0.55,-r*0.9,r*0.55,-r*0.3],3);                          // chimney
+    _labGauge(ctx,-r*0.95,-r*0.6,r*0.3,'#E8A33D');
+  } else if (i===2){     // BREWING — a round-bottom flask of glowing draught, condenser coil, retort, tubes
+    _labPipe(ctx,[-r*0.9,-r*0.9,-r*0.2,-r*0.9,-r*0.2,-r*0.2,0,r*0.1],2.2);
+    // condenser coil (right)
+    ctx.strokeStyle='#c6cbd4'; ctx.lineWidth=1.6; ctx.beginPath();
+    for(let k=0;k<=16;k++){ const yy=-r*0.7+k*r*0.11, xx=r*0.7+Math.sin(k*0.9)*r*0.18; k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);} ctx.stroke();
+    // big round flask with glowing liquid
+    ctx.fillStyle='rgba(20,26,34,0.7)'; ctx.strokeStyle='#c6cbd4'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.arc(0,r*0.35,r*0.6,0,7); ctx.moveTo(-r*0.16,-r*0.2); ctx.lineTo(-r*0.16,-r*0.55); ctx.lineTo(r*0.16,-r*0.55); ctx.lineTo(r*0.16,-r*0.2); ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.arc(0,r*0.35,r*0.55,0,7); ctx.clip();
+    ctx.fillStyle=`rgba(160,130,246,${0.6+0.35*pulse})`; ctx.shadowColor=col; ctx.shadowBlur=r*0.6; ctx.fillRect(-r*0.6,r*0.05,r*1.2,r*0.9);
+    ctx.fillStyle='rgba(210,195,255,0.7)'; for(const bb of [[-0.2,0.4],[0.15,0.6],[0,0.25]]) { ctx.beginPath(); ctx.arc(r*bb[0],r*bb[1],r*0.06,0,7); ctx.fill(); }
+    ctx.restore();
+    // small retort left
+    ctx.strokeStyle='#9aa4b2'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.arc(-r*0.8,r*0.55,r*0.24,0,7); ctx.moveTo(-r*0.6,r*0.5); ctx.quadraticCurveTo(-r*0.35,r*0.35,-r*0.2,r*0.5); ctx.stroke();
+    _labGauge(ctx,r*0.95,r*0.7,r*0.28,'#8B7CF6');
+  } else {               // SUIT BAY — a hardsuit racked in a maintenance frame with cables
+    // mounting rack
+    ctx.strokeStyle='#3f4652'; ctx.lineWidth=2.4; ctx.beginPath(); ctx.moveTo(-r*0.85,-r*1.0); ctx.lineTo(-r*0.85,r*1.0); ctx.moveTo(r*0.85,-r*1.0); ctx.lineTo(r*0.85,r*1.0); ctx.moveTo(-r*0.85,-r*0.9); ctx.lineTo(r*0.85,-r*0.9); ctx.stroke();
+    _labPipe(ctx,[-r*0.85,-r*0.5,-r*0.4,-r*0.3],2); _labPipe(ctx,[r*0.85,-r*0.2,r*0.42,0],2);
+    // suit — helmet, torso, shoulders, arms, legs
+    ctx.fillStyle=_steelLin(ctx,-r*0.4,-r*0.9,r*0.4,r*0.9); ctx.strokeStyle='#20242c'; ctx.lineWidth=1;
+    ctx.beginPath(); _rr(ctx,-r*0.42,-r*0.2,r*0.84,r*0.85,r*0.18); ctx.fill(); ctx.stroke();       // torso
+    ctx.beginPath(); ctx.arc(0,-r*0.5,r*0.34,0,7); ctx.fill(); ctx.stroke();                        // helmet
+    ctx.fillStyle='#3f4652'; ctx.beginPath(); _rr(ctx,-r*0.62,-r*0.22,r*0.24,r*0.5,r*0.1); ctx.fill(); ctx.beginPath(); _rr(ctx,r*0.38,-r*0.22,r*0.24,r*0.5,r*0.1); ctx.fill();  // arms
+    ctx.beginPath(); _rr(ctx,-r*0.3,r*0.62,r*0.24,r*0.5,r*0.08); ctx.fill(); ctx.beginPath(); _rr(ctx,r*0.06,r*0.62,r*0.24,r*0.5,r*0.08); ctx.fill();  // legs
+    ctx.save(); ctx.shadowColor=col; ctx.shadowBlur=r*0.5;                                          // visor + chest core
+    ctx.fillStyle=`rgba(150,190,230,${0.6+0.3*pulse})`; ctx.beginPath(); ctx.ellipse(0,-r*0.52,r*0.2,r*0.12,0,0,7); ctx.fill();
+    ctx.fillStyle=`rgba(120,200,255,${0.7+0.3*pulse})`; ctx.beginPath(); ctx.arc(0,r*0.12,r*0.1,0,7); ctx.fill(); ctx.restore();
   }
   ctx.restore();
 }
-// THE DEPLOYED PORTABLE LAB — a pressure-sealed modular hull: weathered plating with a brass frame and
-// rivets, four reinforced window bays lit in each wing's colour with the machinery glimpsed inside, an
-// airlock + stairs on the near end, a glowing power-core dome on the roof, landing legs and roof gear. The
-// footprint is unchanged (8x4 tiles / 4 two-tile bays), so clickLabWing/landing/save are untouched — this is
-// purely the sprite. Replaces the flat rect with four emblem cells.
 function drawLab(ctx,camX,camY,now){
   if (!lab.placed) return;
   const px=lab.x*TS-camX;
   const py=(lab.y-lab.drop)*TS-camY;         // drop>0 while it is still falling
   const w=LAB_W*TS, h=LAB_H*TS, gy=py+h;
-  if (px>innerWidth+120||px+w< -120) return;
+  if (px>innerWidth+160||px+w< -160) return;
   ctx.save(); ctx.textAlign='center'; ctx.lineJoin='round';
 
-  // descent thruster while falling — a bright plume under the hull
+  // descent thruster while falling — twin plumes under the landing legs
   if (lab.drop>0){
-    const pg=ctx.createLinearGradient(0,gy,0,gy+lab.drop*TS);
-    pg.addColorStop(0,'rgba(255,220,150,0.85)'); pg.addColorStop(0.4,'rgba(232,140,50,0.45)'); pg.addColorStop(1,'rgba(232,120,40,0)');
-    ctx.fillStyle=pg; ctx.beginPath(); ctx.moveTo(px+w*0.30,gy); ctx.lineTo(px+w*0.70,gy); ctx.lineTo(px+w*0.62,gy+lab.drop*TS); ctx.lineTo(px+w*0.38,gy+lab.drop*TS); ctx.closePath(); ctx.fill();
+    for (const fx of [0.32,0.68]){ const pg=ctx.createLinearGradient(0,gy,0,gy+lab.drop*TS);
+      pg.addColorStop(0,'rgba(255,225,150,0.9)'); pg.addColorStop(0.35,'rgba(232,140,50,0.5)'); pg.addColorStop(1,'rgba(232,120,40,0)');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.moveTo(px+w*fx-6,gy); ctx.lineTo(px+w*fx+6,gy); ctx.lineTo(px+w*fx+2,gy+lab.drop*TS); ctx.lineTo(px+w*fx-2,gy+lab.drop*TS); ctx.closePath(); ctx.fill(); }
   }
 
-  // ---- landing legs (behind the hull) ----
-  ctx.strokeStyle='#4a4436'; ctx.lineWidth=5; ctx.lineCap='round';
-  for (const s of [0,1]){ const lx=px+(s?w-10:10), fx=px+(s?w+14:-14), fy=gy+10;
-    ctx.beginPath(); ctx.moveTo(lx,gy-h*0.32); ctx.lineTo(fx,fy); ctx.stroke();
-    ctx.fillStyle='#5a5140'; ctx.fillRect(fx-8,fy,16,4); }
+  // ---- HYDRAULIC LANDING LEGS (behind the hull) ----
+  for (const s of [0,1]){ const dir=s?1:-1, hipx=px+(s?w-14:14), hipy=gy-3, footx=px+(s?w+20:-20), footy=gy+13;
+    // upper brass strut
+    ctx.strokeStyle='#8a5f2c'; ctx.lineWidth=6; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(hipx,hipy); ctx.lineTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.stroke();
+    // piston cylinder + rod
+    ctx.strokeStyle=_STEEL[2]; ctx.lineWidth=7; ctx.beginPath(); ctx.moveTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.lineTo(footx,footy-3); ctx.stroke();
+    ctx.strokeStyle=_STEEL[0]; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.lineTo(footx,footy-3); ctx.stroke();
+    // hinge + foot pad
+    _labBolt(ctx,(hipx+footx)/2,(hipy+footy)/2-2,2.4);
+    ctx.fillStyle=_goldLin(ctx,footx-11,footy,footx+11,footy+5); ctx.beginPath(); _rr(ctx,footx-11,footy-2,22,6,2); ctx.fill();
+    ctx.strokeStyle='#4a3216'; ctx.lineWidth=1; ctx.stroke(); _labBolt(ctx,footx-6,footy+1,1.4); _labBolt(ctx,footx+6,footy+1,1.4);
+  }
   ctx.lineCap='butt';
 
-  // ---- hull body: weathered plating ----
+  // ---- BUSY PIPEWORK ROOF (drawn before the hull so pipes tuck under the top rail) ----
+  const roofY=py-3;
+  _labPipe(ctx,[px+w*0.18,roofY-6,px+w*0.5,roofY-11,px+w*0.82,roofY-6],3.5);   // spine pipe
+  // smokestack (left of centre)
+  const skx=px+w*0.30; ctx.fillStyle=_steelLin(ctx,skx-6,roofY-20,skx+6,roofY); ctx.beginPath(); _rr(ctx,skx-5,roofY-20,10,20,2); ctx.fill();
+  ctx.fillStyle='#20242c'; ctx.beginPath(); _rr(ctx,skx-8,roofY-24,16,5,2); ctx.fill();
+  ctx.fillStyle='rgba(120,130,150,0.25)'; ctx.beginPath(); ctx.arc(skx,roofY-30,5,0,7); ctx.arc(skx+3,roofY-36,7,0,7); ctx.fill();
+  // valve wheels
+  _labValve(ctx,px+w*0.60,roofY-8,6); _labValve(ctx,px+w*0.78,roofY-6,5);
+  // bolted dome cap (right)
+  ctx.fillStyle=_steelLin(ctx,px+w*0.88-8,roofY-9,px+w*0.88+8,roofY); ctx.beginPath(); ctx.arc(px+w*0.88,roofY,8,Math.PI,0); ctx.fill(); ctx.strokeStyle='#20242c'; ctx.lineWidth=1; ctx.stroke();
+  // antenna
+  ctx.strokeStyle=_STEEL[1]; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px+w*0.94,roofY-2); ctx.lineTo(px+w*0.94,roofY-20); ctx.stroke();
+  ctx.fillStyle='#E0523D'; ctx.beginPath(); ctx.arc(px+w*0.94,roofY-21,2.2,0,7); ctx.fill();
+  // POWER-CORE DOME (centre) — brass housing, glass, glowing teal core
+  const rcx=px+w*0.5, coreP=0.55+0.45*Math.abs(Math.sin(now*0.003));
+  ctx.fillStyle=_goldLin(ctx,rcx-16,roofY-16,rcx+16,roofY); ctx.beginPath(); ctx.arc(rcx,roofY,16,Math.PI,0); ctx.fill();
+  ctx.strokeStyle='#4a3216'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(rcx,roofY,16,Math.PI,0); ctx.stroke();
+  ctx.save(); ctx.beginPath(); ctx.arc(rcx,roofY,12,Math.PI,0); ctx.clip();
+  const cg=ctx.createRadialGradient(rcx,roofY-2,1,rcx,roofY,12); cg.addColorStop(0,`rgba(150,255,230,${0.7+0.3*coreP})`); cg.addColorStop(1,'rgba(20,60,55,0.6)');
+  ctx.fillStyle=cg; ctx.fillRect(rcx-12,roofY-12,24,12); ctx.restore();
+  ctx.save(); ctx.shadowColor='#4FE3C1'; ctx.shadowBlur=12*coreP; ctx.strokeStyle='rgba(120,240,215,0.7)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(rcx,roofY,12,Math.PI,0); ctx.stroke(); ctx.restore();
+  for(let k=0;k<5;k++) _labBolt(ctx,rcx+Math.cos(Math.PI+k*Math.PI/4)*14,roofY+Math.sin(Math.PI+k*Math.PI/4)*14,1.5);
+
+  // ---- HULL: weathered bone plating with a dark reinforced frame ----
   const hull=ctx.createLinearGradient(0,py,0,gy);
-  hull.addColorStop(0,'#cfc4a5'); hull.addColorStop(0.10,'#b7ac8d'); hull.addColorStop(0.5,'#9a9077'); hull.addColorStop(1,'#6f6858');
-  ctx.fillStyle=hull; _rr(ctx,px,py,w,h,7); ctx.fill();
-  // panel seams
-  ctx.strokeStyle='rgba(60,56,44,0.5)'; ctx.lineWidth=1;
-  for (let i=1;i<LAB_W/2;i++){ const sx=px+i*2*TS; ctx.beginPath(); ctx.moveTo(sx,py+4); ctx.lineTo(sx,gy-4); ctx.stroke(); }
-  ctx.beginPath(); ctx.moveTo(px+4,py+h*0.24); ctx.lineTo(px+w-4,py+h*0.24); ctx.stroke();
-  // brass top & bottom rails
-  ctx.fillStyle=_goldLin(ctx,px,py,px,py+7); _rr(ctx,px,py,w,7,4); ctx.fill();
-  ctx.fillStyle=_goldLin(ctx,px,gy-6,px,gy); ctx.fillRect(px,gy-6,w,6);
-  // rivets along the rails
-  ctx.fillStyle='#4a4436'; for (let x=px+8;x<px+w-4;x+=12){ ctx.beginPath(); ctx.arc(x,py+3.5,1.3,0,7); ctx.fill(); ctx.beginPath(); ctx.arc(x,gy-3,1.3,0,7); ctx.fill(); }
-  // hull outline
-  ctx.strokeStyle='#3a3628'; ctx.lineWidth=1.5; _rr(ctx,px,py,w,h,7); ctx.stroke();
+  hull.addColorStop(0,'#dcd2b6'); hull.addColorStop(0.12,'#c2b898'); hull.addColorStop(0.55,'#a49a80'); hull.addColorStop(1,'#78705d');
+  ctx.fillStyle=hull; _rr(ctx,px,py,w,h,6); ctx.fill();
+  // weathering blotches (deterministic)
+  ctx.save(); _rr(ctx,px,py,w,h,6); ctx.clip();
+  let sd=(lab.x*2654435761)>>>0; const rnd=()=>{ sd=(sd*1664525+1013904223)>>>0; return sd/4294967296; };
+  ctx.fillStyle='rgba(90,80,60,0.16)'; for(let k=0;k<26;k++){ ctx.beginPath(); ctx.arc(px+rnd()*w,py+rnd()*h,1+rnd()*3,0,7); ctx.fill(); }
+  ctx.restore();
+  // dark reinforced inner frame
+  ctx.strokeStyle='#2b2820'; ctx.lineWidth=3; _rr(ctx,px+2,py+2,w-4,h-4,5); ctx.stroke();
+  // engraved arcane circles on the top plating band, between the bays
+  for(let i=0;i<LAB_W/2;i++) _labArcane(ctx,px+i*2*TS+TS,py+11,7);
+  // brass corner brackets
+  _labBracket(ctx,px+3,py+3,11,4,1,1); _labBracket(ctx,px+w-3,py+3,11,4,-1,1);
+  _labBracket(ctx,px+3,gy-3,11,4,1,-1); _labBracket(ctx,px+w-3,gy-3,11,4,-1,-1);
+  // brass ribs between bays, bolted
+  for(let i=1;i<LAB_W/2;i++){ const sx=px+i*2*TS; ctx.fillStyle=_goldLin(ctx,sx-3,py,sx+3,py); ctx.fillRect(sx-3,py+5,6,h-10);
+    ctx.strokeStyle='#4a3216'; ctx.lineWidth=1; ctx.strokeRect(sx-3,py+5,6,h-10); _labBolt(ctx,sx,py+12,1.5); _labBolt(ctx,sx,gy-12,1.5); }
+  // rivet rows along top & bottom
+  _labRivets(ctx,px+8,py+5,px+w-8,py+5,11,1.4); _labRivets(ctx,px+8,gy-5,px+w-8,gy-5,11,1.4);
+  ctx.strokeStyle='#20242c'; ctx.lineWidth=1.5; _rr(ctx,px,py,w,h,6); ctx.stroke();
 
-  // ---- roof: power-core dome (centre) + a small antenna ----
-  const rcx=px+w/2, rcy=py-2, coreP=0.6+0.4*Math.abs(Math.sin(now*0.003));
-  ctx.fillStyle=_goldLin(ctx,rcx-16,rcy,rcx+16,rcy); ctx.beginPath(); ctx.arc(rcx,rcy,13,Math.PI,0); ctx.fill();
-  ctx.strokeStyle='#4a3216'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(rcx,rcy,13,Math.PI,0); ctx.stroke();
-  ctx.save(); ctx.shadowColor='#4FE3C1'; ctx.shadowBlur=10*coreP; ctx.fillStyle=`rgba(120,240,215,${0.6+0.35*coreP})`; ctx.beginPath(); ctx.arc(rcx,rcy-1,5,Math.PI,0); ctx.fill(); ctx.restore();
-  ctx.strokeStyle='#6f6858'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px+w-18,py); ctx.lineTo(px+w-18,py-14); ctx.stroke();
-  ctx.fillStyle='#E0523D'; ctx.beginPath(); ctx.arc(px+w-18,py-15,2,0,7); ctx.fill();
+  // ---- VAULT AIRLOCK on the near end (left overhang) ----
+  const alw=26, alx=px-alw, aly=py+4, alh=h-8;
+  ctx.fillStyle=_steelLin(ctx,alx,aly,alx+alw,aly+alh); ctx.beginPath(); _rr(ctx,alx,aly,alw+6,alh,5); ctx.fill();
+  ctx.strokeStyle='#20242c'; ctx.lineWidth=1.5; _rr(ctx,alx,aly,alw+6,alh,5); ctx.stroke();
+  _labRivets(ctx,alx+3,aly+4,alx+3,aly+alh-4,10,1.3);
+  const adx=alx+alw*0.5, ady=py+h*0.5, ar=13;
+  ctx.fillStyle='#161a20'; ctx.beginPath(); ctx.arc(adx,ady,ar,0,7); ctx.fill();                 // door well
+  ctx.strokeStyle=_goldLin(ctx,adx-ar,ady,adx+ar,ady); ctx.lineWidth=3; ctx.beginPath(); ctx.arc(adx,ady,ar,0,7); ctx.stroke();  // brass ring
+  ctx.strokeStyle='rgba(74,58,32,0.6)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(adx,ady,ar*0.68,0,7); ctx.stroke();
+  for(let k=0;k<10;k++){ const a=k*Math.PI/5; _labBolt(ctx,adx+Math.cos(a)*ar,ady+Math.sin(a)*ar,1.4); }   // ring bolts
+  _labArcane(ctx,adx,ady,ar*0.55);                                                                // engraved sigil
+  _labValve(ctx,adx,ady,ar*0.4);                                                                  // central handle
+  ctx.save(); ctx.shadowColor='#4FE3C1'; ctx.shadowBlur=6; ctx.fillStyle='#4FE3C1'; ctx.beginPath(); ctx.arc(adx,ady-ar-3,2,0,7); ctx.fill(); ctx.restore();  // indicator light
+  // small runic control panel
+  ctx.fillStyle='#10161e'; ctx.beginPath(); _rr(ctx,alx+3,py+h-16,10,11,2); ctx.fill();
+  ctx.fillStyle='#4FE3C1'; for(let k=0;k<3;k++){ ctx.globalAlpha=0.4+0.5*((now*0.004+k)%1); ctx.fillRect(alx+5,py+h-14+k*3,6,1.6);} ctx.globalAlpha=1;
 
-  // ---- airlock + stairs on the near end (left) ----
-  const ax=px-4;
-  ctx.fillStyle='#8f8674'; _rr(ctx,ax-14,py+h*0.30,20,h*0.64,4); ctx.fill();
-  ctx.strokeStyle='#3a3628'; ctx.lineWidth=1.5; _rr(ctx,ax-14,py+h*0.30,20,h*0.64,4); ctx.stroke();
-  const adx=ax-4, ady=py+h*0.55;
-  ctx.fillStyle='#20242e'; ctx.beginPath(); ctx.arc(adx,ady,7,0,7); ctx.fill();
-  ctx.strokeStyle=_goldLin(ctx,adx-7,ady,adx+7,ady); ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(adx,ady,7,0,7); ctx.stroke();
-  ctx.strokeStyle='#c9a24f'; ctx.lineWidth=1; for(let k=0;k<6;k++){ const a=k*Math.PI/3; ctx.beginPath(); ctx.moveTo(adx+Math.cos(a)*3,ady+Math.sin(a)*3); ctx.lineTo(adx+Math.cos(a)*6,ady+Math.sin(a)*6); ctx.stroke(); }
-  // stairs down to the ground
-  ctx.fillStyle='#6f6858'; ctx.strokeStyle='#3a3628'; ctx.lineWidth=1;
-  for(let s=0;s<3;s++){ const stx=ax-16-s*7, sty=py+h*0.62+s*((gy-(py+h*0.62))/3); ctx.fillRect(stx,sty,10,4); ctx.strokeRect(stx,sty,10,4); }
+  // ---- STAIRCASE down from the airlock threshold (with a handrail) ----
+  const stepN=4, st0x=alx-4, st0y=py+h*0.62, stdx=-9, stdy=(gy+8-st0y)/stepN;
+  for(let s=0;s<stepN;s++){ const sx=st0x+s*stdx, sy=st0y+s*stdy;
+    ctx.fillStyle=_steelLin(ctx,sx,sy,sx,sy+stdy); ctx.beginPath(); _rr(ctx,sx+stdx,sy,-stdx+2,4,1); ctx.fill();   // tread
+    ctx.fillStyle='#2b3038'; ctx.fillRect(sx+stdx,sy+4,-stdx+2,stdy-4);                                            // riser
+    ctx.strokeStyle='#20242c'; ctx.lineWidth=1; ctx.strokeRect(sx+stdx,sy,-stdx+2,4); }
+  // handrail: posts + diagonal
+  ctx.strokeStyle='#8a5f2c'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(st0x-2,st0y-10); ctx.lineTo(st0x+stepN*stdx,st0y+stepN*stdy-10); ctx.stroke();
+  for(let s=0;s<=stepN;s+=2){ const sx=st0x+s*stdx, sy=st0y+s*stdy; ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx,sy-11); ctx.stroke(); }
 
-  // ---- four reinforced window bays ----
+  // ---- FOUR REINFORCED WINDOW BAYS ----
   const near=labWingAt(player.x,player.y);
   LAB_WINGS.forEach((wing,i)=>{
-    const wx=px+i*2*TS+5, ww=2*TS-10, wy=py+13, wh=h-24, cx=wx+ww/2, cy=wy+wh/2;
+    const bx0=px+i*2*TS, wx=bx0+7, ww=2*TS-14, wy=py+18, wh=h-34, cx=wx+ww/2, cy=wy+wh/2;
     const isNear=near&&near.key===wing.key;
-    // window recess
-    ctx.fillStyle='#0b0f18'; _rr(ctx,wx,wy,ww,wh,4); ctx.fill();
-    // coloured interior glow
-    ctx.save(); _rr(ctx,wx,wy,ww,wh,4); ctx.clip();
-    const gg=ctx.createRadialGradient(cx,cy+wh*0.2,2,cx,cy,ww*0.9);
-    gg.addColorStop(0,wing.col); gg.addColorStop(0.5,wing.col+'66'); gg.addColorStop(1,'rgba(6,10,16,0.9)');
-    ctx.globalAlpha=isNear?0.85:0.5; ctx.fillStyle=gg; ctx.fillRect(wx,wy,ww,wh); ctx.globalAlpha=1;
-    _labWingMachine(ctx,i,cx,cy+2,ww*0.34,wing.col,now);
+    // deep recess (dark inset behind the glass)
+    ctx.fillStyle='#080b12'; ctx.beginPath(); _rr(ctx,wx-1,wy-1,ww+2,wh+2,4); ctx.fill();
+    ctx.save(); _rr(ctx,wx,wy,ww,wh,3); ctx.clip();
+    const gg=ctx.createRadialGradient(cx,cy+wh*0.25,2,cx,cy,ww); gg.addColorStop(0,wing.col); gg.addColorStop(0.5,wing.col+'55'); gg.addColorStop(1,'rgba(5,8,14,0.95)');
+    ctx.globalAlpha=isNear?0.9:0.55; ctx.fillStyle=gg; ctx.fillRect(wx,wy,ww,wh); ctx.globalAlpha=1;
+    _labWingMachine(ctx,i,cx,cy+wh*0.06,ww*0.4,wing.col,now);
+    // glass sheen
+    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.moveTo(wx,wy); ctx.lineTo(wx+ww*0.5,wy); ctx.lineTo(wx,wy+wh*0.5); ctx.closePath(); ctx.fill();
     ctx.restore();
-    // reinforced brass frame + cross mullion
-    ctx.strokeStyle=_goldLin(ctx,wx,wy,wx+ww,wy+wh); ctx.lineWidth=2.5; _rr(ctx,wx,wy,ww,wh,4); ctx.stroke();
-    ctx.strokeStyle='rgba(80,60,28,0.55)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(wx,cy); ctx.lineTo(wx+ww,cy); ctx.moveTo(cx,wy); ctx.lineTo(cx,wy+wh); ctx.stroke();
-    if (isNear){       // the wing the player stands at lights up, named, with the Enter prompt
-      ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=14; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,wx,wy,ww,wh,4); ctx.stroke(); ctx.restore();
-      ctx.fillStyle=wing.col; ctx.font='600 11px Georgia'; ctx.fillText(wing.label,cx,py-20);
+    // beveled brass + dark frame with bolted corners
+    ctx.strokeStyle='#20242c'; ctx.lineWidth=4; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke();
+    ctx.strokeStyle=_goldLin(ctx,wx,wy,wx+ww,wy+wh); ctx.lineWidth=2; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke();
+    for(const [bxp,byp] of [[wx+3,wy+3],[wx+ww-3,wy+3],[wx+3,wy+wh-3],[wx+ww-3,wy+wh-3]]) _labBolt(ctx,bxp,byp,1.6);
+    if (isNear){       // the wing the player stands at lights up, names itself, shows the Enter prompt
+      ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke(); ctx.restore();
+      ctx.fillStyle=wing.col; ctx.font='600 12px Georgia'; ctx.fillText(wing.label,px+w/2,py-40);
       ctx.font='bold 11px "Courier New",monospace'; ctx.fillStyle='#f2d78e';
-      const ep=0.7+0.3*Math.abs(Math.sin(now*0.005)); ctx.globalAlpha=ep; ctx.fillText('▸ ENTER LAB',cx,gy+22); ctx.globalAlpha=1;
+      const ep=0.7+0.3*Math.abs(Math.sin(now*0.005)); ctx.globalAlpha=ep; ctx.fillText('▸ ENTER LAB',px+w/2,gy+30); ctx.globalAlpha=1;
     }
   });
   ctx.restore(); ctx.textAlign='left';
