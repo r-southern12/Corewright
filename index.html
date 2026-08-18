@@ -311,12 +311,18 @@
      seat-gauge idiom), replacing the italic hp/dust/power/air/drill text strip while underground.
      Two opposite corners chamfered (machined plate, not a div); inset highlight + drop edge for
      thickness; one warm light from top-left. */
-  #hudCluster{position:fixed;top:50px;left:50%;transform:translateX(-50%);z-index:8;display:none;
-    padding:5px 9px 6px;
+  /* DRILL radial — bottom-right, the centrepiece field control. */
+  #hudCluster{position:fixed;bottom:150px;right:22px;z-index:8;display:none;padding:4px 6px 5px;
     background:linear-gradient(158deg,#d9cfb6 0 2.5%,#8b8374 3.5%,#20263a 8% 90%,#121728 100%);
     border:1px solid #8f6938;clip-path:polygon(11px 0,100% 0,100% calc(100% - 11px),calc(100% - 11px) 100%,0 100%,0 11px);
     box-shadow:inset 0 1px 0 rgba(255,235,190,.16),inset 0 0 0 2px #111725,0 5px 20px #0009}
   #hudCluster.on{display:block}
+  /* Player CONDITION — upper-right, replacing the italic meters strip on expedition. */
+  #condHud{position:fixed;top:50px;right:22px;z-index:8;display:none;padding:4px 8px 5px;
+    background:linear-gradient(158deg,#d9cfb6 0 3%,#8b8374 4.5%,#20263a 10% 90%,#121728 100%);
+    border:1px solid #8f6938;clip-path:polygon(11px 0,100% 0,100% calc(100% - 11px),calc(100% - 11px) 100%,0 100%,0 11px);
+    box-shadow:inset 0 1px 0 rgba(255,235,190,.16),inset 0 0 0 2px #111725,0 5px 20px #0009}
+  #condHud.on{display:block}
   #hudCluster canvas{display:block}
 
   #dev{position:fixed;left:6px;top:120px;z-index:11;display:none;
@@ -1075,9 +1081,11 @@
 </div>
 <div id="expedHud">depth <b id="depthVal">0m</b> · stick to move &amp; aim · <b>⛏</b> hold to mine · <b>◎</b> blast</div>
 
-<!-- Field instrument cluster: drill-readiness / air / hull dials + dust & power odometers,
-     drawn to one canvas each frame while on expedition (see drawHudCluster). -->
-<div id="hudCluster"><canvas id="hudClusterCv" width="648" height="248" style="width:324px;height:124px"></canvas></div>
+<!-- Player CONDITION (upper-right): health / oxygen / suit-temperature gauges (drawCondHud). -->
+<div id="condHud"><canvas id="condCv" width="440" height="150" style="width:220px;height:75px"></canvas></div>
+
+<!-- DRILL radial (bottom-right): the centrepiece field control + a slim power bar (drawHudCluster). -->
+<div id="hudCluster"><canvas id="hudClusterCv" width="340" height="360" style="width:170px;height:180px"></canvas></div>
 
 <!-- Consumable pack: one-time cache finds usable in the field (Bore / Render / Lodestone). -->
 <div id="pack"></div>
@@ -2153,27 +2161,91 @@ function drawBattery(c,x,y,w,h,val){
   c.textAlign='right'; c.font="bold 15px 'Courier New',monospace";
   c.fillStyle='rgba(0,0,0,0.5)'; c.fillText(Math.floor(val)+'⚡',x+w+1,y-5); c.fillStyle=col; c.fillText(Math.floor(val)+'⚡',x+w,y-6);
 }
-let _hudSig='';
-function drawHudCluster(){
-  const cv=document.getElementById('hudClusterCv'); if(!cv) return;
-  // This runs every frame, and a canvas repaint dirties its compositor layer even when the picture
-  // is identical. The dials only move on a whole-unit change (air ticks by the second, hp/power are
-  // integers, drill power is fixed between gear swaps), so skip the redraw unless a shown value
-  // actually changed — most frames underground are a no-op string compare.
+// ---------- expedition HUD (v-UI overhaul) ----------
+// The field HUD now hugs the RIGHT edge in the concept's arrangement: player CONDITION (health / oxygen /
+// suit temperature) as a compact upper-right panel, and the DRILL as a big radial dial bottom-right — the
+// centrepiece control. Power rides a slim segmented bar under the drill. Two canvases, each guarded by its
+// own value signature so a settled frame is a no-op string compare.
+// SUIT TEMPERATURE is a PLACEHOLDER: it reads "nominal" (mid) and is inert. The mechanic — hot/cold biomes
+// dealing persistent damage unless ward/suit/aegis-protected — is a separate future task; `suitTemp` is the
+// hook it will drive. Keeping the gauge here reserves the layout slot so wiring it later is data-only.
+let suitTemp=0.5;    // 0 = frozen, 0.5 = nominal, 1 = scorching. Inert until the biome-heat mechanic lands.
+function tierReadiness(){
   const dp=drillPower(); let target=1,lbl='I';
   if(dp/1>=0.95){target=2;lbl='II';} if(dp/2>=0.95){target=3;lbl='III';}
   if(dp/3>=0.95){target=4;lbl='IV';} if(dp/4>=0.95){target=5;lbl='V';}
-  const prog=Math.min(1,dp/target/0.95);
-  const airF=Math.max(0,Math.min(1,air/maxAir)), hpF=Math.max(0,Math.min(1,hp/100));
-  const sig=lbl+'|'+fmtAir(air)+'|'+Math.max(0,Math.ceil(hp))+'|'+Math.floor(powerBank)+'|'+prog.toFixed(2);
+  return {prog:Math.min(1,dp/target/0.95), lbl};
+}
+// A big instrument radial: brass bezel, a teal tech tick-ring, a readiness arc, four facing chevrons and a
+// drill-bit glyph in the well. This is the concept's bottom-right DRILL dial.
+function drawDrillRadial(c,cx,cy,R,prog,lbl){
+  const full=prog>=0.999, arcCol=full?'#4FE3C1':'#E8A33D';
+  c.save(); c.textAlign='center'; c.textBaseline='alphabetic'; c.lineCap='round';
+  c.fillStyle='rgba(9,14,22,0.90)'; c.beginPath(); c.arc(cx,cy,R+R*0.12,0,7); c.fill();        // instrument face
+  c.lineWidth=R*0.09; c.strokeStyle='#8f6938';                                                  // brass bezel
+  c.beginPath(); c.arc(cx,cy,R+R*0.10,0,7); c.stroke();
+  // teal tech tick-ring
+  c.strokeStyle='rgba(79,227,193,0.45)';
+  for(let i=0;i<48;i++){ const a=i/48*Math.PI*2, maj=i%4===0, r0=R*0.82, r1=R*(maj?0.98:0.92);
+    c.lineWidth=maj?Math.max(1,R*0.02):Math.max(1,R*0.012);
+    c.beginPath(); c.moveTo(cx+Math.cos(a)*r0,cy+Math.sin(a)*r0); c.lineTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); c.stroke(); }
+  // readiness arc (starts at top, clockwise)
+  const A0=-Math.PI/2;
+  c.lineWidth=R*0.10; c.strokeStyle='rgba(120,150,150,0.18)';
+  c.beginPath(); c.arc(cx,cy,R*0.70,0,7); c.stroke();
+  c.strokeStyle=arcCol; c.beginPath(); c.arc(cx,cy,R*0.70,A0,A0+Math.PI*2*prog); c.stroke();
+  if(full){ c.shadowColor=arcCol; c.shadowBlur=R*0.25; c.beginPath(); c.arc(cx,cy,R*0.70,A0,A0+Math.PI*2); c.stroke(); c.shadowBlur=0; }
+  // four facing chevrons (decorative — the drill's directional flourish)
+  c.fillStyle=full?'rgba(79,227,193,0.85)':'rgba(232,163,61,0.85)';
+  for(let k=0;k<4;k++){ const a=k*Math.PI/2, ux=Math.cos(a), uy=Math.sin(a), r=R*1.02, w=R*0.10;
+    const px=cx+ux*r, py=cy+uy*r, tx=-uy, ty=ux;
+    c.beginPath(); c.moveTo(px+ux*R*0.14,py+uy*R*0.14);
+    c.lineTo(px-ux*R*0.02+tx*w,py-uy*R*0.02+ty*w); c.lineTo(px-ux*R*0.02-tx*w,py-uy*R*0.02-ty*w);
+    c.closePath(); c.fill(); }
+  // drill-bit glyph in the well: a stacked gold cone
+  c.save(); c.translate(cx,cy-R*0.06);
+  const bw=R*0.24, bh=R*0.42;
+  const gg=c.createLinearGradient(-bw,0,bw,0); gg.addColorStop(0,'#8a5f2c'); gg.addColorStop(0.5,'#f2d78e'); gg.addColorStop(1,'#8a5f2c');
+  c.fillStyle=gg; c.strokeStyle='#5a3f1e'; c.lineWidth=Math.max(1,R*0.012);
+  c.beginPath(); c.moveTo(0,-bh); c.lineTo(bw,-bh*0.1); c.lineTo(bw*0.62,bh*0.5); c.lineTo(-bw*0.62,bh*0.5); c.lineTo(-bw,-bh*0.1); c.closePath(); c.fill(); c.stroke();
+  for(let i=0;i<3;i++){ const y=-bh*0.55+i*bh*0.34; c.beginPath(); c.moveTo(-bw*0.82+i*R*0.02,y); c.lineTo(bw*0.82-i*R*0.02,y); c.stroke(); }
+  c.restore();
+  // tier numeral (top) + DRILL label (bottom)
+  c.font=`bold ${Math.round(R*0.26)}px Georgia`;
+  c.fillStyle='rgba(0,0,0,0.6)'; c.fillText(lbl,cx,cy-R*0.44+1); c.fillStyle=arcCol; c.fillText(lbl,cx,cy-R*0.44);
+  c.font=`bold ${Math.round(R*0.22)}px Georgia`;
+  c.fillStyle='rgba(0,0,0,0.6)'; c.fillText('DRILL',cx,cy+R*0.52+1); c.fillStyle='#4FE3C1'; c.fillText('DRILL',cx,cy+R*0.52);
+  c.restore();
+}
+let _hudSig='';
+function drawHudCluster(){
+  const cv=document.getElementById('hudClusterCv'); if(!cv) return;
+  // Guarded redraw: the drill dial only moves on a tier-readiness or power change.
+  const {prog,lbl}=tierReadiness();
+  const sig='D|'+lbl+'|'+prog.toFixed(2)+'|'+Math.floor(powerBank);
   if(sig===_hudSig) return;
   _hudSig=sig;
   const c=cv.getContext('2d'), W=cv.width, H=cv.height;
   c.clearRect(0,0,W,H); c.textBaseline='alphabetic';
-  drawMiniDial(c, 92,104,38,prog, prog>=0.999?'#4FE3C1':'#E8A33D', 'DRILL', lbl);
-  drawBigGauge(c,324,102,54,airF, air<20?'#E0523D':air<40?'#E8A33D':'#4FE3C1', 'AIR', fmtAir(air), 0.18);
-  drawMiniDial(c,556,104,38,hpF,  _gaugeCol(hpF), 'HULL', String(Math.max(0,Math.ceil(hp))));
-  drawBattery(c, 150,196, W-300, 30, powerBank);   // power battery spanning the base, under the dials
+  drawDrillRadial(c, W/2, H*0.42, W*0.36, prog, lbl);
+  drawBattery(c, W*0.14, H*0.84, W*0.72, H*0.09, powerBank);   // slim power bar under the dial
+}
+// Upper-right player CONDITION: three compact 270° gauges — Health, Oxygen, Suit temperature.
+let _condSig='';
+function drawCondHud(){
+  const cv=document.getElementById('condCv'); if(!cv) return;
+  const hpF=Math.max(0,Math.min(1,hp/100)), airF=Math.max(0,Math.min(1,air/maxAir)), tF=Math.max(0,Math.min(1,suitTemp));
+  const sig='C|'+Math.max(0,Math.ceil(hp))+'|'+fmtAir(air)+'|'+tF.toFixed(2);
+  if(sig===_condSig) return;
+  _condSig=sig;
+  const c=cv.getContext('2d'), W=cv.width, H=cv.height;
+  c.clearRect(0,0,W,H); c.textBaseline='alphabetic';
+  const R=H*0.30, cy=H*0.44, x0=W*0.20, dx=W*0.30;
+  // temperature colour runs cold-blue -> teal (nominal) -> hot-amber; it's a placeholder so it sits neutral
+  const tCol = tF<0.4?'#6FB8E8' : tF>0.6?'#E8A33D' : '#9fb6c9';
+  drawBigGauge(c, x0,      cy, R, hpF,  _gaugeCol(hpF),                                   'HEALTH', String(Math.max(0,Math.ceil(hp))), 0.18);
+  drawBigGauge(c, x0+dx,   cy, R, airF, air<20?'#E0523D':air<40?'#E8A33D':'#4FE3C1',      'OXYGEN', fmtAir(air), 0.18);
+  drawBigGauge(c, x0+dx*2, cy, R, tF,   tCol,                                             'TEMP',   'nom', 0);
 }
 function gainDust(shards){ dust+=shards*(activeCore?TIERS[activeCore.tier].dustPer:1); updateMeters(); }
 function drawPower(cost){
@@ -11475,6 +11547,7 @@ function showView(name){
   // benches keep the strip (dust/power still matter at the press and bench).
   document.getElementById('meters').style.display=(name==='forgeb'||name==='brewb'||isExped)?'none':'';
   document.getElementById('hudCluster').classList.toggle('on',isExped);
+  document.getElementById('condHud').classList.toggle('on',isExped);
   document.getElementById('expedHud').classList.toggle('on',isExped);
   renderPack();                                          // field consumables ride the expedition HUD
   document.getElementById('nudge').classList.remove('on');
@@ -12172,6 +12245,7 @@ let t=0, lastNow=0;
     stepPlayer(dt); stepEnemies(dt); stepProjectiles(dt);
     drawWorld(now);
     drawHudCluster();
+    drawCondHud();
     return;
   }
   lamp.intensity=0.6+Math.sin(t*2)*0.12;
