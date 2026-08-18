@@ -476,11 +476,6 @@
   .txPick select{background:#0b0e18;color:#e8ecf8;border:1px solid #2c3550;border-radius:5px;
     padding:3px 5px;font-size:11px;max-width:130px}
   .txRow .act{flex:0 0 auto}
-  #tinControl{margin-bottom:9px;padding:8px 10px;border:1px solid #2c3550;border-radius:8px;
-    background:rgba(205,210,220,.04)}
-  .tinHead{font-size:12px;color:#e8ecf8;margin-bottom:5px}
-  .tinHead b{color:#cdd2dc}
-  #tinSlider{width:100%;accent-color:#cdd2dc}
   .sysBlock{margin-bottom:8px;padding:8px;border-radius:9px;background:rgba(255,255,255,.02);
     border:1px solid #222a42}
   .sysHead{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px;color:#e8ecf8}
@@ -1028,11 +1023,6 @@
     <div class="sub" style="margin:2px 0 6px">Pick a template — it opens the flux press to forge by hand.</div>
     <div class="sub" style="margin:2px 0 4px">Seat a Forge Anvil core to assist press quality (durable — not consumed):</div>
     <div id="forgeInsertList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
-    <div id="tinControl" style="display:none">
-      <div class="tinHead">Tin fraction <b id="tinPct">12%</b>
-        <span id="tinProps" class="sub"></span></div>
-      <input type="range" id="tinSlider" min="8" max="20" value="12" step="1">
-    </div>
     <div id="forgeList"></div>
     <h2>Forged parts <span class="mono" id="forgedNote"></span></h2>
     <div class="sub" style="margin:2px 0 6px">Every part you forge is kept here as a 3D object — install it into its slot, or discard it.</div>
@@ -1988,8 +1978,8 @@ function aegisArmor(){ const o=suitOutput('alembic'); return o?Math.min(0.6,0.15
 
 /* Potions brew from CORE POWDER now, not world reagents. Each family has a signature colour, and the
    higher grades ask for more of it plus a second colour, so a good potion shelf needs a spread of core
-   hues. `needs` mixes powder-colour keys (from CORE_HUES), reagent keys, and `dust` freely — canAfford
-   /the brew UI resolve each against powder/reagents/dust. Colour map: teal→Level, azure→Standing,
+   hues. `needs` mixes powder-colour keys (from CORE_HUES), reagent keys, and `dust` freely — the brew UI
+   resolves each against powder/reagents/dust. Colour map: teal→Level, azure→Standing,
    violet→Jet (and the fine grades), rose→Brine, lime→Sandblast, amber→Blast. */
 const RECIPES={
   h:{label:'Level Solvent',needs:{teal:3,dust:2},hint:'strips a level plane — takes whole cubes at the cut'},
@@ -2041,53 +2031,22 @@ const PESTLE_PART={id:'pestle', part:'brew', shape:'pestle', pair:'mortar', labe
 function forgePairPart(shape){ return shape==='pestle' ? PESTLE_PART : FORGE_TEMPLATES.find(t=>t.shape==='mortar'); }
 // Named alloys, keyed by the sorted pair of structural metals in the cast. An unlisted pair
 // falls back to "<primary>–<secondary>". Only the historically-real ones get proper names.
-const ALLOY_NAMES={ 'copper+tin':'Bronze', 'iron+vst':'Darksteel', 'copper+vst':'Aegissteel',
-  'copper+iron':'Gunmetal', 'iron+tin':'Bell-metal', 'tin+vst':'Voidpewter',
-  // deep-tier alloys (keys are the sorted metal-id pair)
-  'adamant+vst':'Blacksteel', 'adamant+tin':'Adamantine', 'adamant+iron':'Ferradamant',
-  'adamant+aether':'Godalloy', 'aether+vst':'Voidglass', 'aether+tin':'Aetherpewter',
-  // CANONICAL base + tier-agent alloys — the ladder each tier's dedicated agent makes (see ALLOY_AGENT)
-  'iron+mang':'Steel', 'umbr+vst':'Umbrasteel', 'adamant+chro':'Adamantine', 'aether+quin':'Empyrean' };
-/* THE TIN FRACTION. Bronze-family recipes (alloyBase/alloyAgent) are forged at a
-   chosen tin percentage. Historically bronze is ~12% tin; the player may run
-   8-20%. The fraction drives three things at once:
-     cost     — more tin means more tin ore, less base metal (total ~14 units)
-     bite     — hardness rises with tin: a bonus to the part's quality
-     yield    — toughness falls with tin: harder bits shatter ore and recover
-                less usable material, softer bits waste less
-   PROP_* below are read by partScore (bite) and by mining (yield). */
-const TIN_MIN=0.08, TIN_MAX=0.20, TIN_DEFAULT=0.12;
-let tinFraction=TIN_DEFAULT;
-const ALLOY_UNITS=14;                          // total metal a bronze part consumes
-// hardness: 0 at min tin, 1 at max — lerped for the property readouts
-const tinHardness=f=>(f-TIN_MIN)/(TIN_MAX-TIN_MIN);
-// What a template costs, as {metal:amount}. Bronze fills from the tin fraction.
-function templateCost(m){
-  if (m.alloyBase){
-    const tinUnits=Math.round(ALLOY_UNITS*tinFraction);
-    return {[m.alloyBase]:ALLOY_UNITS-tinUnits, [m.alloyAgent]:Math.max(1,tinUnits)};
-  }
-  return m.alloy?m.alloy:{[m.metal]:m.cost};
-}
-// A bronze part carries its tin fraction so its properties persist after forging.
-function alloyBonus(m){
-  if (!m.alloyBase) return m.bonus||0;
-  // harder (more tin) stamps a touch higher on bite; softer gives it back in yield
-  return (m.bonus||0) + tinHardness(tinFraction)*0.06;
-}
-function canAfford(m){
-  const c=templateCost(m);
-  for (const k in c) if ((metals[k]||0)<c[k]) return false;
-  return true;
-}
-function spendCost(m){
-  const c=templateCost(m);
-  for (const k in c) metals[k]-=c[k];
-}
-function costLabel(m){
-  const c=templateCost(m);
-  return Object.entries(c).map(([k,v])=>`${v} ${ORE_INFO[k]?ORE_INFO[k].label.replace(' ore',''):k}`).join(' + ');
-}
+// The alloy ladder: each is a base metal + its ONE canonical agent (see ALLOY_AGENT), keyed by the sorted
+// metal-id pair. There are no other alloys — a cast that isn't one of these is just its majority metal. The
+// old "any two metals" combos (Gunmetal, Darksteel-from-iron+vst, …) were removed: they handed out a tier
+// bump with no dedicated agent, which made alloying incoherent (two routes to a high tier, one accidental).
+const ALLOY_NAMES={
+  'copper+tin':'Bronze',        // I  : copper  + tin          -> Bronze     (T2)
+  'iron+mang':'Steel',          // II : iron    + manganese    -> Steel      (T3)
+  'umbr+vst':'Umbrasteel',      // III: voidsteel + umbrite    -> Umbrasteel (T4)
+  'adamant+chro':'Adamantine',  // IV : adamant + chromite     -> Adamantine (T5)
+  'aether+quin':'Empyrean'      // V  : aether  + quintessence -> Empyrean   (T5, best-in-tier)
+};
+const ALLOY_MIN_FRAC=0.12;      // the agent must be at least this share of the cast to take — not a stray fleck
+// (Removed: the whole TIN-FRACTION machinery — a chosen tin% with per-template cost/bite/yield. It was dead
+//  once the flux press replaced the instant per-template forge: no template carried `alloyBase`, so the
+//  slider never rendered and templateCost/canAfford/spendCost/costLabel/alloyBonus had no callers. Alloying
+//  is now simply base + its agent in the crucible; there is no ratio to choose.)
 const FORGE_BASE_Q=0.30;        // quality with an EMPTY anvil slot — always workable
 const FORGE_ANVIL_Q=0.65;       // extra quality a perfect anvil is worth
 // The anvil seated in the press. Durable: set once, replaced only by a better
@@ -6603,17 +6562,11 @@ function breakVault(tx,ty){
     notify(ORE_INFO[oreKey]?ORE_INFO[oreKey].label:oreKey, {kick:'Cache stores', tier, desc:`This tier's tech is already yours — the vault held ${n} ${oreKey} and some dust.`, ledger:'take'});
   }
 }
-/* Toughness -> yield. A soft bronze bit (low tin) shatters ore less and gives a
-   chance at an extra unit; a hard bit (high tin) trades that away for bite. Only
-   bronze carries a `tin` fraction, so every other bit leaves this at zero. */
-function bitYieldChance(){
-  const b=drill.bit;
-  if (!b||b.tin===undefined) return 0;
-  return (1-tinHardness(b.tin))*0.5;      // up to +50% chance at min tin
-}
 function tileYield(t,silent,coreSeed,tx,ty){
-  const rm=()=>{ if (renderOres>0){ renderOres--; return 2; } return 1; };   // Ore Render doubles the next few ores
-  const q=()=>(1+(Math.random()<bitYieldChance()?1:0))*rm();
+  // Ore Render doubles the next few ores; otherwise one unit per tile. (The old bit-toughness yield bonus was
+  // removed with the tin-fraction system — no bit carries a tin ratio any more, so it always read as zero.)
+  const rm=()=>{ if (renderOres>0){ renderOres--; return 2; } return 1; };
+  const q=rm;
   if (t===T_COPPER){ const n=q(); metals.copper+=n; dust+=1; updateMeters(); mat('Copper',1,n,silent,tx,ty); }
   else if (t===T_IRON){ const n=q(); metals.iron+=n; dust+=1; updateMeters(); mat('Iron',2,n,silent,tx,ty); }
   else if (t===T_TIN){ const n=q(); metals.tin+=n; dust+=1; updateMeters(); mat('Tin',2,n,silent,tx,ty); }
@@ -7792,15 +7745,6 @@ function forgeOutputOf(core){
   core.forgeOutput=o;
   return o;
 }
-function updateTinReadout(){
-  const pct=Math.round(tinFraction*100);
-  document.getElementById('tinPct').textContent=pct+'%';
-  const h=tinHardness(tinFraction);
-  const bite=Math.round(alloyBonus({alloyBase:1,bonus:0.10})*100);
-  const yld=Math.round((1-h)*50);
-  document.getElementById('tinProps').textContent=
-    ` — hard: +${bite}% bite · soft: +${yld}% ore recovery`;
-}
 // ---- forged-part ICON: a small isometric "screenshot" drawn straight from the part's 3D voxel
 // snapshot (part.forge). Cheap 2D canvas (no second WebGL context): each filled cell is an iso
 // cube shaded by its metal, painted back-to-front so the shape reads. This is the actual forged
@@ -7938,11 +7882,6 @@ function renderForge(){
     const note=locked?`<span style="color:var(--brass)">sealed — needs the ${metalTier(k)===5?'Aether':'Adamant'} Forge (ancient cache)</span>`:oi.note+ladder;
     return `<div class="card t${metalTier(k)}"${locked?' style="opacity:.5"':''}><div class="info">${oi.label}<div class="sub">${note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
   }).join('');
-  // the tin slider shows only when a bronze recipe is available to forge
-  const hasBronze=FORGE_TEMPLATES.some(m=>m.alloyBase);
-  const tc=document.getElementById('tinControl');
-  tc.style.display=hasBronze?'':'none';
-  if (hasBronze) updateTinReadout();
   // ANVIL SLOT — the durable tool. Not consumed; it now ASSISTS the hands-on press quality.
   document.getElementById('forgeBonusNote').textContent=
     forgeAnvil?`— anvil seated: T${forgeAnvil.tier} at ${Math.round(forgeAnvil.output*100)}% → assists the press`
@@ -9445,8 +9384,8 @@ function forgeCrucLoadFromFeed(i){
   f.used=true; forgeCrucLoad.push(f.metal);
   if (!adminOn){ metals[f.metal]=Math.max(0,(metals[f.metal]||0)-1); updateMeters(); }   // the loaded ore is consumed
   if (forgeCrucLoad.length===2){
-    // commit: arm the molten budget at two nuggets' worth. (The part's metal cost is still
-    // taken at Finish via templateCost; Stage D folds the crucible load into real cost.)
+    // commit: arm the molten budget at two nuggets' worth. (The ore is consumed from the feed as it's
+    // loaded, above — the flux press has no separate per-template metal cost.)
     forgeCrucBudget=2*forgeNugSize; forgeCrucSpent=true;
     say('Crucible loaded — hold to HEAT it to molten, then pour.','good');
   }
@@ -9816,8 +9755,8 @@ function forgeResetOrient(){  forgeReorient(MAT_I.slice(), 'Template reset — l
 function leaveForge(){ forgeActive=false; fluxOn=false; forgeBeam.visible=false; }
 
 // Finish the part forged at the PRESS. Generalised from the old instant-forge button so
-// the press is the only path: it forges ANY template (drill part, suit frame, or alloy),
-// spends the recipe cost (templateCost — alloys fill from the tin fraction), and fits it
+// the press is the only path: it forges ANY template (drill part, suit frame, or alloy) from
+// the ore already poured into the mould (consumed at load time — no separate recipe cost), and fits it
 // if it beats what's seated. Quality is the hands-on POUR (forgeQualityNow, the fill %)
 // plus what a seated anvil assists and the alloy premium — the skill of the pour now sets
 // quality, where the old forge leaned entirely on the seated anvil.
@@ -9860,21 +9799,22 @@ function deriveForgeMaterial(){
     const mm=fgMetal[id]; if (mm===FORGE_ALLOY_ID) continue;   // housing alloy isn't structure
     const key=ID_TO_METAL[mm]||'copper'; tally[key]=(tally[key]||0)+1; total++;
   }
-  if (!total) return {tier:1, matName:'Copper', alloy:false, bonus:0, tin:undefined};
+  if (!total) return {tier:1, matName:'Copper', alloy:false, bonus:0};
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
   const primary=sorted[0][0];
-  // a second metal at >=12% of the cast makes it an alloy (a tier above, with a premium)
-  const secondary=(sorted[1] && sorted[1][1]/total>=0.12) ? sorted[1][0] : null;
-  if (secondary){
+  // An alloy forms ONLY when the cast pairs a base metal with ITS canonical agent (copper+tin, iron+mang,
+  // vst+umbr, adamant+chro, aether+quin — see ALLOY_AGENT). The agent must be a real part of the pour
+  // (>=ALLOY_MIN_FRAC), not a stray fleck. Any other mix — two bases, or a base with the wrong agent — is
+  // NOT an alloy: it reads as the majority metal. There is no ratio/fraction: pour the base and its agent and
+  // you get the alloy, one tier up with a quality premium. This keeps each tier's recipe to exactly one pair.
+  const secondary=(sorted[1] && sorted[1][1]/total>=ALLOY_MIN_FRAC) ? sorted[1][0] : null;
+  const paired = secondary && (ALLOY_AGENT[primary]===secondary || ALLOY_AGENT[secondary]===primary);
+  if (paired){
     const pair=[primary,secondary].sort().join('+');
-    const matName=ALLOY_NAMES[pair] || (METALS[primary].name+'–'+METALS[secondary].name);
     const tier=Math.min(5, Math.max(metalTier(primary),metalTier(secondary))+1);
-    // bronze (copper+tin) still carries its tin fraction into mining yield/bite
-    let tin;
-    if (pair==='copper+tin'){ const c=tally.copper||0, t=tally.tin||0; tin=t/Math.max(1,c+t); }
-    return {tier, matName, alloy:true, bonus:0.08+0.02*tier, tin};
+    return {tier, matName:ALLOY_NAMES[pair], alloy:true, bonus:0.08+0.02*tier};
   }
-  return {tier:metalTier(primary), matName:METALS[primary].name, alloy:false, bonus:0, tin:undefined};
+  return {tier:metalTier(primary), matName:METALS[primary].name, alloy:false, bonus:0};
 }
 function finishForge(){
   const m=forgePart;
@@ -9889,7 +9829,6 @@ function finishForge(){
   made.alloySeat=forgeAlloySeatFrac();                   // resonance potential: alloy lining the seat
   made.mix=forgeFeed.map(f=>f.metal);                    // the ore composition it was forged from
   made.forge=forgeSnapshot();                            // the persistent 3D voxel frame (drives the icon)
-  if (mat.tin!==undefined) made.tin=mat.tin;             // bronze carries its hardness into mining
   // The forged part PERSISTS — it lands on the Forged-parts shelf (with a live 3D thumbnail of
   // the item) where you can see it and install it, rather than being silently consumed. It also
   // auto-installs if it beats what's fitted, so progression still just works. No cap: keep them all.
@@ -11759,10 +11698,6 @@ for (const k in POTIONS){
   if (btn) btn.onclick=()=>selectPotion(k);
 }
 document.getElementById('planeSlider').oninput=refreshPlanePreview;
-document.getElementById('tinSlider').oninput=e=>{
-  tinFraction=(+e.target.value)/100;
-  renderForge();                 // cost and quality shift with the fraction
-};
 document.getElementById('sawSpeedBtn').onclick=()=>{
   const max=facetSpeedMax();                    // only cycle through speed plates you've recovered
   do { sawSpeedIdx=(sawSpeedIdx+1)%SAW_SPEEDS.length; } while (SAW_SPEEDS[sawSpeedIdx]>max);
