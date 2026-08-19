@@ -5706,6 +5706,9 @@ canvas.addEventListener('touchend',e=>{
    ============================================================ */
 const world2d=document.getElementById('world2d');
 const ctx=world2d.getContext('2d');
+// Baked laboratory art (assets/lab.png) — a pre-rendered workshop cutaway that replaces the
+// procedural hull in drawLab. Human-scale interiors that read only when served (not file://).
+const labImg=new Image(); labImg.src='assets/lab.png';
 const WH=150;                // world DEPTH is fixed; WIDTH is infinite (deepened for T4/T5 strata)
 const BEDROCK_Y=WH-1;        // bottom row is unbreakable floor
 const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=8,
@@ -7065,136 +7068,34 @@ let _labWinRects=[];   // per-frame window screen-rects for clickLabWing (the sp
 function drawLab(ctx,camX,camY,now){
   if (!lab.placed) return;
   const spx=lab.x*TS-camX, w=LAB_W*TS, h=LAB_H*TS;
-  if (spx>innerWidth+280||spx+w*1.6< -280) return;
-  // Render the hull LARGER than its 8x4 tile footprint so the detail has pixels to live in. A scale transform
-  // centred on the footprint's bottom-centre lets the whole body keep LOCAL coords (px/py/gy are 0..w / 0..h)
-  // while everything draws ~1.55x bigger. Window rects are transformed back to screen and stored so clicking a
-  // window still enters its wing. Collision / landing / save read the unscaled tiles and are untouched.
   const S=1.55, ancX=spx+w/2, ancY=(lab.y-lab.drop)*TS-camY+h;
+  // The lab body is now a baked art sprite (assets/lab.png). Its four-module HULL region maps
+  // onto the 8x4 tile footprint; the airlock/roof/legs overhang beyond it, exactly as the old
+  // procedural body did. Collision / landing / save still read the unscaled tiles, untouched.
+  const AW=2200, AH=900, HL=364, HR=2160, HB=730;      // art dims; hull left/right x, hull base y
+  const sc=(w*S)/(HR-HL);
+  const SX=ax=>(ancX-w/2*S)+(ax-HL)*sc, SY=ay=>ancY+(ay-HB)*sc;   // art px -> screen px
+  const dW=AW*sc, dH=AH*sc, dx=SX(0), dy=SY(0);
+  if (dx>innerWidth+160||dx+dW< -160){ _labWinRects.length=0; return; }
   _labWinRects.length=0;
   ctx.save(); ctx.textAlign='center'; ctx.lineJoin='round';
-  ctx.translate(ancX,ancY); ctx.scale(S,S); ctx.translate(-w/2,-h);
-  const px=0, py=0, gy=h;
-
-  // descent thruster while falling — twin plumes under the landing legs
-  if (lab.drop>0){
-    for (const fx of [0.32,0.68]){ const pg=ctx.createLinearGradient(0,gy,0,gy+lab.drop*TS);
-      pg.addColorStop(0,'rgba(255,225,150,0.9)'); pg.addColorStop(0.35,'rgba(232,140,50,0.5)'); pg.addColorStop(1,'rgba(232,120,40,0)');
-      ctx.fillStyle=pg; ctx.beginPath(); ctx.moveTo(px+w*fx-6,gy); ctx.lineTo(px+w*fx+6,gy); ctx.lineTo(px+w*fx+2,gy+lab.drop*TS); ctx.lineTo(px+w*fx-2,gy+lab.drop*TS); ctx.closePath(); ctx.fill(); }
-  }
-
-  // ---- HYDRAULIC LANDING LEGS (behind the hull) ----
-  for (const s of [0,1]){ const dir=s?1:-1, hipx=px+(s?w-14:14), hipy=gy-3, footx=px+(s?w+20:-20), footy=gy+13;
-    // upper brass strut
-    ctx.strokeStyle='#8a5f2c'; ctx.lineWidth=6; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(hipx,hipy); ctx.lineTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.stroke();
-    // piston cylinder + rod
-    ctx.strokeStyle=_STEEL[2]; ctx.lineWidth=7; ctx.beginPath(); ctx.moveTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.lineTo(footx,footy-3); ctx.stroke();
-    ctx.strokeStyle=_STEEL[0]; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo((hipx+footx)/2,(hipy+footy)/2-2); ctx.lineTo(footx,footy-3); ctx.stroke();
-    // hinge + foot pad
-    _labBolt(ctx,(hipx+footx)/2,(hipy+footy)/2-2,2.4);
-    ctx.fillStyle=_goldLin(ctx,footx-11,footy,footx+11,footy+5); ctx.beginPath(); _rr(ctx,footx-11,footy-2,22,6,2); ctx.fill();
-    ctx.strokeStyle='#4a3216'; ctx.lineWidth=1; ctx.stroke(); _labBolt(ctx,footx-6,footy+1,1.4); _labBolt(ctx,footx+6,footy+1,1.4);
-  }
-  ctx.lineCap='butt';
-
-  // ---- BUSY PIPEWORK ROOF (drawn before the hull so pipes tuck under the top rail) ----
-  const roofY=py-3;
-  _labPipe(ctx,[px+w*0.18,roofY-6,px+w*0.5,roofY-11,px+w*0.82,roofY-6],3.5);   // spine pipe
-  // smokestack (left of centre)
-  const skx=px+w*0.30; ctx.fillStyle=_steelLin(ctx,skx-6,roofY-20,skx+6,roofY); ctx.beginPath(); _rr(ctx,skx-5,roofY-20,10,20,2); ctx.fill();
-  ctx.fillStyle='#20242c'; ctx.beginPath(); _rr(ctx,skx-8,roofY-24,16,5,2); ctx.fill();
-  ctx.fillStyle='rgba(120,130,150,0.25)'; ctx.beginPath(); ctx.arc(skx,roofY-30,5,0,7); ctx.arc(skx+3,roofY-36,7,0,7); ctx.fill();
-  // valve wheels
-  _labValve(ctx,px+w*0.60,roofY-8,6); _labValve(ctx,px+w*0.78,roofY-6,5);
-  // bolted dome cap (right)
-  ctx.fillStyle=_steelLin(ctx,px+w*0.88-8,roofY-9,px+w*0.88+8,roofY); ctx.beginPath(); ctx.arc(px+w*0.88,roofY,8,Math.PI,0); ctx.fill(); ctx.strokeStyle='#20242c'; ctx.lineWidth=1; ctx.stroke();
-  // antenna
-  ctx.strokeStyle=_STEEL[1]; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px+w*0.94,roofY-2); ctx.lineTo(px+w*0.94,roofY-20); ctx.stroke();
-  ctx.fillStyle='#E0523D'; ctx.beginPath(); ctx.arc(px+w*0.94,roofY-21,2.2,0,7); ctx.fill();
-  // POWER-CORE DOME (centre) — brass housing, glass, glowing teal core
-  const rcx=px+w*0.5, coreP=0.55+0.45*Math.abs(Math.sin(now*0.003));
-  ctx.fillStyle=_goldLin(ctx,rcx-16,roofY-16,rcx+16,roofY); ctx.beginPath(); ctx.arc(rcx,roofY,16,Math.PI,0); ctx.fill();
-  ctx.strokeStyle='#4a3216'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(rcx,roofY,16,Math.PI,0); ctx.stroke();
-  ctx.save(); ctx.beginPath(); ctx.arc(rcx,roofY,12,Math.PI,0); ctx.clip();
-  const cg=ctx.createRadialGradient(rcx,roofY-2,1,rcx,roofY,12); cg.addColorStop(0,`rgba(150,255,230,${0.7+0.3*coreP})`); cg.addColorStop(1,'rgba(20,60,55,0.6)');
-  ctx.fillStyle=cg; ctx.fillRect(rcx-12,roofY-12,24,12); ctx.restore();
-  ctx.save(); ctx.shadowColor='#4FE3C1'; ctx.shadowBlur=12*coreP; ctx.strokeStyle='rgba(120,240,215,0.7)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(rcx,roofY,12,Math.PI,0); ctx.stroke(); ctx.restore();
-  for(let k=0;k<5;k++) _labBolt(ctx,rcx+Math.cos(Math.PI+k*Math.PI/4)*14,roofY+Math.sin(Math.PI+k*Math.PI/4)*14,1.5);
-
-  // ---- HULL: weathered bone plating with a dark reinforced frame ----
-  const hull=ctx.createLinearGradient(0,py,0,gy);
-  hull.addColorStop(0,'#dcd2b6'); hull.addColorStop(0.12,'#c2b898'); hull.addColorStop(0.55,'#a49a80'); hull.addColorStop(1,'#78705d');
-  ctx.fillStyle=hull; _rr(ctx,px,py,w,h,6); ctx.fill();
-  // weathering blotches (deterministic)
-  ctx.save(); _rr(ctx,px,py,w,h,6); ctx.clip();
-  let sd=(lab.x*2654435761)>>>0; const rnd=()=>{ sd=(sd*1664525+1013904223)>>>0; return sd/4294967296; };
-  ctx.fillStyle='rgba(90,80,60,0.16)'; for(let k=0;k<26;k++){ ctx.beginPath(); ctx.arc(px+rnd()*w,py+rnd()*h,1+rnd()*3,0,7); ctx.fill(); }
-  ctx.restore();
-  // dark reinforced inner frame
-  ctx.strokeStyle='#2b2820'; ctx.lineWidth=3; _rr(ctx,px+2,py+2,w-4,h-4,5); ctx.stroke();
-  // engraved arcane circles on the top plating band, between the bays
-  for(let i=0;i<LAB_W/2;i++) _labArcane(ctx,px+i*2*TS+TS,py+11,7);
-  // brass corner brackets
-  _labBracket(ctx,px+3,py+3,11,4,1,1); _labBracket(ctx,px+w-3,py+3,11,4,-1,1);
-  _labBracket(ctx,px+3,gy-3,11,4,1,-1); _labBracket(ctx,px+w-3,gy-3,11,4,-1,-1);
-  // brass ribs between bays, bolted
-  for(let i=1;i<LAB_W/2;i++){ const sx=px+i*2*TS; ctx.fillStyle=_goldLin(ctx,sx-3,py,sx+3,py); ctx.fillRect(sx-3,py+5,6,h-10);
-    ctx.strokeStyle='#4a3216'; ctx.lineWidth=1; ctx.strokeRect(sx-3,py+5,6,h-10); _labBolt(ctx,sx,py+12,1.5); _labBolt(ctx,sx,gy-12,1.5); }
-  // rivet rows along top & bottom
-  _labRivets(ctx,px+8,py+5,px+w-8,py+5,11,1.4); _labRivets(ctx,px+8,gy-5,px+w-8,gy-5,11,1.4);
-  ctx.strokeStyle='#20242c'; ctx.lineWidth=1.5; _rr(ctx,px,py,w,h,6); ctx.stroke();
-
-  // ---- VAULT AIRLOCK on the near end (left overhang) ----
-  const alw=26, alx=px-alw, aly=py+4, alh=h-8;
-  ctx.fillStyle=_steelLin(ctx,alx,aly,alx+alw,aly+alh); ctx.beginPath(); _rr(ctx,alx,aly,alw+6,alh,5); ctx.fill();
-  ctx.strokeStyle='#20242c'; ctx.lineWidth=1.5; _rr(ctx,alx,aly,alw+6,alh,5); ctx.stroke();
-  _labRivets(ctx,alx+3,aly+4,alx+3,aly+alh-4,10,1.3);
-  const adx=alx+alw*0.5, ady=py+h*0.5, ar=13;
-  ctx.fillStyle='#161a20'; ctx.beginPath(); ctx.arc(adx,ady,ar,0,7); ctx.fill();                 // door well
-  ctx.strokeStyle=_goldLin(ctx,adx-ar,ady,adx+ar,ady); ctx.lineWidth=3; ctx.beginPath(); ctx.arc(adx,ady,ar,0,7); ctx.stroke();  // brass ring
-  ctx.strokeStyle='rgba(74,58,32,0.6)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(adx,ady,ar*0.68,0,7); ctx.stroke();
-  for(let k=0;k<10;k++){ const a=k*Math.PI/5; _labBolt(ctx,adx+Math.cos(a)*ar,ady+Math.sin(a)*ar,1.4); }   // ring bolts
-  _labArcane(ctx,adx,ady,ar*0.55);                                                                // engraved sigil
-  _labValve(ctx,adx,ady,ar*0.4);                                                                  // central handle
-  ctx.save(); ctx.shadowColor='#4FE3C1'; ctx.shadowBlur=6; ctx.fillStyle='#4FE3C1'; ctx.beginPath(); ctx.arc(adx,ady-ar-3,2,0,7); ctx.fill(); ctx.restore();  // indicator light
-  // small runic control panel
-  ctx.fillStyle='#10161e'; ctx.beginPath(); _rr(ctx,alx+3,py+h-16,10,11,2); ctx.fill();
-  ctx.fillStyle='#4FE3C1'; for(let k=0;k<3;k++){ ctx.globalAlpha=0.4+0.5*((now*0.004+k)%1); ctx.fillRect(alx+5,py+h-14+k*3,6,1.6);} ctx.globalAlpha=1;
-
-  // ---- STAIRCASE down from the airlock threshold (with a handrail) ----
-  const stepN=4, st0x=alx-4, st0y=py+h*0.62, stdx=-9, stdy=(gy+8-st0y)/stepN;
-  for(let s=0;s<stepN;s++){ const sx=st0x+s*stdx, sy=st0y+s*stdy;
-    ctx.fillStyle=_steelLin(ctx,sx,sy,sx,sy+stdy); ctx.beginPath(); _rr(ctx,sx+stdx,sy,-stdx+2,4,1); ctx.fill();   // tread
-    ctx.fillStyle='#2b3038'; ctx.fillRect(sx+stdx,sy+4,-stdx+2,stdy-4);                                            // riser
-    ctx.strokeStyle='#20242c'; ctx.lineWidth=1; ctx.strokeRect(sx+stdx,sy,-stdx+2,4); }
-  // handrail: posts + diagonal
-  ctx.strokeStyle='#8a5f2c'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(st0x-2,st0y-10); ctx.lineTo(st0x+stepN*stdx,st0y+stepN*stdy-10); ctx.stroke();
-  for(let s=0;s<=stepN;s+=2){ const sx=st0x+s*stdx, sy=st0y+s*stdy; ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx,sy-11); ctx.stroke(); }
-
-  // ---- FOUR REINFORCED WINDOW BAYS ----
+  // descent thruster plumes while landing (under the legs), behind the hull
+  if (lab.drop>0){ for (const fx of [0.34,0.66]){ const bx=SX(HL)+(SX(HR)-SX(HL))*fx, by=SY(HB);
+      const pg=ctx.createLinearGradient(0,by,0,by+lab.drop*TS); pg.addColorStop(0,'rgba(255,225,150,0.9)'); pg.addColorStop(0.35,'rgba(232,140,50,0.5)'); pg.addColorStop(1,'rgba(232,120,40,0)');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.moveTo(bx-7,by); ctx.lineTo(bx+7,by); ctx.lineTo(bx+3,by+lab.drop*TS); ctx.lineTo(bx-3,by+lab.drop*TS); ctx.closePath(); ctx.fill(); } }
+  // the baked hull. Until the PNG decodes, skip a frame rather than draw a placeholder box.
+  if (labImg.complete && labImg.naturalWidth){ ctx.imageSmoothingEnabled=true; ctx.drawImage(labImg,dx,dy,dW,dH); }
+  // window click-rects + the live near-wing highlight / label / ENTER prompt (gameplay feedback the
+  // static art cannot carry). Window geometry mirrors lab_art's roomInterior (WIN_INS, WY, WW, WH).
+  const M0=380, MW=445, WIN_INS=26, WY=196, WW=393, WHt=468;
   const near=labWingAt(player.x,player.y);
-  LAB_WINGS.forEach((wing,i)=>{
-    const bx0=px+i*2*TS, wx=bx0+7, ww=2*TS-14, wy=py+18, wh=h-34, cx=wx+ww/2, cy=wy+wh/2;
-    const isNear=near&&near.key===wing.key;
-    _labWinRects.push({key:wing.key, view:wing.view, x:ancX+(wx-w/2)*S, y:ancY+(wy-h)*S, w:ww*S, h:wh*S});
-    // deep recess (dark inset behind the glass)
-    ctx.fillStyle='#080b12'; ctx.beginPath(); _rr(ctx,wx-1,wy-1,ww+2,wh+2,4); ctx.fill();
-    ctx.save(); _rr(ctx,wx,wy,ww,wh,3); ctx.clip();
-    const gg=ctx.createRadialGradient(cx,cy+wh*0.25,2,cx,cy,ww); gg.addColorStop(0,wing.col); gg.addColorStop(0.5,wing.col+'55'); gg.addColorStop(1,'rgba(5,8,14,0.95)');
-    ctx.globalAlpha=isNear?0.9:0.55; ctx.fillStyle=gg; ctx.fillRect(wx,wy,ww,wh); ctx.globalAlpha=1;
-    _labWingMachine(ctx,i,cx,cy+wh*0.06,ww*0.4,wing.col,now);
-    // glass sheen
-    ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.moveTo(wx,wy); ctx.lineTo(wx+ww*0.5,wy); ctx.lineTo(wx,wy+wh*0.5); ctx.closePath(); ctx.fill();
-    ctx.restore();
-    // beveled brass + dark frame with bolted corners
-    ctx.strokeStyle='#20242c'; ctx.lineWidth=4; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke();
-    ctx.strokeStyle=_goldLin(ctx,wx,wy,wx+ww,wy+wh); ctx.lineWidth=2; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke();
-    for(const [bxp,byp] of [[wx+3,wy+3],[wx+ww-3,wy+3],[wx+3,wy+wh-3],[wx+ww-3,wy+wh-3]]) _labBolt(ctx,bxp,byp,1.6);
-    if (isNear){       // the wing the player stands at lights up, names itself, shows the Enter prompt
-      ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,wx,wy,ww,wh,3); ctx.stroke(); ctx.restore();
-      ctx.fillStyle=wing.col; ctx.font='600 12px Georgia'; ctx.fillText(wing.label,px+w/2,py-40);
+  LAB_WINGS.forEach((wing,i)=>{ const mx=M0+i*MW, rx=SX(mx+WIN_INS), ry=SY(WY), rw=WW*sc, rh=WHt*sc;
+    _labWinRects.push({key:wing.key, view:wing.view, x:rx, y:ry, w:rw, h:rh});
+    if (near&&near.key===wing.key){
+      ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,rx,ry,rw,rh,4); ctx.stroke(); ctx.restore();
+      ctx.fillStyle=wing.col; ctx.font='600 12px Georgia'; ctx.fillText(wing.label,(rx+rw/2),dy+16);
       ctx.font='bold 11px "Courier New",monospace'; ctx.fillStyle='#f2d78e';
-      const ep=0.7+0.3*Math.abs(Math.sin(now*0.005)); ctx.globalAlpha=ep; ctx.fillText('▸ ENTER LAB',px+w/2,gy+30); ctx.globalAlpha=1;
+      const ep=0.7+0.3*Math.abs(Math.sin(now*0.005)); ctx.globalAlpha=ep; ctx.fillText('▸ ENTER LAB',(rx+rw/2),SY(HB)+26); ctx.globalAlpha=1;
     }
   });
   ctx.restore(); ctx.textAlign='left';
