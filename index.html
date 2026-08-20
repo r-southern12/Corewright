@@ -7070,9 +7070,9 @@ function drawLab(ctx,camX,camY,now){
   const spx=lab.x*TS-camX, w=LAB_W*TS, h=LAB_H*TS;
   const S=1.55, ancX=spx+w/2, ancY=(lab.y-lab.drop)*TS-camY+h;
   // The lab body is now a baked art sprite (assets/lab.png). Its four-module HULL region maps
-  // onto the 8x4 tile footprint; the airlock/roof/legs overhang beyond it, exactly as the old
+  // onto the 8x4 tile footprint; the airlock/roof/skid overhang beyond it, exactly as the old
   // procedural body did. Collision / landing / save still read the unscaled tiles, untouched.
-  const AW=2200, AH=900, HL=364, HR=2160, HB=730;      // art dims; hull left/right x, hull base y
+  const AW=2200, AH=900, HL=364, HR=2160, HB=805;      // art dims; hull left/right x, flat-base y (ship rests on its skid)
   const sc=(w*S)/(HR-HL);
   const SX=ax=>(ancX-w/2*S)+(ax-HL)*sc, SY=ay=>ancY+(ay-HB)*sc;   // art px -> screen px
   const dW=AW*sc, dH=AH*sc, dx=SX(0), dy=SY(0);
@@ -7087,7 +7087,7 @@ function drawLab(ctx,camX,camY,now){
   if (labImg.complete && labImg.naturalWidth){ ctx.imageSmoothingEnabled=true; ctx.drawImage(labImg,dx,dy,dW,dH); }
   // window click-rects + the live near-wing highlight / label / ENTER prompt (gameplay feedback the
   // static art cannot carry). Window geometry mirrors lab_art's roomInterior (WIN_INS, WY, WW, WH).
-  const M0=380, MW=445, WIN_INS=26, WY=196, WW=393, WHt=468;
+  const M0=380, MW=445, WIN_INS=111, WY=198, WW=224, WHt=450;   // centred bezel-framed hatch (art: wx=mx+MW*0.28, ww=MW*0.44, ±14 bezel)
   const near=labWingAt(player.x,player.y);
   LAB_WINGS.forEach((wing,i)=>{ const mx=M0+i*MW, rx=SX(mx+WIN_INS), ry=SY(WY), rw=WW*sc, rh=WHt*sc;
     _labWinRects.push({key:wing.key, view:wing.view, x:rx, y:ry, w:rw, h:rh});
