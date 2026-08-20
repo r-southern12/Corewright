@@ -5709,6 +5709,9 @@ const ctx=world2d.getContext('2d');
 // Baked laboratory art (assets/lab.png) — a pre-rendered workshop cutaway that replaces the
 // procedural hull in drawLab. Human-scale interiors that read only when served (not file://).
 const labImg=new Image(); labImg.src='assets/lab.png';
+// Same ship with the four hatch INTERIORS revealed. drawLab reveals one hatch at a time (a shutter
+// parting from the centre) over the closed sprite when the player is beside that wing.
+const labOpenImg=new Image(); labOpenImg.src='assets/lab_open.png';
 const WH=150;                // world DEPTH is fixed; WIDTH is infinite (deepened for T4/T5 strata)
 const BEDROCK_Y=WH-1;        // bottom row is unbreakable floor
 const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=8,
@@ -7065,6 +7068,7 @@ function _labWingMachine(ctx,i,cx,cy,r,col,now){
   ctx.restore();
 }
 let _labWinRects=[];   // per-frame window screen-rects for clickLabWing (the sprite is scaled, so tiles don't map)
+let _labOpenT=[0,0,0,0], _labOpenLast=0;   // per-wing hatch-open animation (0=shut, 1=fully revealed) + last timestamp
 function drawLab(ctx,camX,camY,now){
   if (!lab.placed) return;
   const spx=lab.x*TS-camX, w=LAB_W*TS, h=LAB_H*TS;
@@ -7088,9 +7092,25 @@ function drawLab(ctx,camX,camY,now){
   // window click-rects + the live near-wing highlight / label / ENTER prompt (gameplay feedback the
   // static art cannot carry). Window geometry mirrors lab_art's roomInterior (WIN_INS, WY, WW, WH).
   const M0=380, MW=445, WIN_INS=111, WY=198, WW=224, WHt=450;   // centred bezel-framed hatch (art: wx=mx+MW*0.28, ww=MW*0.44, ±14 bezel)
+  const OP_INS=124.6, OP_WY=212, OP_WW=195.8, OP_WH=422;         // the inner OPENING (interior region, no bezel) baked into lab_open.png
   const near=labWingAt(player.x,player.y);
+  // advance the per-wing open animation (frame-rate independent; ~0.28s to fully part)
+  const dt=_labOpenLast? Math.min(0.05,(now-_labOpenLast)/1000):0; _labOpenLast=now;
   LAB_WINGS.forEach((wing,i)=>{ const mx=M0+i*MW, rx=SX(mx+WIN_INS), ry=SY(WY), rw=WW*sc, rh=WHt*sc;
     _labWinRects.push({key:wing.key, view:wing.view, x:rx, y:ry, w:rw, h:rh});
+    const nearThis=near&&near.key===wing.key;
+    _labOpenT[i]=Math.max(0,Math.min(1,_labOpenT[i]+(nearThis?1:-1)*dt/0.28));
+    // reveal the interior by drawing the open sprite through a shutter parting from the centre
+    const t=_labOpenT[i];
+    if (t>0.02 && labOpenImg.complete && labOpenImg.naturalWidth){
+      const ox=SX(mx+OP_INS), oy=SY(OP_WY), ow=OP_WW*sc, oh=OP_WH*sc, band=t*oh;
+      ctx.save(); ctx.beginPath(); ctx.rect(ox,oy+(oh-band)/2,ow,band); ctx.clip();
+      ctx.drawImage(labOpenImg,dx,dy,dW,dH); ctx.restore();
+      // lit seams on the parting shutter edges
+      if (t<0.98){ ctx.strokeStyle='rgba(255,232,150,0.5)'; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(ox,oy+(oh-band)/2); ctx.lineTo(ox+ow,oy+(oh-band)/2);
+        ctx.moveTo(ox,oy+(oh+band)/2); ctx.lineTo(ox+ow,oy+(oh+band)/2); ctx.stroke(); }
+    }
     if (near&&near.key===wing.key){
       ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,rx,ry,rw,rh,4); ctx.stroke(); ctx.restore();
       // no floating building title — only the small contextual ENTER prompt when in range
