@@ -6438,17 +6438,19 @@ function gateReqTier(tx,ty){
   if (ty<0||ty>=WH) return 0;
   if (getTile(tx,ty)!==T_WALL) return 0;
   const need=getGate(tx,ty)||1;
-  return (drillPower()/need>=0.95) ? 0 : need;
+  // A COMPLETE rig of the vault's tier opens it — forged frame+bit plus a matching core+cell all of that
+  // tier IS "100% of tier N", and that must be enough to crack a tier-N cache (else the tools that let you
+  // refine tier-N gear are walled behind gear you can't yet build: a maxed T1 rig makes only ~1.0 power, so
+  // the old power>=0.95×tier + resist-1.5 gate locked T1 gear out of its own T1 caches). Raw power
+  // >=0.95×tier still opens it too, so an overkill rig from a higher tier breaches down.
+  return (coreSetTier()>=need || drillPower()/need>=0.95) ? 0 : need;
 }
-// Mining speed for any tile, with caches handled specially. A cache (T_WALL) is
-// gated by gateReqTier (power >= 0.95×gateTier), NOT by its flat TILE_INFO resist:
-// that resist was 3.4 for every cache, which silently demanded T3-level power to
-// mine even a T1 vault the gate had already unlocked. Once unlocked we want ANY
-// gear that cleared the gate to be able to dig it, so give the cache a tier-scaled
-// resist (1.2+0.3·gate) chosen so 0.60·resist ≤ 0.95·gate for every tier — the mine
-// threshold always sits below the gate threshold — and pass tier 0 to skip TIER_GATE.
+// Mining speed for any tile, with caches handled specially. A cache (T_WALL) is gated by gateReqTier,
+// NOT by its flat TILE_INFO resist (3.4 — that silently demanded T3 power for every vault). Once the gate
+// is cleared we give the cache a resist SCALED TO ITS TIER (0.85×gate) so a complete tier-g rig (power ~g)
+// digs its own tier's vault comfortably, while a rougher rig still crawls; pass tier 0 to skip TIER_GATE.
 function tileMineSpeed(t,tx,ty){
-  if (t===T_WALL){ const g=getGate(tx,ty)||1; return mineSpeed(1.2+0.3*g, 0); }
+  if (t===T_WALL){ const g=getGate(tx,ty)||1; return mineSpeed(g*0.85, 0); }
   return mineSpeed(TILE_INFO[t].resist, TILE_TIER[t]);
 }
 
