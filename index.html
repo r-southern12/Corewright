@@ -7123,10 +7123,8 @@ function drawLab(ctx,camX,camY,now){
         ctx.moveTo(ox,oy+(oh+band)/2); ctx.lineTo(ox+ow,oy+(oh+band)/2); ctx.stroke(); }
     }
     if (near&&near.key===wing.key){
+      // the opened hatch + the coloured near-wing outline are the affordance; no ENTER prompt text
       ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,rx,ry,rw,rh,4); ctx.stroke(); ctx.restore();
-      // no floating building title — only the small contextual ENTER prompt when in range
-      ctx.font='bold 11px "Courier New",monospace'; ctx.fillStyle='#f2d78e';
-      const ep=0.7+0.3*Math.abs(Math.sin(now*0.005)); ctx.globalAlpha=ep; ctx.fillText('▸ ENTER LAB',(rx+rw/2),SY(HB)+26); ctx.globalAlpha=1;
     }
   });
   ctx.restore(); ctx.textAlign='left';
