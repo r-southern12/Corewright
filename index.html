@@ -6203,7 +6203,7 @@ function startLabDescent(){
 function settleLab(){
   const deepestUnder=labGroundY(lab.x);
   const S=1.55, HL=364, HR=2160, cen=lab.x+LAB_W/2;
-  const clearL=Math.floor(cen+((180-HL)/(HR-HL)-0.5)*LAB_W*S);     // airlock-left edge (half-width airlock), in tiles
+  const clearL=Math.floor(cen+((356-HL)/(HR-HL)-0.5)*LAB_W*S);     // hull-left edge (no airlock), in tiles
   const clearR=Math.ceil (cen+((2160-HL)/(HR-HL)-0.5)*LAB_W*S);    // hull-right edge
   const clearT=Math.floor(lab.y-1.6);                              // roof/tank overhang top
   for (let cx=clearL; cx<=clearR; cx++){
