@@ -924,6 +924,9 @@
       <span class="jetLbl">jet charge</span>
       <div class="jetTrack"><div class="jetFill" id="jetFill_dig"></div></div>
     </div>
+    <div class="row" id="adminCleanRow" style="display:none">
+      <button class="act" id="adminCleanDig" style="border-color:var(--amber);color:var(--amber)">⚡ Clean core</button>
+    </div>
   </div>
   <div id="tools_seatbench" style="display:none">
     <div class="toolhint">The housing is cut through the wall ahead — the opening is the template's own
@@ -11624,7 +11627,7 @@ function adminSpawn(tier){
 document.getElementById('spawnT1').onclick=()=>adminSpawn(1);
 document.getElementById('spawnT2').onclick=()=>adminSpawn(2);
 document.getElementById('spawnT3').onclick=()=>adminSpawn(3);
-document.getElementById('stripBtn').onclick=()=>{
+function adminCleanCore(){
   if (!activeCore){ say('Clamp a core in first.','warn'); return; }
   const doomed=new Set(voxels.filter(v=>isMatrix(v.cell)).map(v=>v.mesh));
   if (!doomed.size){ say('No matrix on this one.','warn'); return; }
@@ -11632,7 +11635,11 @@ document.getElementById('stripBtn').onclick=()=>{
   markCleanIfDone(activeCore);
   refreshTint(); liveOutput(); updateDigHud();
   say('Matrix stripped.','good');
-};
+}
+document.getElementById('stripBtn').onclick=adminCleanCore;
+document.getElementById('adminCleanDig').onclick=adminCleanCore;
+// the on-bench admin clean button rides the excavation toolbar, only in admin mode
+function syncAdminDig(){ const r=document.getElementById('adminCleanRow'); if (r) r.style.display=(adminOn&&view==='dig')?'':'none'; }
 // build one travel button per registered planet; disable the current world
 (function buildTravelButtons(){
   const host=document.getElementById('travelBtns');
@@ -11890,6 +11897,8 @@ function showView(name){
   for (const m of ['dig','cleave','brute','facet','polish','seatbench'])
     document.getElementById('tools_'+m).style.display=(name===m)?'':'none';
   if (name==='dig'){ updateDigHud(); }
+  syncAdminDig();                            // show the admin clean-core button on the excavation bench
+
   if (name==='seatbench') enterSeatBench(); else if (seatBenchOn) leaveSeatBench();
   if (isShaping) buildStationBar(name);
   sawA.visible=(name==='facet');
