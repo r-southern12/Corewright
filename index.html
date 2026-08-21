@@ -6195,22 +6195,27 @@ function startLabDescent(){
   lab.placed=true;
   say('The lab breaks atmosphere and comes down beside you.','good');
 }
-// Clear the footprint and level the ground it settles onto.
+// Clear the ground the ship occupies and level what it settles onto.
+/* The hull sprite is drawn scaled (~1.55x) and centred, so it overhangs the 8-tile SAVE footprint
+   on every side (airlock left, roof/tanks above, skid wide). Landing scours ALL terrain across that
+   VISUAL box so nothing pokes through the ship, and the player salvages any ore/reagents/cores the
+   thrusters turn up. Below the save footprint we still pack dirt so the hull rests level. */
 function settleLab(){
   const deepestUnder=labGroundY(lab.x);
-  for (let i=0;i<LAB_W;i++){
-    const cx=lab.x+i;
-    for (let j=0;j<LAB_H;j++){
-      const t=getTile(cx,lab.y+j);
-      if (t!==T_AIR&&t!==T_BEDROCK) setTile(cx,lab.y+j,T_AIR);
-      setSeen(cx,lab.y+j,1);
+  const S=1.55, HL=364, HR=2160, cen=lab.x+LAB_W/2;
+  const clearL=Math.floor(cen+((40-HL)/(HR-HL)-0.5)*LAB_W*S);      // airlock-left edge, in tiles
+  const clearR=Math.ceil (cen+((2160-HL)/(HR-HL)-0.5)*LAB_W*S);    // hull-right edge
+  const clearT=Math.floor(lab.y-1.6);                              // roof/tank overhang top
+  for (let cx=clearL; cx<=clearR; cx++){
+    for (let cy=clearT; cy<=lab.y+LAB_H-1; cy++){
+      const t=getTile(cx,cy);
+      if (t!==T_AIR&&t!==T_BEDROCK){ tileYield(t,true,undefined,cx,cy); setTile(cx,cy,T_AIR); }   // salvage, then clear
+      setSeen(cx,cy,1);
     }
-    /* Pack dirt beneath the hull. The footprint sits at the DEEPEST surface
-       under it, so shallower columns have open air below and would leave the lab
-       floating; every column is filled down to its own original ground. */
-    for (let j=lab.y+LAB_H;j<=deepestUnder;j++){
-      if (getTile(cx,j)===T_AIR) setTile(cx,j,T_DIRT);
-    }
+  }
+  // Pack dirt beneath the save footprint so shallow columns don't leave the hull floating.
+  for (let i=0;i<LAB_W;i++){ const cx=lab.x+i;
+    for (let j=lab.y+LAB_H;j<=deepestUnder;j++){ if (getTile(cx,j)===T_AIR) setTile(cx,j,T_DIRT); }
     setSeen(cx,lab.y+LAB_H,1);
   }
 }
@@ -6233,9 +6238,15 @@ function clickLabWing(sx,sy){
 function labWingAt(px,py){
   if (!lab.placed||lab.drop>0) return null;
   if (py<lab.y-1||py>lab.y+LAB_H+1) return null;
-  const off=Math.floor(px-lab.x);
-  if (off<0||off>=LAB_W) return null;
-  return LAB_WINGS[Math.floor(off/2)]||null;
+  // The hull sprite is drawn scaled (S=1.55) and centred on the footprint, so the four hatches spread
+  // WIDER than the 8-tile footprint — the outer two (Lapidary/Suit) sit near/beyond its edges. Map the
+  // player to the nearest VISUAL hatch (same art geometry drawLab uses), not the raw tile->wing split.
+  const S=1.55, HL=364, HR=2160, cen=lab.x+LAB_W/2;
+  let best=-1, bestD=1e9;
+  for (let i=0;i<4;i++){ const wx=cen+((380+i*445+222.5-HL)/(HR-HL)-0.5)*LAB_W*S, d=Math.abs(px-wx);
+    if (d<bestD){ bestD=d; best=i; } }
+  const halfW=(195.8/(HR-HL))*LAB_W*S/2;        // half a visual hatch, in tiles
+  return bestD>halfW+0.7 ? null : LAB_WINGS[best];
 }
 // Walk into a wing. Each maps to the screen that wing houses.
 function enterWing(wing){
@@ -11933,8 +11944,8 @@ document.getElementById('finishChip').onclick=()=>{
 // Options live behind the gear, top-right, reachable from anywhere.
 document.getElementById('optsBtn').onclick=()=>showView(view==='opts'?'exped':'opts');
 document.getElementById('x_lab').onclick=()=>showView('exped');
-document.getElementById('x_brew').onclick=()=>showView('lab');
-document.getElementById('x_forge').onclick=()=>showView('lab');
+document.getElementById('x_brew').onclick=()=>showView('exped');   // wings exit to the SURFACE, not via the Suit/lab hub
+document.getElementById('x_forge').onclick=()=>showView('exped');
 // The hand-forge: enter the 3D press to shape a copper frame by placing and
 // whacking, instead of the instant stamp. Commits 10 copper only on Finish.
 document.getElementById('fbFinish').onclick=finishForge;
@@ -11978,7 +11989,7 @@ document.getElementById('fbReset').onclick=forgeResetOrient;
 document.getElementById('fbQuench').onclick=forgeQuench;
 document.getElementById('fbPower').onclick=forgeCyclePower;
 document.getElementById('fbLeave').onclick=()=>{ _forgeStash={}; showView('forge'); };
-document.getElementById('x_lapidary').onclick=()=>showView('lab');
+document.getElementById('x_lapidary').onclick=()=>showView('exped');   // exit to the SURFACE, not the Suit/lab hub
 
 // ---------- shared ui glue ----------
 const statusEl=document.getElementById('status');
