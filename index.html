@@ -5709,12 +5709,1606 @@ canvas.addEventListener('touchend',e=>{
    ============================================================ */
 const world2d=document.getElementById('world2d');
 const ctx=world2d.getContext('2d');
-// Baked laboratory art (assets/lab.png) — a pre-rendered workshop cutaway that replaces the
-// procedural hull in drawLab. Human-scale interiors that read only when served (not file://).
-const labImg=new Image(); labImg.src='assets/lab.png';
-// Same ship with the four hatch INTERIORS revealed. drawLab reveals one hatch at a time (a shutter
-// parting from the centre) over the closed sprite when the player is beside that wing.
-const labOpenImg=new Image(); labOpenImg.src='assets/lab_open.png';
+// (Former baked PNGs assets/lab.png / lab_open.png are superseded by the vector v23 exterior baked
+//  below; the drawLab reveal that used lab_open.png is gone with this exterior-only source.)
+// -- Lab exterior artwork (corewright_lab_v23, 1962x801 logical coordinate system). Baked ONCE
+//    to an offscreen canvas and blitted in drawLab -- the same baked-sprite pattern as the tile
+//    bases and the assets/lab.png it replaces. The body below is the supplied source of truth,
+//    verbatim (not redesigned or simplified); only the `#c` canvas/ctx acquisition is swapped for
+//    the offscreen bake target. Wrapped in an IIFE so its many short helper names (plate/bolt/pipe/
+//    valve/gauge/pathChamfer...) never collide with the game's globals.
+const LAB_ART_W=1962, LAB_ART_H=801;
+let labArtCv=null;
+function bakeLabExterior(){
+  const BAKE=2;   // supersample so the vector art stays crisp when scaled to the footprint
+  const cv=document.createElement('canvas'); cv.width=LAB_ART_W*BAKE; cv.height=LAB_ART_H*BAKE;
+  const _bctx=cv.getContext('2d'); _bctx.setTransform(BAKE,0,0,BAKE,0,0);
+  (function(ctx){
+ctx.imageSmoothingEnabled=true;
+
+const C={
+  ivory0:'#d9caae', ivory1:'#c6b99b', ivory2:'#a89475', ivory3:'#6f685b',
+  steel0:'#3b4244', steel1:'#252b2c', steel2:'#171c1e', steel3:'#0c1011',
+  brass0:'#b28a4a', brass1:'#8e6533', brass2:'#5e4122', brass3:'#342319',
+  teal0:'#7aa09a', teal1:'#4c7772', teal2:'#315753', teal3:'#1e3937',
+  violet0:'#8a6ba1', violet1:'#624779', violet2:'#3f3150',
+  lamp:'#d8b264', soot:'rgba(20,18,14,.35)', black:'#050708'
+};
+
+function pathChamfer(x,y,w,h,c=8){
+ const p=new Path2D(); p.moveTo(x+c,y); p.lineTo(x+w-c,y); p.lineTo(x+w,y+c); p.lineTo(x+w,y+h-c); p.lineTo(x+w-c,y+h); p.lineTo(x+c,y+h); p.lineTo(x,y+h-c); p.lineTo(x,y+c); p.closePath(); return p;
+}
+function fillStroke(p,fill,stroke=C.steel3,lw=2){ctx.fillStyle=fill;ctx.fill(p);ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke(p)}
+function gradRect(x,y,w,h,stops,vertical=true){const g=vertical?ctx.createLinearGradient(x,y,x,y+h):ctx.createLinearGradient(x,y,x+w,y);stops.forEach(s=>g.addColorStop(s[0],s[1]));ctx.fillStyle=g;ctx.fillRect(x,y,w,h);}
+function plate(x,y,w,h,fill=C.ivory1,c=6,lw=2){const p=pathChamfer(x,y,w,h,c);fillStroke(p,fill,C.steel2,lw);ctx.save();ctx.clip(p);gradRect(x+2,y+2,w-4,6,[[0,'rgba(255,255,255,.30)'],[1,'rgba(255,255,255,0)']]);gradRect(x+2,y+h-8,w-4,6,[[0,'rgba(0,0,0,0)'],[1,'rgba(0,0,0,.32)']]);ctx.restore();return p}
+function bolt(x,y,r=3){let g=ctx.createRadialGradient(x-r*.4,y-r*.4,0,x,y,r);g.addColorStop(0,C.brass0);g.addColorStop(.45,C.brass1);g.addColorStop(1,C.brass3);ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#20160e';ctx.lineWidth=1;ctx.stroke();}
+function screw(x,y,r=3){bolt(x,y,r);ctx.strokeStyle='rgba(20,13,8,.85)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x-r*.65,y);ctx.lineTo(x+r*.65,y);ctx.stroke()}
+
+function pipePath(points,r=18){
+ const p=new Path2D();
+ p.moveTo(...points[0]);
+ for(let i=1;i<points.length-1;i++){
+  const a=points[i-1],b=points[i],c=points[i+1];
+  const v1=[b[0]-a[0],b[1]-a[1]],v2=[c[0]-b[0],c[1]-b[1]];
+  const l1=Math.hypot(...v1),l2=Math.hypot(...v2);
+  const rr=Math.min(r,l1*.42,l2*.42);
+  const i1=[b[0]-v1[0]/l1*rr,b[1]-v1[1]/l1*rr];
+  const o=[b[0]+v2[0]/l2*rr,b[1]+v2[1]/l2*rr];
+  p.lineTo(...i1);
+  p.quadraticCurveTo(b[0],b[1],...o);
+ }
+ p.lineTo(...points[points.length-1]);
+ return p;
+}
+
+function pipe(points,body=22,color=C.steel0,hi=C.steel0,r=18){
+ const p=pipePath(points,r);
+ const rim=body+6;
+ const shell=body+10;
+
+ ctx.save();
+ ctx.lineCap='butt';
+ ctx.lineJoin='round';
+
+ // hard cast/contact shadow: keeps the run feeling attached to the hull
+ ctx.save();
+ ctx.translate(4,5);
+ ctx.strokeStyle='rgba(0,0,0,.34)';
+ ctx.lineWidth=shell+2;
+ ctx.stroke(p);
+ ctx.restore();
+
+ // deep silhouette
+ ctx.strokeStyle='rgba(0,0,0,.82)';
+ ctx.lineWidth=shell+2;
+ ctx.stroke(p);
+
+ // dark outer wall
+ ctx.strokeStyle=C.steel3;
+ ctx.lineWidth=shell;
+ ctx.stroke(p);
+
+ // subtle lower-right rim shadow
+ ctx.save();
+ ctx.translate(2.2,2.4);
+ ctx.globalAlpha=.32;
+ ctx.strokeStyle='rgba(0,0,0,.70)';
+ ctx.lineWidth=rim;
+ ctx.stroke(p);
+ ctx.restore();
+
+ // main body
+ ctx.strokeStyle=color;
+ ctx.lineWidth=body;
+ ctx.stroke(p);
+
+ // secondary body pass gives more cylindrical depth
+ ctx.save();
+ ctx.globalAlpha=.18;
+ ctx.strokeStyle=hi;
+ ctx.lineWidth=Math.max(2,body*.58);
+ ctx.stroke(p);
+ ctx.restore();
+
+ // broad top-left highlight
+ ctx.save();
+ ctx.translate(-2.6,-2.6);
+ ctx.globalAlpha=.52;
+ ctx.strokeStyle=hi;
+ ctx.lineWidth=Math.max(2,body*.19);
+ ctx.stroke(p);
+ ctx.restore();
+
+ // thin specular edge
+ ctx.save();
+ ctx.translate(-1.2,-1.2);
+ ctx.globalAlpha=.18;
+ ctx.strokeStyle='rgba(255,255,255,.85)';
+ ctx.lineWidth=Math.max(1.5,body*.07);
+ ctx.stroke(p);
+ ctx.restore();
+
+ // dark lower edge to round the cylinder off
+ ctx.save();
+ ctx.translate(1.8,2);
+ ctx.globalAlpha=.22;
+ ctx.strokeStyle='rgba(0,0,0,.78)';
+ ctx.lineWidth=Math.max(2,body*.16);
+ ctx.stroke(p);
+ ctx.restore();
+
+ ctx.restore();
+}
+
+function collarV(x,y,pw,w=pw+17,h=18){
+ // back shadow plate
+ let s=pathChamfer(x-w/2-1,y-h/2+1,w+2,h+2,3);
+ ctx.fillStyle='rgba(0,0,0,.34)';
+ ctx.fill(s);
+
+ // dark brass housing
+ let p=pathChamfer(x-w/2,y-h/2,w,h,3);
+ fillStroke(p,C.brass2,C.brass3,2);
+
+ // face plate
+ let q=pathChamfer(x-(w-6)/2,y-(h-5)/2,w-6,h-5,2);
+ ctx.fillStyle=C.brass1;
+ ctx.fill(q);
+
+ // highlight / shadow give the collar some thickness
+ ctx.strokeStyle='rgba(232,198,118,.48)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+5,y-h/2+3);
+ ctx.lineTo(x+w/2-5,y-h/2+3);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(35,22,12,.55)';
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+4,y+h/2-3);
+ ctx.lineTo(x+w/2-4,y+h/2-3);
+ ctx.stroke();
+
+ // tiny center split line
+ ctx.strokeStyle='rgba(60,38,21,.38)';
+ ctx.lineWidth=1;
+ ctx.beginPath();
+ ctx.moveTo(x,y-h/2+4);
+ ctx.lineTo(x,y+h/2-4);
+ ctx.stroke();
+
+ bolt(x-w/2+7,y,2);
+ bolt(x+w/2-7,y,2);
+}
+
+function collarH(x,y,ph,w=18,h=ph+17){
+ let s=pathChamfer(x-w/2-1,y-h/2+1,w+2,h+2,3);
+ ctx.fillStyle='rgba(0,0,0,.34)';
+ ctx.fill(s);
+
+ let p=pathChamfer(x-w/2,y-h/2,w,h,3);
+ fillStroke(p,C.brass2,C.brass3,2);
+
+ let q=pathChamfer(x-(w-5)/2,y-(h-6)/2,w-5,h-6,2);
+ ctx.fillStyle=C.brass1;
+ ctx.fill(q);
+
+ ctx.strokeStyle='rgba(232,198,118,.42)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+3,y-h/2+5);
+ ctx.lineTo(x-w/2+3,y+h/2-5);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(35,22,12,.55)';
+ ctx.beginPath();
+ ctx.moveTo(x+w/2-3,y-h/2+4);
+ ctx.lineTo(x+w/2-3,y+h/2-4);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(60,38,21,.38)';
+ ctx.lineWidth=1;
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+5,y);
+ ctx.lineTo(x+w/2-5,y);
+ ctx.stroke();
+}
+
+function valve(x,y,r=18){
+ ctx.save();
+ ctx.translate(2,3);
+ ctx.globalAlpha=.28;
+ ctx.strokeStyle='rgba(0,0,0,.8)';
+ ctx.lineWidth=8;
+ ctx.beginPath();
+ ctx.arc(x,y,r+1,0,Math.PI*2);
+ ctx.stroke();
+ ctx.restore();
+
+ ctx.strokeStyle=C.brass3;
+ ctx.lineWidth=7;
+ ctx.beginPath();
+ ctx.arc(x,y,r,0,Math.PI*2);
+ ctx.stroke();
+
+ ctx.strokeStyle=C.brass1;
+ ctx.lineWidth=4;
+ ctx.beginPath();
+ ctx.arc(x,y,r,0,Math.PI*2);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(232,198,118,.42)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.arc(x-1,y-1,r-1,Math.PI*1.05,Math.PI*1.75);
+ ctx.stroke();
+
+ for(let a=0;a<Math.PI*2;a+=Math.PI/3){
+  ctx.strokeStyle=C.brass1;
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(x,y);
+  ctx.lineTo(x+Math.cos(a)*r,y+Math.sin(a)*r);
+  ctx.stroke();
+ }
+ bolt(x,y,4);
+}
+
+function gauge(x,y,r=18){
+ ctx.save();
+ ctx.translate(2,3);
+ ctx.globalAlpha=.28;
+ ctx.fillStyle='rgba(0,0,0,.7)';
+ ctx.beginPath();
+ ctx.arc(x,y,r+6,0,Math.PI*2);
+ ctx.fill();
+ ctx.restore();
+
+ ctx.fillStyle=C.steel3;
+ ctx.beginPath();
+ ctx.arc(x,y,r+4,0,Math.PI*2);
+ ctx.fill();
+
+ let g=ctx.createRadialGradient(x-r*.35,y-r*.35,0,x,y,r);
+ g.addColorStop(0,'#d4cebc');
+ g.addColorStop(.72,'#b8b09d');
+ g.addColorStop(1,'#8a8171');
+ ctx.fillStyle=g;
+ ctx.beginPath();
+ ctx.arc(x,y,r,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.strokeStyle=C.brass2;
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ ctx.strokeStyle='#3d3428';
+ ctx.lineWidth=1;
+ for(let a=-2.45;a<.35;a+=.38){
+  ctx.beginPath();
+  ctx.moveTo(x+Math.cos(a)*(r-5),y+Math.sin(a)*(r-5));
+  ctx.lineTo(x+Math.cos(a)*(r-2),y+Math.sin(a)*(r-2));
+  ctx.stroke();
+ }
+
+ ctx.strokeStyle=C.brass3;
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x,y);
+ ctx.lineTo(x+9,y-8);
+ ctx.stroke();
+
+ bolt(x,y,2);
+}
+
+function vent(x,y,w,h,n=5){
+ plate(x,y,w,h,C.steel1,4,2);
+ for(let i=0;i<n;i++){
+  let yy=y+8+i*(h-16)/(n-1);
+  ctx.strokeStyle='#080b0c';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(x+9,yy);
+  ctx.lineTo(x+w-9,yy);
+  ctx.stroke();
+  ctx.strokeStyle=C.steel0;
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(x+9,yy-1);
+  ctx.lineTo(x+w-9,yy-1);
+  ctx.stroke();
+ }
+}
+
+function junction(x,y,pw,w=pw+18,h=pw+18,fill=C.brass2){
+ const s=pathChamfer(x-w/2-1,y-h/2+1,w+2,h+2,4);
+ ctx.fillStyle='rgba(0,0,0,.34)';
+ ctx.fill(s);
+
+ const p=pathChamfer(x-w/2,y-h/2,w,h,4);
+ fillStroke(p,C.brass3,C.steel3,2);
+
+ const q=pathChamfer(x-(w-7)/2,y-(h-7)/2,w-7,h-7,3);
+ ctx.fillStyle=fill;
+ ctx.fill(q);
+
+ ctx.strokeStyle='rgba(235,195,116,.46)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+5,y-h/2+4);
+ ctx.lineTo(x+w/2-5,y-h/2+4);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(35,22,12,.55)';
+ ctx.beginPath();
+ ctx.moveTo(x-w/2+4,y+h/2-3);
+ ctx.lineTo(x+w/2-4,y+h/2-3);
+ ctx.stroke();
+
+ bolt(x-w/2+7,y-h/2+7,2);
+ bolt(x+w/2-7,y+h/2-7,2);
+}
+
+function flangeV(x,y,pw){collarV(x,y,pw,pw+18,16)}
+function flangeH(x,y,pw){collarH(x,y,pw,16,pw+18)}
+
+function reducerV(x,y,wide,narrow){
+ const h=24;
+ const p=new Path2D();
+ p.moveTo(x-wide/2-6,y-h/2);
+ p.lineTo(x+wide/2+6,y-h/2);
+ p.lineTo(x+narrow/2+4,y+h/2);
+ p.lineTo(x-narrow/2-4,y+h/2);
+ p.closePath();
+
+ ctx.save();
+ ctx.translate(1,2);
+ ctx.globalAlpha=.26;
+ ctx.fillStyle='rgba(0,0,0,.75)';
+ ctx.fill(p);
+ ctx.restore();
+
+ fillStroke(p,C.brass2,C.brass3,2);
+
+ const q=new Path2D();
+ q.moveTo(x-wide/2-4,y-h/2+3);
+ q.lineTo(x+wide/2+4,y-h/2+3);
+ q.lineTo(x+narrow/2+3,y+h/2-3);
+ q.lineTo(x-narrow/2-3,y+h/2-3);
+ q.closePath();
+ ctx.fillStyle=C.brass1;
+ ctx.fill(q);
+
+ ctx.strokeStyle='rgba(235,195,116,.42)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x-wide/2,y-h/2+4);
+ ctx.lineTo(x+wide/2,y-h/2+4);
+ ctx.stroke();
+}
+
+
+
+// ---------------------------------------------------------------------------
+// PASS B — BESPOKE MACHINERY RENDERERS
+// These replace generic plate-within-plate machines while preserving V9 routing.
+// ---------------------------------------------------------------------------
+
+function hardMachineShadow(path,dx=5,dy=6,alpha=.32){
+ ctx.save();
+ ctx.translate(dx,dy);
+ ctx.globalAlpha=alpha;
+ ctx.fillStyle='#000';
+ ctx.fill(path);
+ ctx.restore();
+}
+
+function machineShell(x,y,w,h,c=7,fill=C.steel1){
+ const p=pathChamfer(x,y,w,h,c);
+ hardMachineShadow(p,5,6,.30);
+ fillStroke(p,fill,C.steel3,2);
+
+ ctx.save();
+ ctx.clip(p);
+ let g=ctx.createLinearGradient(x,y,x+w,y+h);
+ g.addColorStop(0,'rgba(255,255,255,.10)');
+ g.addColorStop(.34,'rgba(255,255,255,0)');
+ g.addColorStop(1,'rgba(0,0,0,.32)');
+ ctx.fillStyle=g;
+ ctx.fillRect(x,y,w,h);
+ ctx.restore();
+
+ return p;
+}
+
+function brassBandH(x,y,w,h=13){
+ const p=pathChamfer(x,y,w,h,3);
+ fillStroke(p,C.brass2,C.brass3,2);
+ ctx.fillStyle=C.brass1;
+ ctx.fill(pathChamfer(x+3,y+3,w-6,h-6,2));
+ ctx.strokeStyle='rgba(235,199,116,.42)';
+ ctx.lineWidth=1.5;
+ ctx.beginPath();
+ ctx.moveTo(x+5,y+3);
+ ctx.lineTo(x+w-5,y+3);
+ ctx.stroke();
+ bolt(x+7,y+h/2,2);
+ bolt(x+w-7,y+h/2,2);
+}
+
+function verticalCylinderPath(x,y,w,h){
+ const p=new Path2D();
+ const cap=Math.min(w*.28,14);
+ p.moveTo(x+cap,y);
+ p.lineTo(x+w-cap,y);
+ p.quadraticCurveTo(x+w,y,x+w,y+cap);
+ p.lineTo(x+w,y+h-cap);
+ p.quadraticCurveTo(x+w,y+h,x+w-cap,y+h);
+ p.lineTo(x+cap,y+h);
+ p.quadraticCurveTo(x,y+h,x,y+h-cap);
+ p.lineTo(x,y+cap);
+ p.quadraticCurveTo(x,y,x+cap,y);
+ p.closePath();
+ return p;
+}
+
+function horizontalCylinderPath(x,y,w,h){
+ const p=new Path2D();
+ const cap=Math.min(h*.42,18);
+ p.moveTo(x+cap,y);
+ p.lineTo(x+w-cap,y);
+ p.quadraticCurveTo(x+w,y+h*.18,x+w,y+h/2);
+ p.quadraticCurveTo(x+w,y+h*.82,x+w-cap,y+h);
+ p.lineTo(x+cap,y+h);
+ p.quadraticCurveTo(x,y+h*.82,x,y+h/2);
+ p.quadraticCurveTo(x,y+h*.18,x+cap,y);
+ p.closePath();
+ return p;
+}
+
+function drawHeatExchanger(x=644,y=204){
+ // narrow cast housing
+ machineShell(x,y,47,181,7,C.steel1);
+
+ // top cap / inlet shoulder
+ const top=pathChamfer(x+7,y+8,33,19,5);
+ hardMachineShadow(top,2,3,.22);
+ fillStroke(top,C.steel0,C.steel3,2);
+ ctx.strokeStyle='rgba(255,255,255,.16)';
+ ctx.beginPath();ctx.moveTo(x+13,y+12);ctx.lineTo(x+34,y+12);ctx.stroke();
+
+ // central teal pressure chamber
+ const chamber=verticalCylinderPath(x+10,y+26,27,65);
+ hardMachineShadow(chamber,2,3,.20);
+ let cg=ctx.createLinearGradient(x+10,y,x+37,y);
+ cg.addColorStop(0,C.teal3);
+ cg.addColorStop(.28,C.teal1);
+ cg.addColorStop(.72,C.teal2);
+ cg.addColorStop(1,C.teal3);
+ ctx.fillStyle=cg;ctx.fill(chamber);
+ ctx.strokeStyle=C.steel3;ctx.lineWidth=2;ctx.stroke(chamber);
+
+ brassBandH(x+6,y+21,35,11);
+ brassBandH(x+6,y+84,35,11);
+
+ // lower finned heat sink
+ const sink=pathChamfer(x+8,y+103,31,62,4);
+ fillStroke(sink,C.steel2,C.steel3,2);
+ for(let yy=y+113;yy<y+153;yy+=8){
+  ctx.strokeStyle='#080b0c';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(x+13,yy);ctx.lineTo(x+34,yy);ctx.stroke();
+  ctx.strokeStyle=C.steel0;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x+13,yy-1);ctx.lineTo(x+34,yy-1);ctx.stroke();
+ }
+
+ // service base
+ brassBandH(x+7,y+165,33,11);
+}
+
+function drawRadiatorCluster(x=1146,y=170,withRegulator=true){
+ // radiator block
+ machineShell(x,y,54,92,5,C.steel1);
+
+ // raised fin bank
+ const bank=pathChamfer(x+8,y+8,38,63,3);
+ fillStroke(bank,C.steel2,C.steel3,2);
+ for(let xx=x+13;xx<x+43;xx+=6){
+  ctx.strokeStyle='#080b0c';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(xx,y+14);ctx.lineTo(xx,y+63);ctx.stroke();
+  ctx.strokeStyle=C.steel0;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(xx-1,y+14);ctx.lineTo(xx-1,y+63);ctx.stroke();
+ }
+
+ // top/bottom manifold blocks
+ brassBandH(x+6,y+3,42,10);
+ brassBandH(x+6,y+72,42,10);
+
+ // optional compact regulator body below
+ if(withRegulator){
+  machineShell(x+11,y+104,32,58,5,C.steel1);
+  plate(x+17,y+113,20,20,C.steel2,4,1);
+  bolt(x+27,y+123,3);
+  ctx.fillStyle=C.brass1;
+  ctx.fillRect(x+25,y+141,4,10);
+ }
+}
+
+function drawPressureVessel(x=1510,y=258){
+ // dark cradle
+ machineShell(x,y,86,216,10,C.steel1);
+
+ // side rails
+ plate(x+5,y+20,9,172,C.steel2,3,1);
+ plate(x+72,y+20,9,172,C.steel2,3,1);
+
+ // actual ivory cylindrical vessel
+ const vx=x+23, vy=y+17, vw=40, vh=151;
+ const vessel=verticalCylinderPath(vx,vy,vw,vh);
+ hardMachineShadow(vessel,3,5,.28);
+
+ let vg=ctx.createLinearGradient(vx,vy,vx+vw,vy);
+ vg.addColorStop(0,C.ivory3);
+ vg.addColorStop(.12,C.ivory1);
+ vg.addColorStop(.42,C.ivory0);
+ vg.addColorStop(.72,C.ivory1);
+ vg.addColorStop(1,C.ivory3);
+ ctx.fillStyle=vg;ctx.fill(vessel);
+ ctx.strokeStyle=C.steel2;ctx.lineWidth=2;ctx.stroke(vessel);
+
+ // machined neck
+ plate(vx+13,vy-13,14,18,C.steel0,4,1);
+ collarV(vx+20,vy-4,12,31,13);
+
+ // substantial retaining bands
+ brassBandH(vx-5,vy+35,vw+10,14);
+ brassBandH(vx-5,vy+112,vw+10,14);
+
+ // lower regulator / base
+ const base=pathChamfer(x+18,y+171,50,34,5);
+ fillStroke(base,C.steel2,C.steel3,2);
+ brassBandH(x+14,y+166,58,12);
+ valve(x+43,y+188,11);
+
+ // restrained side seam
+ ctx.strokeStyle='rgba(91,78,59,.25)';
+ ctx.lineWidth=1;
+ ctx.beginPath();ctx.moveTo(vx+20,vy+18);ctx.lineTo(vx+20,vy+128);ctx.stroke();
+}
+
+function drawFarRightCoilCylinder(x=1803,y=218){
+ // backing cradle
+ machineShell(x,y,39,198,7,C.steel1);
+
+ // cylinder body
+ const vx=x+7,vy=y+10,vw=25,vh=147;
+ const cyl=verticalCylinderPath(vx,vy,vw,vh);
+ hardMachineShadow(cyl,2,4,.28);
+
+ let g=ctx.createLinearGradient(vx,vy,vx+vw,vy);
+ g.addColorStop(0,C.steel3);
+ g.addColorStop(.25,C.steel0);
+ g.addColorStop(.55,C.steel1);
+ g.addColorStop(.78,C.steel0);
+ g.addColorStop(1,C.steel3);
+ ctx.fillStyle=g;ctx.fill(cyl);
+ ctx.strokeStyle=C.steel3;ctx.lineWidth=2;ctx.stroke(cyl);
+
+ // top cap / neck
+ brassBandH(vx-4,vy+14,vw+8,11);
+ plate(vx+7,vy-10,11,18,C.steel0,3,1);
+
+ // exposed brass coil centered on cylinder
+ for(let yy=vy+61;yy<vy+116;yy+=8){
+  ctx.strokeStyle=C.brass3;ctx.lineWidth=6;
+  ctx.beginPath();ctx.moveTo(vx+2,yy);ctx.lineTo(vx+vw-2,yy);ctx.stroke();
+  ctx.strokeStyle=C.brass0;ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(vx+3,yy-1);ctx.lineTo(vx+vw-3,yy-1);ctx.stroke();
+ }
+
+ brassBandH(vx-4,vy+51,vw+8,11);
+ brassBandH(vx-4,vy+120,vw+8,11);
+
+ // bottom service cup
+ const cup=pathChamfer(x+5,y+163,29,27,5);
+ fillStroke(cup,C.steel2,C.steel3,2);
+ bolt(x+19,y+177,3);
+}
+
+function drawLowerHorizontalTank(x=472,y=620,w=182,h=54){
+ const outer=horizontalCylinderPath(x,y,w,h);
+ hardMachineShadow(outer,4,5,.26);
+ fillStroke(outer,C.steel1,C.steel3,2);
+
+ const inner=horizontalCylinderPath(x+27,y+7,w-54,h-14);
+ let g=ctx.createLinearGradient(x,y,x,y+h);
+ g.addColorStop(0,C.teal0);
+ g.addColorStop(.18,C.teal1);
+ g.addColorStop(.68,C.teal2);
+ g.addColorStop(1,C.teal3);
+ ctx.fillStyle=g;ctx.fill(inner);
+ ctx.strokeStyle=C.steel3;ctx.lineWidth=2;ctx.stroke(inner);
+
+ // broad retaining straps
+ plate(x+18,y-3,17,h+6,C.brass1,3,1);
+ plate(x+w-35,y-3,17,h+6,C.brass1,3,1);
+
+ // small sight panel
+ const sight=pathChamfer(x+w*.40,y+h*.35,w*.20,h*.28,3);
+ fillStroke(sight,'rgba(66,124,118,.75)',C.brass3,2);
+ ctx.strokeStyle='rgba(150,220,208,.32)';
+ ctx.beginPath();ctx.moveTo(x+w*.42,y+h*.38);ctx.lineTo(x+w*.57,y+h*.38);ctx.stroke();
+}
+
+function drawUnderbodyRadiator(x,y,w,h,n=6){
+ machineShell(x,y,w,h,6,C.steel1);
+ const inset=pathChamfer(x+8,y+7,w-16,h-14,3);
+ fillStroke(inset,C.steel2,C.steel3,1);
+ for(let i=0;i<n;i++){
+  let yy=y+12+i*(h-24)/(n-1);
+  ctx.strokeStyle='#080b0c';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(x+14,yy);ctx.lineTo(x+w-14,yy);ctx.stroke();
+  ctx.strokeStyle=C.steel0;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x+14,yy-1);ctx.lineTo(x+w-14,yy-1);ctx.stroke();
+ }
+}
+
+
+// ---------------------------------------------------------------------------
+// PASS C — DEPTH / CONTACT / STRUCTURAL LAYERING
+// V10 geometry and routing are preserved. This pass changes depth cues only.
+// ---------------------------------------------------------------------------
+
+function pathShadow(path,dx=5,dy=6,alpha=.32){
+ ctx.save();
+ ctx.translate(dx,dy);
+ ctx.globalAlpha=alpha;
+ ctx.fillStyle='#000';
+ ctx.fill(path);
+ ctx.restore();
+}
+
+function recessedWell(x,y,w,h,c=8){
+ const outer=pathChamfer(x,y,w,h,c);
+ ctx.fillStyle='#090d0e';
+ ctx.fill(outer);
+
+ // top-left inner falloff
+ ctx.save();
+ ctx.clip(outer);
+ let g=ctx.createLinearGradient(x,y,x+w,y+h);
+ g.addColorStop(0,'rgba(0,0,0,.50)');
+ g.addColorStop(.20,'rgba(0,0,0,.18)');
+ g.addColorStop(.62,'rgba(0,0,0,0)');
+ g.addColorStop(1,'rgba(255,255,255,.045)');
+ ctx.fillStyle=g;
+ ctx.fillRect(x,y,w,h);
+ ctx.restore();
+
+ ctx.strokeStyle='rgba(0,0,0,.82)';
+ ctx.lineWidth=3;
+ ctx.stroke(outer);
+
+ return outer;
+}
+
+function serviceBacking(x,y,w,h){
+ const p=pathChamfer(x,y,w,h,5);
+ ctx.fillStyle='#101617';
+ ctx.fill(p);
+
+ ctx.save();
+ ctx.clip(p);
+
+ let g=ctx.createLinearGradient(x,y,x+w,y);
+ g.addColorStop(0,'rgba(0,0,0,.45)');
+ g.addColorStop(.22,'rgba(255,255,255,.025)');
+ g.addColorStop(.68,'rgba(255,255,255,0)');
+ g.addColorStop(1,'rgba(0,0,0,.34)');
+ ctx.fillStyle=g;
+ ctx.fillRect(x,y,w,h);
+
+ // two subdued structural ribs
+ ctx.fillStyle='#171e20';
+ ctx.fillRect(x+8,y+8,5,h-16);
+ ctx.fillRect(x+w-13,y+8,5,h-16);
+
+ ctx.fillStyle='rgba(255,255,255,.035)';
+ ctx.fillRect(x+8,y+8,1,h-16);
+ ctx.fillRect(x+w-13,y+8,1,h-16);
+
+ ctx.restore();
+
+ ctx.strokeStyle='#080b0c';
+ ctx.lineWidth=2;
+ ctx.stroke(p);
+}
+
+function underbodyBackplane(){
+ // deep chassis cavity
+ ctx.fillStyle='#080c0d';
+ ctx.fillRect(47,590,1840,100);
+
+ // rear structural rails
+ ctx.fillStyle='#141a1c';
+ ctx.fillRect(58,642,1818,14);
+ ctx.fillRect(58,676,1818,9);
+
+ ctx.fillStyle='rgba(255,255,255,.035)';
+ ctx.fillRect(58,642,1818,2);
+
+ // sparse vertical chassis ribs behind machinery
+ for(const x of [172,356,706,1034,1168,1457,1820]){
+  const p=pathChamfer(x,599,13,82,3);
+  ctx.fillStyle='#111719';
+  ctx.fill(p);
+  ctx.strokeStyle='#080b0c';
+  ctx.lineWidth=1;
+  ctx.stroke(p);
+ }
+
+ // rear cable bundle: deliberately thin and subordinate
+ ctx.strokeStyle='#070a0b';
+ ctx.lineWidth=7;
+ ctx.beginPath();
+ ctx.moveTo(70,683);
+ ctx.bezierCurveTo(330,682,420,688,690,681);
+ ctx.bezierCurveTo(1010,673,1350,688,1830,680);
+ ctx.stroke();
+
+ ctx.strokeStyle='#242b2d';
+ ctx.lineWidth=3;
+ ctx.stroke();
+}
+
+function hatchContactShadow(x0,x1){
+ const w=x1-x0;
+ const p=pathChamfer(x0,168,w,398,12);
+ pathShadow(p,6,7,.30);
+}
+
+
+// ---------------------------------------------------------------------------
+// PASS D — HULL CONSTRUCTION / MATERIAL RENDERING
+// Pipe routing, machinery and depth geometry from V11 remain unchanged.
+// ---------------------------------------------------------------------------
+
+function ivoryArmorPanel(x,y,w,h,c=8,tone=0){
+ const p=pathChamfer(x,y,w,h,c);
+
+ // hard seam/contact edge beneath the armor plate
+ ctx.save();
+ ctx.translate(2,3);
+ ctx.globalAlpha=.30;
+ ctx.fillStyle='#000';
+ ctx.fill(p);
+ ctx.restore();
+
+ // warm ivory base
+ ctx.fillStyle=C.ivory1;
+ ctx.fill(p);
+
+ ctx.save();
+ ctx.clip(p);
+
+ // broad top-left lighting
+ let g=ctx.createLinearGradient(x,y,x+w,y+h);
+ g.addColorStop(0,'rgba(246,233,199,.34)');
+ g.addColorStop(.20,'rgba(231,215,181,.15)');
+ g.addColorStop(.56,'rgba(184,170,142,.02)');
+ g.addColorStop(1,'rgba(70,66,57,.24)');
+ ctx.fillStyle=g;
+ ctx.fillRect(x,y,w,h);
+
+ // tone variation between neighboring armor plates
+ if(tone>0){
+  ctx.fillStyle=`rgba(255,246,216,${Math.min(.09,tone)})`;
+  ctx.fillRect(x,y,w,h);
+ }else if(tone<0){
+  ctx.fillStyle=`rgba(56,51,43,${Math.min(.10,-tone)})`;
+  ctx.fillRect(x,y,w,h);
+ }
+
+ // machined top edge
+ ctx.fillStyle='rgba(255,246,219,.27)';
+ ctx.fillRect(x+4,y+3,Math.max(0,w-8),3);
+
+ // hard lower/right inset shadow
+ ctx.fillStyle='rgba(53,48,41,.18)';
+ ctx.fillRect(x+4,y+h-6,Math.max(0,w-8),3);
+ ctx.fillRect(x+w-6,y+5,3,Math.max(0,h-10));
+
+ ctx.restore();
+
+ ctx.strokeStyle=C.steel2;
+ ctx.lineWidth=2;
+ ctx.stroke(p);
+
+ return p;
+}
+
+function armorFasteners(x,y,w,h,mode='corners'){
+ if(mode==='corners'){
+  for(const [bx,by] of [
+   [x+11,y+11],[x+w-11,y+11],
+   [x+11,y+h-11],[x+w-11,y+h-11]
+  ]) bolt(bx,by,2.4);
+ }else if(mode==='top'){
+  bolt(x+12,y+10,2.4);
+  bolt(x+w-12,y+10,2.4);
+ }
+}
+
+function engravedSeam(x1,y1,x2,y2){
+ ctx.strokeStyle='rgba(73,67,56,.58)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x1,y1);
+ ctx.lineTo(x2,y2);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(244,229,195,.18)';
+ ctx.lineWidth=1;
+ ctx.beginPath();
+ ctx.moveTo(x1+1,y1+1);
+ ctx.lineTo(x2+1,y2+1);
+ ctx.stroke();
+}
+
+function armorScratch(x1,y1,x2,y2){
+ ctx.strokeStyle='rgba(79,70,56,.25)';
+ ctx.lineWidth=1.25;
+ ctx.beginPath();
+ ctx.moveTo(x1,y1);
+ ctx.lineTo(x2,y2);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(242,224,188,.10)';
+ ctx.lineWidth=.8;
+ ctx.beginPath();
+ ctx.moveTo(x1,y1-1);
+ ctx.lineTo(x2,y2-1);
+ ctx.stroke();
+}
+
+function drawTopHullArmor(){
+ // irregular panel widths tied to actual structure instead of an even grid
+ const panels=[
+  [25,79,143,74,0.025],
+  [168,79,167,74,-0.018],
+  [335,79,106,74,0.012],
+  [441,79,194,74,-0.010],
+  [635,79,178,74,0.018],
+  [813,79,203,74,-0.018],
+  [1016,79,202,74,0.010],
+  [1218,79,196,74,-0.014],
+  [1414,79,185,74,0.020],
+  [1599,79,198,74,-0.012],
+  [1797,79,135,74,0.010]
+ ];
+
+ for(const [x,y,w,h,t] of panels){
+  ivoryArmorPanel(x,y,w,h,Math.min(9,Math.max(5,w*.04)),t);
+  armorFasteners(x,y,w,h,'top');
+ }
+
+ // deliberate larger seam details; not uniformly repeated
+ engravedSeam(335,92,335,139);
+ engravedSeam(635,87,635,145);
+ engravedSeam(1016,88,1016,145);
+ engravedSeam(1414,87,1414,145);
+ engravedSeam(1797,90,1797,144);
+
+ // attached reinforcement patches around major roof penetrations
+ ivoryArmorPanel(884,91,72,45,6,-0.025);
+ armorFasteners(884,91,72,45,'corners');
+
+ ivoryArmorPanel(1216,92,66,44,6,0.010);
+ armorFasteners(1216,92,66,44,'corners');
+
+ // restrained wear concentrated around service areas
+ armorScratch(214,105,247,100);
+ armorScratch(472,129,503,121);
+ armorScratch(865,118,891,112);
+ armorScratch(1275,101,1304,107);
+ armorScratch(1506,128,1541,119);
+ armorScratch(1811,109,1842,103);
+}
+
+function drawLowerHullArmor(){
+ // visible sill directly under hatch modules
+ const sill=[
+  [25,565,190,117,-0.015],
+  [215,565,222,117,0.010],
+  [437,565,198,117,-0.012],
+  [635,565,180,117,0.018],
+  [815,565,202,117,-0.016],
+  [1017,565,201,117,0.010],
+  [1218,565,198,117,-0.010],
+  [1416,565,183,117,0.017],
+  [1599,565,199,117,-0.014],
+  [1798,565,134,117,0.010]
+ ];
+
+ for(const [x,y,w,h,t] of sill){
+  ivoryArmorPanel(x,y,w,h,Math.min(9,Math.max(5,w*.035)),t);
+ }
+
+ // strong top sill edge visible above the underbody
+ ctx.strokeStyle='rgba(244,230,198,.32)';
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.moveTo(39,568);
+ ctx.lineTo(1918,568);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(0,0,0,.32)';
+ ctx.lineWidth=4;
+ ctx.beginPath();
+ ctx.moveTo(41,588);
+ ctx.lineTo(1917,588);
+ ctx.stroke();
+}
+
+function drawHullEndCaps(){
+ // left / right end structural shoulders are thicker than ordinary armor
+ const left=pathChamfer(25,116,31,511,9);
+ pathShadow(left,3,5,.28);
+ fillStroke(left,C.ivory2,C.steel2,3);
+
+ ctx.save();
+ ctx.clip(left);
+ let lg=ctx.createLinearGradient(25,116,56,116);
+ lg.addColorStop(0,'rgba(238,222,187,.28)');
+ lg.addColorStop(.55,'rgba(255,255,255,0)');
+ lg.addColorStop(1,'rgba(0,0,0,.20)');
+ ctx.fillStyle=lg;
+ ctx.fillRect(25,116,31,511);
+ ctx.restore();
+
+ const right=pathChamfer(1900,116,32,511,9);
+ pathShadow(right,3,5,.28);
+ fillStroke(right,C.ivory2,C.steel2,3);
+
+ // removed artifact fasteners;
+ // removed artifact fasteners;
+}
+
+function drawAirlockHullConstruction(){
+ // outer airlock area already exists; these seams make it read as assembled armor
+ engravedSeam(45,191,104,159);
+ engravedSeam(104,159,263,159);
+ engravedSeam(263,159,325,199);
+
+ engravedSeam(45,493,103,531);
+ engravedSeam(103,531,273,531);
+ engravedSeam(273,531,326,491);
+
+ // narrow side service plates attached to the airlock shell
+ ivoryArmorPanel(39,266,20,154,5,-0.030);
+ ivoryArmorPanel(311,266,20,154,5,-0.022);
+
+ for(const yy of [282,345,405]){
+  bolt(49,yy,2.2);
+  bolt(321,yy,2.2);
+ }
+
+ // subtle outer ring highlight/shadow to make the circular cutout feel machined
+ ctx.strokeStyle='rgba(247,230,193,.22)';
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.arc(185,345,149,Math.PI*1.08,Math.PI*1.90);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(0,0,0,.30)';
+ ctx.lineWidth=4;
+ ctx.beginPath();
+ ctx.arc(187,351,149,Math.PI*.02,Math.PI*.92);
+ ctx.stroke();
+}
+
+
+// ---------------------------------------------------------------------------
+// V14 — CENTRAL PROCESS SERVICE CLUSTER
+// Focused reconstruction of the H2/H3 service bay to match the reference:
+// teal utility riser left, purple process column centre, radiator + return right,
+// substantial glass receiver low-centre, no crossed/looped pipework at the base.
+// ---------------------------------------------------------------------------
+
+function drawGlassReceiver(x,y,w=54,h=112){
+ const body=verticalCylinderPath(x,y,w,h);
+ hardMachineShadow(body,4,5,.30);
+
+ let shell=ctx.createLinearGradient(x,y,x+w,y);
+ shell.addColorStop(0,C.steel3);
+ shell.addColorStop(.18,C.steel0);
+ shell.addColorStop(.50,'#485052');
+ shell.addColorStop(.82,C.steel0);
+ shell.addColorStop(1,C.steel3);
+ ctx.fillStyle=shell;
+ ctx.fill(body);
+ ctx.strokeStyle='#070a0b';
+ ctx.lineWidth=2;
+ ctx.stroke(body);
+
+ const gx=x+10, gy=y+19, gw=w-20, gh=h-38;
+ const glass=verticalCylinderPath(gx,gy,gw,gh);
+
+ let gg=ctx.createLinearGradient(gx,gy,gx+gw,gy);
+ gg.addColorStop(0,'rgba(24,34,38,.88)');
+ gg.addColorStop(.18,'rgba(73,92,99,.64)');
+ gg.addColorStop(.47,'rgba(121,142,145,.38)');
+ gg.addColorStop(.76,'rgba(44,57,61,.66)');
+ gg.addColorStop(1,'rgba(12,18,20,.92)');
+ ctx.fillStyle=gg;
+ ctx.fill(glass);
+ ctx.strokeStyle='rgba(157,180,182,.45)';
+ ctx.lineWidth=1.5;
+ ctx.stroke(glass);
+
+ ctx.save();
+ ctx.clip(glass);
+ let lg=ctx.createLinearGradient(gx,gy+gh*.58,gx,gy+gh);
+ lg.addColorStop(0,'rgba(112,79,137,.52)');
+ lg.addColorStop(.18,'rgba(119,79,149,.78)');
+ lg.addColorStop(1,'rgba(59,40,82,.92)');
+ ctx.fillStyle=lg;
+ ctx.fillRect(gx,gy+gh*.58,gw,gh*.42);
+
+ ctx.fillStyle='rgba(232,247,245,.16)';
+ ctx.fillRect(gx+4,gy+6,3,gh-12);
+ ctx.restore();
+
+ // one clean top retaining band; no stacked protruding head
+ brassBandH(x-4,y+5,w+8,12);
+ brassBandH(x-4,y+h-19,w+8,12);
+
+ const foot=pathChamfer(x+11,y+h-6,w-22,23,5);
+ fillStroke(foot,C.steel2,C.steel3,2);
+ bolt(x+w/2,y+h+5,3);
+}
+
+function drawCentralProcessCluster(){
+ const back=pathChamfer(1026,151,171,407,5);
+ ctx.fillStyle='#0e1415';
+ ctx.fill(back);
+ ctx.strokeStyle='#070a0b';
+ ctx.lineWidth=2;
+ ctx.stroke(back);
+
+ ctx.fillStyle='#192123';
+ ctx.fillRect(1034,160,6,388);
+ ctx.fillRect(1186,160,5,388);
+ ctx.fillStyle='rgba(255,255,255,.035)';
+ ctx.fillRect(1034,160,1,388);
+ ctx.fillRect(1186,160,1,388);
+
+ // LEFT TEAL UTILITY RISER
+ // Shortened so it ends around the regulator zone instead of running too low.
+ pipe([[1000,109],[1038,109],[1050,124],[1050,334]],18,C.teal3,C.teal0,16);
+ for(const yy of [148,226]) collarV(1050,yy,18,35,15);
+ junction(1000,109,18,34,28,C.brass1);
+
+ // Regulator box sits in front of the riser.
+ const regulator=pathChamfer(1035,269,48,95,6);
+ hardMachineShadow(regulator,4,5,.30);
+ fillStroke(regulator,C.steel1,C.steel3,2);
+ collarV(1050,269,18,38,16);
+
+ const regulatorFace=pathChamfer(1044,288,30,50,4);
+ fillStroke(regulatorFace,C.steel2,C.steel3,1);
+ bolt(1059,303,3);
+ ctx.fillStyle=C.brass1;
+ ctx.fillRect(1056,321,6,11);
+
+ pipe([[1083,317],[1093,317]],7,C.steel0,C.steel0,5);
+ collarH(1083,317,7,13,22);
+
+ // PURPLE PROCESS COLUMN
+ collarV(1102,129,20,40,16);
+ pipe([[1102,137],[1102,404]],20,C.violet1,C.violet0,7);
+ for(const yy of [206,292,378]) collarV(1102,yy,20,42,17);
+
+ // Side splice tees into the process column and is moved upward.
+ junction(1102,236,20,38,28,C.brass1);
+ pipe([[1116,236],[1141,236]],9,C.steel0,C.steel0,6);
+
+ // REAR RETURN STACK + CONDENSER
+ pipe([[1189,212],[1189,566],[1174,584],[1174,606]],14,C.steel0,C.steel0,11);
+ flangeH(1189,212,14);
+ collarV(1189,286,14,31,15);
+ collarV(1189,474,14,31,15);
+
+ drawRadiatorCluster(1145,164,false);
+
+ // Top condenser connection moved upward with the splice.
+ pipe([[1141,236],[1145,236]],9,C.steel0,C.steel0,5);
+ flangeH(1145,236,9);
+
+ // Condenser lower outlet into return stack
+ pipe([[1181,317],[1189,317]],9,C.steel0,C.steel0,5);
+ junction(1189,317,9,23,23,C.brass1);
+
+ // FRONT CONTROL PANEL
+ // One clean panel only; remove the extra smaller background box.
+ const frontPanel=pathChamfer(1138,286,40,92,6);
+ hardMachineShadow(frontPanel,3,4,.27);
+ fillStroke(frontPanel,C.steel1,C.steel3,2);
+ bolt(1158,321,3);
+ ctx.fillStyle=C.brass1;
+ ctx.fillRect(1155,334,6,9);
+
+ // LOWER RECEIVER
+ pipe([[1102,404],[1102,407]],18,C.violet1,C.violet0,4);
+
+ drawGlassReceiver(1076,407,52,122);
+
+ // Smaller brown fitting brought slightly upward and drawn in front.
+ collarV(1102,401,18,38,14);
+
+ pipe([[1102,529],[1102,576],[1114,606]],12,C.steel0,C.steel0,9);
+ flangeV(1102,529,12);
+
+ // Chunky balance line
+ pipe([[1128,468],[1162,468],[1162,442],[1189,442]],10,C.steel0,C.steel0,8);
+ flangeH(1128,468,10);
+ junction(1189,442,10,24,24,C.brass1);
+
+ // LOWER SERVICE KNOB ASSEMBLY
+ pipe([[1189,500],[1178,500]],10,C.steel0,C.steel0,6);
+
+ // Brown fitting behind the knob, above the pipe.
+ const lowerSvc=pathChamfer(1158,483,40,34,5);
+ hardMachineShadow(lowerSvc,2,3,.24);
+ fillStroke(lowerSvc,C.brass2,C.brass3,2);
+
+ // knob centered and topmost
+ valve(1178,500,12);
+}
+
+
+ctx.clearRect(0,0,1962,801);
+
+// 1) CORE HULL SILHOUETTE — PASS D MATERIAL / PANEL CONSTRUCTION
+const hull=pathChamfer(25,79,1907,603,23);
+fillStroke(hull,C.steel2,C.black,5);
+
+// armored roof and lower sill built from irregular structural plates
+drawTopHullArmor();
+drawLowerHullArmor();
+
+// dark center body remains the recess behind hatch/service assemblies
+ctx.fillStyle=C.steel2;
+ctx.fillRect(40,144,1875,430);
+
+// hard dark shoulder under the roof armor
+ctx.fillStyle='rgba(0,0,0,.32)';
+ctx.fillRect(40,145,1875,8);
+
+// end caps tie roof, central body and sill together
+drawHullEndCaps();
+
+// 2) LEFT PRESSURE AIRLOCK
+ivoryArmorPanel(25,145,360,421,18,-0.006);
+// removed artifact fasteners;
+ctx.fillStyle=C.ivory0;ctx.beginPath();ctx.arc(185,348,146,Math.PI,Math.PI*2);ctx.lineTo(331,348);ctx.lineTo(331,530);ctx.lineTo(39,530);ctx.lineTo(39,348);ctx.closePath();ctx.fill();ctx.strokeStyle=C.steel2;ctx.lineWidth=3;ctx.stroke();
+drawAirlockHullConstruction();
+
+ctx.save();
+ctx.translate(6,7);
+ctx.globalAlpha=.34;
+ctx.fillStyle='#000';
+ctx.beginPath();
+ctx.arc(185,348,121,0,Math.PI*2);
+ctx.fill();
+ctx.restore();
+
+ctx.fillStyle=C.steel3;
+ctx.beginPath();
+ctx.arc(185,348,115,0,Math.PI*2);
+ctx.fill();
+ctx.strokeStyle=C.brass1;
+ctx.lineWidth=14;
+ctx.stroke();
+ctx.strokeStyle='#2f3638';ctx.lineWidth=2;ctx.beginPath();ctx.arc(185,348,94,0,Math.PI*2);ctx.stroke();
+ctx.fillStyle=C.brass2;ctx.beginPath();ctx.arc(185,348,48,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass0;ctx.lineWidth=5;ctx.stroke();for(let a=0;a<Math.PI*2;a+=Math.PI/2){ctx.strokeStyle=C.brass1;ctx.lineWidth=12;ctx.beginPath();ctx.moveTo(185,348);ctx.lineTo(185+Math.cos(a)*42,348+Math.sin(a)*42);ctx.stroke()}bolt(185,348,9);
+for(let a=0;a<Math.PI*2;a+=Math.PI/4){bolt(185+Math.cos(a)*112,348+Math.sin(a)*112,4)}
+vent(70,112,54,40,4);vent(226,535,60,38,4);
+plate(41,507,276,48,C.steel1,5,2);for(let x=56;x<125;x+=22){ctx.fillStyle=x===56?'#72b083':x===78?'#c49b45':x===100?'#7291a0':'#a45848';ctx.fillRect(x,520,10,7)}for(let x=152;x<300;x+=25){ctx.strokeStyle=C.steel0;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,519);ctx.lineTo(x+15,519);ctx.stroke()}
+
+// 3) FOUR SHUTTERED HATCHES
+const HX=[[440,635],[815,1015],[1220,1415],[1600,1795]];
+for(const [x0,x1] of HX){
+ const w=x1-x0;
+
+ // entire hatch assembly casts a hard contact shadow on the hull
+ hatchContactShadow(x0,x1);
+
+ // ivory structural surround
+ ivoryArmorPanel(x0,168,w,398,12,((x0/100)%2>.5?0.012:-0.010));
+ armorFasteners(x0,168,w,398,'corners');
+
+ // structural seam cuts in the ivory surround
+ engravedSeam(x0+8,223,x0+8,337);
+ engravedSeam(x1-8,223,x1-8,337);
+ engravedSeam(x0+8,452,x0+8,508);
+ engravedSeam(x1-8,452,x1-8,508);
+
+ // deep gasket well behind the visible brass gasket
+ recessedWell(x0+11,180,w-22,374,9);
+
+ const gasket=pathChamfer(x0+16,185,w-32,364,8);
+ fillStroke(gasket,C.brass3,C.steel3,2);
+
+ // brass gasket upper-left catchlight / lower-right shadow
+ ctx.strokeStyle='rgba(217,174,95,.34)';
+ ctx.lineWidth=2;
+ ctx.beginPath();
+ ctx.moveTo(x0+27,188);
+ ctx.lineTo(x1-27,188);
+ ctx.stroke();
+
+ ctx.strokeStyle='rgba(0,0,0,.55)';
+ ctx.beginPath();
+ ctx.moveTo(x1-19,200);
+ ctx.lineTo(x1-19,540);
+ ctx.lineTo(x1-30,551);
+ ctx.stroke();
+
+ // shutter is another step back inside the well
+ const sh=pathChamfer(x0+27,194,w-54,346,7);
+ pathShadow(sh,4,5,.34);
+ fillStroke(sh,'#171d20','#080b0c',3);
+
+ ctx.save();
+ ctx.clip(sh);
+
+ // broad shutter value gradient
+ let gg=ctx.createLinearGradient(x0+27,194,x1-27,540);
+ gg.addColorStop(0,'#293135');
+ gg.addColorStop(.22,'#20272a');
+ gg.addColorStop(.72,'#171d20');
+ gg.addColorStop(1,'#0f1416');
+ ctx.fillStyle=gg;
+ ctx.fillRect(x0+27,194,w-54,346);
+
+ // horizontal shutter slats
+ for(let yy=210;yy<525;yy+=13){
+  ctx.strokeStyle='#30373a';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(x0+32,yy);
+  ctx.lineTo(x1-32,yy);
+  ctx.stroke();
+
+  ctx.strokeStyle='#0b0f10';
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(x0+32,yy+3);
+  ctx.lineTo(x1-32,yy+3);
+  ctx.stroke();
+ }
+
+ // top-left reflected edge and darker right/bottom interior lip
+ ctx.fillStyle='rgba(255,255,255,.035)';
+ ctx.fillRect(x0+32,199,w-64,4);
+
+ ctx.fillStyle='rgba(0,0,0,.24)';
+ ctx.fillRect(x1-33,202,4,329);
+ ctx.fillRect(x0+32,529,w-64,5);
+
+ ctx.restore();
+
+ // small top latch
+ plate(x1-55,194,31,12,C.steel2,3,1);
+ ctx.fillStyle=C.brass0;
+ ctx.fillRect(x1-48,197,17,5);
+
+ // center crossbar
+ ctx.fillStyle=C.brass2;
+ ctx.fillRect(x0+18,371,w-36,13);
+ ctx.fillStyle=C.brass0;
+ ctx.fillRect(x0+23,373,w-46,3);
+ for(const bx of [x0+40,(x0+x1)/2,x1-40])bolt(bx,378,4);
+
+ // deeper bottom sill
+ pathShadow(pathChamfer(x0+27,515,w-54,28,3),3,4,.25);
+ plate(x0+27,515,w-54,28,C.steel1,3,1);
+
+ for(let bx=x0+42;bx<x1-35;bx+=45){
+  ctx.strokeStyle=C.steel0;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(bx,519);
+  ctx.lineTo(bx,539);
+  ctx.stroke();
+ }
+}
+
+// 4) ROOF EQUIPMENT + CONNECTED UPPER MANIFOLD
+// Pipe sizes/positions tuned closer to the reference image.
+
+plate(508,58,82,42,C.steel0,9,2);
+ctx.fillStyle=C.brass1;ctx.fillRect(518,68,62,7);bolt(527,80,3);bolt(571,80,3);
+pipe([[549,100],[549,109]],9,C.steel0,C.steel0,5);
+
+plate(1265,44,285,48,C.steel0,13,3);
+plate(1298,45,218,43,C.ivory1,10,2);
+for(const xx of [1320,1406,1491])plate(xx-8,40,16,54,C.brass1,3,1);
+ctx.strokeStyle=C.ivory0;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(1308,49);ctx.lineTo(1505,49);ctx.stroke();
+pipe([[1265,63],[1240,63],[1240,109]],13,C.steel0,C.steel0,8);
+
+// upper roof manifold — thin and continuous
+pipe([[331,109],[1845,109]],10,C.steel0,C.steel0,8);
+
+// large left teal roof branch shares the heavier diameter of the main left service
+pipe([[376,109],[376,129],[405,129],[630,129]],22,C.teal2,C.teal0,15);
+
+// exhaust stack shares a real node with the manifold
+pipe([[920,109],[920,48]],22,C.steel0,C.steel0,8);
+collarV(920,48,22,44,16);
+ctx.fillStyle='#222627';ctx.fillRect(906,6,28,35);
+ctx.fillStyle='rgba(65,65,62,.65)';ctx.beginPath();ctx.arc(920,3,24,0,Math.PI*2);ctx.fill();
+
+ctx.strokeStyle=C.brass1;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(1737,81);ctx.lineTo(1737,39);ctx.stroke();
+ctx.fillStyle='#a45138';ctx.fillRect(1733,33,8,7);
+ctx.strokeStyle=C.steel0;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(1850,82);ctx.lineTo(1850,27);ctx.stroke();
+
+for(const [x,pw,w,h] of [
+ [376,22,36,30],[549,9,26,22],[920,22,38,30],[1000,10,26,22],
+ [1107,10,26,22],[1240,13,30,25],[1434,10,26,22],[1845,10,26,22]
+]) junction(x,109,pw,w,h,C.brass1);
+
+
+// PASS C: recessed structural backing behind the service corridors.
+// These stay behind pipes and machinery and never enter hatch apertures.
+serviceBacking(340,150,89,408);
+serviceBacking(637,150,165,408);
+// central process cluster draws its own backing
+serviceBacking(1418,150,170,408);
+serviceBacking(1798,150,112,408);
+
+// 5) PRIMARY PIPE NETWORK — COLLISION-CLEAN SERVICE CORRIDORS
+//
+// Rules for this pass:
+// - instruments sit beside pipes, never with a pipe drawn through their face
+// - auxiliary loops have their own lane
+// - secondary equipment does not share the same x-lane as a major riser
+// - horizontal machine feeds stay entirely inside the service corridor
+// - all hatch openings remain clear
+
+// ---------------------------------------------------------------------------
+// LEFT OF HATCH 1
+// ---------------------------------------------------------------------------
+
+// dominant teal riser
+pipe([[376,129],[376,574],[394,606]],31,C.teal1,C.teal0,28);
+for(const yy of [156,250,364,488,560])collarV(376,yy,31,49,19);
+junction(376,129,31,49,37,C.brass1);
+
+// Dedicated instrument rail at x=417.
+// The pipe is broken around the gauge and valve so nothing passes through them.
+pipe([[376,340],[417,340],[417,384]],9,C.steel0,C.steel0,7);
+pipe([[417,426],[417,468]],9,C.steel0,C.steel0,7);
+pipe([[417,506],[417,532],[376,532]],9,C.steel0,C.steel0,7);
+
+junction(376,340,9,23,23,C.brass1);
+junction(376,532,9,23,23,C.brass1);
+
+gauge(417,405,15);
+collarV(417,374,9,24,12);
+collarV(417,437,9,24,12);
+
+valve(417,487,12);
+collarV(417,459,9,24,12);
+collarV(417,515,9,24,12);
+
+
+// ---------------------------------------------------------------------------
+// HATCH 1 / HATCH 2 SERVICE CORRIDOR
+// ---------------------------------------------------------------------------
+
+// main brass riser
+pipe([[920,109],[920,128],[890,145],[770,145],[751,164],[751,572],[771,606]],28,C.brass1,C.brass0,28);
+for(const yy of [171,260,371,486,558])collarV(751,yy,28,47,18);
+junction(920,109,28,46,35,C.brass1);
+
+// Auxiliary black service lane moved to x=714.
+// It no longer runs behind the heat exchanger or through the valve wheel.
+pipe([[751,326],[714,326],[714,404]],11,C.steel0,C.steel0,8);
+pipe([[714,452],[714,501],[751,501]],11,C.steel0,C.steel0,8);
+junction(751,326,11,27,25,C.brass1);
+junction(751,501,11,27,25,C.brass1);
+
+valve(714,428,21);
+collarV(714,392,11,27,13);
+collarV(714,464,11,27,13);
+
+
+// ---------------------------------------------------------------------------
+// HATCH 2 / HATCH 3 SERVICE CORRIDOR
+// ---------------------------------------------------------------------------
+
+drawCentralProcessCluster();
+
+
+// ---------------------------------------------------------------------------
+// HATCH 3 / HATCH 4 SERVICE CORRIDOR
+// ---------------------------------------------------------------------------
+
+// main teal riser
+pipe([[1434,109],[1451,126],[1451,582],[1468,606]],15,C.teal1,C.teal0,12);
+for(const yy of [188,295,407,534])collarV(1451,yy,15,33,14);
+junction(1434,109,15,32,27,C.brass1);
+
+// Auxiliary bypass moved LEFT of the main pipe to x=1427.
+// This removes the crossing with the pressure-vessel feed.
+pipe([[1451,190],[1427,190],[1427,282]],9,C.steel0,C.steel0,7);
+pipe([[1427,330],[1427,565],[1451,565]],9,C.steel0,C.steel0,7);
+junction(1451,190,9,23,23,C.brass1);
+junction(1451,565,9,23,23,C.brass1);
+
+valve(1427,306,17);
+collarV(1427,270,9,24,12);
+collarV(1427,342,9,24,12);
+
+
+// ---------------------------------------------------------------------------
+// RIGHT OF HATCH 4
+// ---------------------------------------------------------------------------
+
+// Main teal riser nudged right to create a real machinery lane on its left.
+pipe([[1845,109],[1855,128],[1855,552],[1833,587],[1818,606]],19,C.teal1,C.teal0,18);
+for(const yy of [204,333,468])collarV(1855,yy,19,36,15);
+junction(1845,109,19,35,29,C.brass1);
+
+// Narrow bypass takes the far-right lane.
+pipe([[1855,182],[1890,182],[1890,565],[1855,565]],9,C.steel0,C.steel0,8);
+junction(1855,182,9,23,23,C.brass1);
+junction(1855,565,9,23,23,C.brass1);
+collarV(1890,270,9,24,12);
+collarV(1890,488,9,24,12);
+
+// Side-mounted valve below the cylinder.
+// The teal riser does not pass through the valve.
+pipe([[1855,520],[1838,520]],9,C.steel0,C.steel0,6);
+valve(1818,520,14);
+
+
+// 6) SECONDARY MACHINERY — NON-OVERLAPPING LOCAL ZONES
+
+// ---------------------------------------------------------------------------
+// H1 / H2 HEAT EXCHANGER
+// Machine narrowed and shifted left so it does not collide with x=714 auxiliary
+// service lane or x=751 brass riser.
+// ---------------------------------------------------------------------------
+
+// clean visible elbow/downturn drawn after the service backing.
+// It matches the horizontal main girth and ends exactly behind the exchanger.
+pipe([[620,129],[657,129],[657,385]],22,C.teal2,C.teal0,18);
+drawHeatExchanger(644,204);
+
+// clean outlet from exchanger to main brass riser.
+// This is above the auxiliary service rail at y=326, so no crossing occurs.
+pipe([[691,300],[751,300]],10,C.steel0,C.steel0,8);
+flangeH(691,300,10);
+junction(751,300,10,26,24,C.brass1);
+
+
+// ---------------------------------------------------------------------------
+// H2 / H3 PROCESS CLUSTER
+// Rendered as one bespoke assembly in Section 5 to preserve depth/order.
+
+
+// ---------------------------------------------------------------------------
+// H3 / H4 PRESSURE VESSEL
+// Main pipe x=1451, vessel x=1510..1596, bypass x=1427.
+// All three now occupy separate lanes.
+// ---------------------------------------------------------------------------
+
+pipe([[1451,246],[1492,246],[1510,246],[1553,246]],11,C.teal2,C.teal0,8);
+junction(1451,246,11,27,24,C.brass1);
+
+drawPressureVessel(1510,258);
+flangeV(1553,246,11);
+
+// uninterrupted vessel return
+pipe([[1553,474],[1553,574],[1572,606]],11,C.steel0,C.steel0,10);
+flangeV(1553,474,11);
+
+// Gauge moved off the return pipe and mounted on a side branch.
+pipe([[1553,500],[1513,500]],8,C.steel0,C.steel0,6);
+gauge(1494,500,14);
+
+
+// ---------------------------------------------------------------------------
+// FAR-RIGHT COIL / CYLINDER
+// Cylinder moved to its own left-hand machinery lane.
+// Main teal is x=1855, bypass is x=1890.
+// ---------------------------------------------------------------------------
+
+pipe([[1842,255],[1855,255]],9,C.teal2,C.teal0,6);
+pipe([[1842,355],[1855,355]],9,C.steel0,C.steel0,6);
+
+drawFarRightCoilCylinder(1803,218);
+collarV(1822,255,18,38,15);
+collarV(1822,355,18,38,15);
+
+junction(1855,255,9,23,22,C.brass1);
+junction(1855,355,9,23,22,C.brass1);
+
+
+// 7) LOWER UNDERCARRIAGE — KEEP MAJOR MANIFOLD CLEAR
+
+underbodyBackplane();
+
+// background returns
+pipe([[48,658],[410,658],[428,673],[702,673]],11,C.steel0,C.steel0,13);
+pipe([[805,678],[1110,678],[1127,663],[1448,663]],9,C.steel0,C.steel0,12);
+pipe([[1470,672],[1812,672]],10,C.teal3,C.teal0,12);
+
+// secondary housings drawn first
+drawLowerHorizontalTank(472,620,182,54);
+drawUnderbodyRadiator(765,620,128,52,6);
+drawUnderbodyRadiator(1190,620,145,52,7);
+plate(1616,620,88,52,C.steel1,7,2);
+for(let xx=1631;xx<1691;xx+=9){
+ ctx.fillStyle=C.brass1;
+ ctx.fillRect(xx,629,4,31);
+}
+
+for(const [x,y,w,h] of [
+ [34,623,122,41],
+ [190,624,143,41],
+ [1070,623,93,43],
+ [1342,623,113,41],
+ [1712,624,114,41]
+]){
+ plate(x,y,w,h,C.steel1,5,1);
+ for(let bx=x+14;bx<x+w-10;bx+=35)bolt(bx,y+12,2);
+}
+
+// foreground manifold stays completely visible
+pipe([[394,606],[771,606]],17,C.teal3,C.teal0,16);
+pipe([[771,606],[1066,606]],17,C.steel0,C.steel0,16);
+pipe([[1066,606],[1468,606]],15,C.steel0,C.steel0,15);
+pipe([[1468,606],[1818,606]],17,C.teal3,C.teal0,16);
+
+// local returns
+pipe([[1124,606],[1190,606]],10,C.steel0,C.steel0,8);
+pipe([[1468,606],[1572,606]],10,C.steel0,C.steel0,8);
+
+// junctions/collars last
+for(const [x,pw] of [
+ [394,17],[771,17],[1066,17],
+ [1124,15],[1190,15],[1468,17],[1572,15],[1818,17]
+]){
+ junction(x,606,pw,pw+18,pw+16,C.brass1);
+}
+
+for(const xx of [522,880,1260,1678]){
+ collarH(xx,606,16,18,33);
+}
+
+
+// 8) SMALL DETAILS / PANELING
+// Lower service boxes are already drawn in the underbody middle layer.
+// Keep only attached seam fasteners here.
+
+// Removed standalone seam fasteners that were reading as artifact rivets.
+
+
+// 9) LANDING FEET REMOVED
+// Reference shows the structure sitting without the pronounced deployed feet.
+
+
+// 10) restrained wear / grain
+let seed=72891;function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+ctx.save();ctx.globalAlpha=.055;for(let i=0;i<1250;i++){const xx=25+rnd()*1907,yy=79+rnd()*603;ctx.fillStyle=rnd()>.55?'#fff':'#000';ctx.fillRect(xx,yy,1,1)}ctx.restore();
+
+  })(_bctx);
+  return cv;
+}
+
 const WH=150;                // world DEPTH is fixed; WIDTH is infinite (deepened for T4/T5 strata)
 const BEDROCK_Y=WH-1;        // bottom row is unbreakable floor
 const T_AIR=0,T_DIRT=1,T_S1=2,T_S2=3,T_S3=4,T_ORE=5,T_NODE1=6,T_NODE2=7,T_NODE3=8,
@@ -6268,11 +7862,12 @@ function labWingAt(px,py){
   // The hull sprite is drawn scaled (S=1.55) and centred on the footprint, so the four hatches spread
   // WIDER than the 8-tile footprint — the outer two (Lapidary/Suit) sit near/beyond its edges. Map the
   // player to the nearest VISUAL hatch (same art geometry drawLab uses), not the raw tile->wing split.
-  const S=1.55, HL=364, HR=2160, cen=lab.x+LAB_W/2;
+  const S=1.55, HL=25, HR=1932, cen=lab.x+LAB_W/2;   // v23 art: hull spans x 25..1932
+  const HC=[537.5,915,1317.5,1697.5];                // new-art hatch centres (HX midpoints), left→right
   let best=-1, bestD=1e9;
-  for (let i=0;i<4;i++){ const wx=cen+((380+i*445+222.5-HL)/(HR-HL)-0.5)*LAB_W*S, d=Math.abs(px-wx);
+  for (let i=0;i<4;i++){ const wx=cen+((HC[i]-HL)/(HR-HL)-0.5)*LAB_W*S, d=Math.abs(px-wx);
     if (d<bestD){ bestD=d; best=i; } }
-  const halfW=(195.8/(HR-HL))*LAB_W*S/2;        // half a visual hatch, in tiles
+  const halfW=(196/(HR-HL))*LAB_W*S/2;          // half a visual hatch, in tiles
   return bestD>halfW+0.7 ? null : LAB_WINGS[best];
 }
 // Walk into a wing. Each maps to the screen that wing houses.
@@ -7108,15 +8703,15 @@ function _labWingMachine(ctx,i,cx,cy,r,col,now){
   ctx.restore();
 }
 let _labWinRects=[];   // per-frame window screen-rects for clickLabWing (the sprite is scaled, so tiles don't map)
-let _labOpenT=[0,0,0,0], _labOpenLast=0;   // per-wing hatch-open animation (0=shut, 1=fully revealed) + last timestamp
 function drawLab(ctx,camX,camY,now){
   if (!lab.placed) return;
   const spx=lab.x*TS-camX, w=LAB_W*TS, h=LAB_H*TS;
   const S=1.55, ancX=spx+w/2, ancY=(lab.y-lab.drop)*TS-camY+h;
-  // The lab body is now a baked art sprite (assets/lab.png). Its four-module HULL region maps
-  // onto the 8x4 tile footprint; the airlock/roof/skid overhang beyond it, exactly as the old
-  // procedural body did. Collision / landing / save still read the unscaled tiles, untouched.
-  const AW=2200, AH=900, HL=364, HR=2160, HB=805;      // art dims; hull left/right x, flat-base y (ship rests on its skid)
+  // The lab body is a baked art sprite (the v23 exterior, baked once to labArtCv). Its HULL region
+  // maps onto the 8x4 tile footprint; the airlock/roof/underbody overhang beyond it, exactly as the
+  // old procedural body did. Collision / landing / save still read the unscaled tiles, untouched.
+  // v23 exterior artwork (1962x801 logical). Hull spans x 25..1932; visible underbody base ~ y690.
+  const AW=LAB_ART_W, AH=LAB_ART_H, HL=25, HR=1932, HB=690;
   const sc=(w*S)/(HR-HL);
   const SX=ax=>(ancX-w/2*S)+(ax-HL)*sc, SY=ay=>ancY+(ay-HB)*sc;   // art px -> screen px
   const dW=AW*sc, dH=AH*sc, dx=SX(0), dy=SY(0);
@@ -7127,32 +8722,22 @@ function drawLab(ctx,camX,camY,now){
   if (lab.drop>0){ for (const fx of [0.34,0.66]){ const bx=SX(HL)+(SX(HR)-SX(HL))*fx, by=SY(HB);
       const pg=ctx.createLinearGradient(0,by,0,by+lab.drop*TS); pg.addColorStop(0,'rgba(255,225,150,0.9)'); pg.addColorStop(0.35,'rgba(232,140,50,0.5)'); pg.addColorStop(1,'rgba(232,120,40,0)');
       ctx.fillStyle=pg; ctx.beginPath(); ctx.moveTo(bx-7,by); ctx.lineTo(bx+7,by); ctx.lineTo(bx+3,by+lab.drop*TS); ctx.lineTo(bx-3,by+lab.drop*TS); ctx.closePath(); ctx.fill(); } }
-  // the baked hull. Until the PNG decodes, skip a frame rather than draw a placeholder box.
-  if (labImg.complete && labImg.naturalWidth){ ctx.imageSmoothingEnabled=true; ctx.drawImage(labImg,dx,dy,dW,dH); }
-  // window click-rects + the live near-wing highlight / label / ENTER prompt (gameplay feedback the
-  // static art cannot carry). Window geometry mirrors lab_art's roomInterior (WIN_INS, WY, WW, WH).
-  const M0=380, MW=445, WIN_INS=111, WY=198, WW=224, WHt=450;   // centred bezel-framed hatch (art: wx=mx+MW*0.28, ww=MW*0.44, ±14 bezel)
-  const OP_INS=124.6, OP_WY=212, OP_WW=195.8, OP_WH=422;         // the inner OPENING (interior region, no bezel) baked into lab_open.png
+  // the baked hull (offscreen canvas, baked once on first draw)
+  if (!labArtCv) labArtCv=bakeLabExterior();
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(labArtCv,dx,dy,dW,dH);
+  // Per-wing hatch geometry taken straight from the v23 artwork (its four shuttered hatches). The
+  // click-rects and the near-wing highlight map each hatch's shutter APERTURE (x0+27..x1-27, y194..540
+  // in art space — see the "FOUR SHUTTERED HATCHES" pass) into screen space via SX/SY. This source is
+  // exterior-only, so there is no baked interior to reveal: the affordance is the coloured outline on
+  // the hatch you're standing at, and clickLabWing turns a hit into enterWing.
+  const HATCHES=[[440,635],[815,1015],[1220,1415],[1600,1795]];   // art-space [x0,x1] per wing, matching the artwork
   const near=labWingAt(player.x,player.y);
-  // advance the per-wing open animation (frame-rate independent; ~0.28s to fully part)
-  const dt=_labOpenLast? Math.min(0.05,(now-_labOpenLast)/1000):0; _labOpenLast=now;
-  LAB_WINGS.forEach((wing,i)=>{ const mx=M0+i*MW, rx=SX(mx+WIN_INS), ry=SY(WY), rw=WW*sc, rh=WHt*sc;
+  LAB_WINGS.forEach((wing,i)=>{
+    const [hx0,hx1]=HATCHES[i];
+    const rx=SX(hx0+27), ry=SY(194), rw=(hx1-hx0-54)*sc, rh=346*sc;
     _labWinRects.push({key:wing.key, view:wing.view, x:rx, y:ry, w:rw, h:rh});
-    const nearThis=near&&near.key===wing.key;
-    _labOpenT[i]=Math.max(0,Math.min(1,_labOpenT[i]+(nearThis?1:-1)*dt/0.28));
-    // reveal the interior by drawing the open sprite through a shutter parting from the centre
-    const t=_labOpenT[i];
-    if (t>0.02 && labOpenImg.complete && labOpenImg.naturalWidth){
-      const ox=SX(mx+OP_INS), oy=SY(OP_WY), ow=OP_WW*sc, oh=OP_WH*sc, band=t*oh;
-      ctx.save(); ctx.beginPath(); ctx.rect(ox,oy+(oh-band)/2,ow,band); ctx.clip();
-      ctx.drawImage(labOpenImg,dx,dy,dW,dH); ctx.restore();
-      // lit seams on the parting shutter edges
-      if (t<0.98){ ctx.strokeStyle='rgba(255,232,150,0.5)'; ctx.lineWidth=1.5;
-        ctx.beginPath(); ctx.moveTo(ox,oy+(oh-band)/2); ctx.lineTo(ox+ow,oy+(oh-band)/2);
-        ctx.moveTo(ox,oy+(oh+band)/2); ctx.lineTo(ox+ow,oy+(oh+band)/2); ctx.stroke(); }
-    }
     if (near&&near.key===wing.key){
-      // the opened hatch + the coloured near-wing outline are the affordance; no ENTER prompt text
+      // coloured near-wing outline is the affordance
       ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,rx,ry,rw,rh,4); ctx.stroke(); ctx.restore();
     }
   });
