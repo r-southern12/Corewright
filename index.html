@@ -12521,8 +12521,16 @@ addEventListener('beforeunload',()=>{ if(!tut.on&&!WIPING) saveGame(); });
 // ---------- boot & loop ----------
 let VW=innerWidth, VH=innerHeight, zoom=1;
 function vpSize(){
-  const v=window.visualViewport;
-  VW=v?v.width:innerWidth; VH=v?v.height:innerHeight;
+  // The canvases are position:fixed;inset:0 and must fill the LAYOUT viewport. Sizing
+  // them to visualViewport.width/height (a mobile-era holdover, for the URL bar / soft
+  // keyboard) sized them to the VISUAL viewport instead — so any page pinch-zoom, which
+  // is easy to trigger on a laptop trackpad while click-dragging to mine, shrank the
+  // canvas below the window. The explicit style width then won over inset:0 and left the
+  // right/bottom of the screen uncovered, showing the bare --void body + grain/lamp
+  // overlays through — which read as "half the screen stopped rendering". innerWidth/
+  // innerHeight track the layout viewport, so the canvas always covers the window and the
+  // browser handles a pinch by magnifying the full-size canvas instead of exposing page.
+  VW=innerWidth; VH=innerHeight;
 }
 function resize(){
   vpSize();
