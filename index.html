@@ -5890,11 +5890,17 @@ const PLANET_TERRA={
     glow:['#8B7CF6','#4b3f8f'],
     tint:'rgba(0,0,0,0)'
   },
+  // Topsoil rolls share ONE r per cell, first match wins, so each entry's EFFECTIVE
+  // rate is its threshold minus the previous one: copper .040, node1 .015, moss .026,
+  // clay .045. copper+moss were ~halved (from .085/.055 eff) after the T1 soil was
+  // deepened ~2x — the per-cell rate now runs over twice the dirt, so the old rates
+  // doubled the totals; halving restores the prior amount and leaves more plain dirt
+  // between finds. node1/clay widths are unchanged (kept the same effective rate).
   topsoil:[
-    [0.085, T_COPPER, 1],
-    [0.10,  T_NODE1,  2],
-    [0.155, T_MOSS,   0],
-    [0.20,  T_CLAY,   0],
+    [0.040, T_COPPER, 1],
+    [0.055, T_NODE1,  2],
+    [0.081, T_MOSS,   0],
+    [0.126, T_CLAY,   0],
   ],
   // TIER BANDS: T1 = dirt (0..7, topsoil rolls above). T2 = the SOFT-STONE band (7..26): iron, tin, node2,
   // salt. T3 = the banded (26..52) + deep (52+) stone: voidsteel, node3, mica, and brine. Every roll is keyed
