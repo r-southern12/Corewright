@@ -11449,9 +11449,11 @@ function coreCrystalMass(core){ if (core.cells===null) generateCells(core); let 
 // Burning a rough for lab power is now MASS-based (was a flat 45/tier), with a tier bonus for the denser deep
 // cores, so a well-cleaned core is worth more than a hacked-up one of the same tier.
 const CORE_BURN_K=4;   // tuned so a well-cleaned tier-II core ≈ 90⚡ (its old flat value); a hacked-up one, less
-function coreBurnPower(core){ return Math.max(1, Math.round(coreCrystalMass(core)*CORE_BURN_K*(0.5+0.5*core.tier))); }
-function burnCoreForPower(core){
-  const gain=coreBurnPower(core);
+// rate<1 is the dirty-burn return: an uncleaned rough can be thrown on the fire too, but the matrix
+// fouls it so only a fraction of the crystal's charge is recovered (mirrors the 20% dirty grind).
+function coreBurnPower(core, rate){ return Math.max(1, Math.round(coreCrystalMass(core)*CORE_BURN_K*(0.5+0.5*core.tier)*(rate||1))); }
+function burnCoreForPower(core, rate){
+  const gain=coreBurnPower(core, rate);
   if (!removeCore(core)) return;
   powerBank+=gain;
   floatText('+'+gain+'⚡','var(--violet)');
@@ -11519,6 +11521,13 @@ function coreCard(core,clean){
     gd.title='Grind this dirty core straight to powder at a 20% return — skips cleaning';
     gd.onclick=()=>grindToPowder(core,0.2);
     btns.appendChild(gd);
+    // ...or burnt straight for lab power, likewise at a 20% return — the matrix fouls the burn, so
+    // cleaning first is worth far more. Same skip-the-work-lose-most trade as the dirty grind.
+    const burn=document.createElement('button');
+    burn.className='tiny'; burn.textContent='Burn → ⚡'+coreBurnPower(core,0.2);
+    burn.title='Burn this dirty core for lab power at a 20% return — skips cleaning, most is lost';
+    burn.onclick=()=>burnCoreForPower(core,0.2);
+    btns.appendChild(burn);
   }
   const del=document.createElement('button');
   del.className='tiny danger'; del.textContent='✕';
