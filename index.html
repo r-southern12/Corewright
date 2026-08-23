@@ -5883,8 +5883,8 @@ const ELEM={
 const PLANET_TERRA={
   id:'terra', name:'Terra',
   surface:{ base:14, waves:[[0.18,4],[0.53,3,2]], jitter:1.5 },
-  // dirt(T1) 0-7 · S1(T2) 7-26 · S2/S3(T3) 26-78 · S4(T4) 78-112 · S5(T5) 112-148
-  bands:{ dirt:7, s1:26, s2:52, s3:78, s4:112 },
+  // dirt(T1) 0..8-20 (variable soil, see dirtDepthAt) · S1(T2) ~dirt-26 · S2/S3(T3) 26-78 · S4(T4) 78-112 · S5(T5) 112-148
+  bands:{ dirt:7, dirtMax:20, s1:26, s2:52, s3:78, s4:112 },
   palette:{
     sky:['#070912','#10152b','#1a2140'],
     glow:['#8B7CF6','#4b3f8f'],
@@ -5943,8 +5943,8 @@ const PLANET_TERRA={
 const PLANET_FERRIC={
   id:'ferric', name:'Ferric',
   surface:{ base:11, waves:[[0.12,6],[0.4,3,1.2],[0.9,1.5]], jitter:2 },
-  // dirt 0-5 · S1(T2) 5-20 · S2/S3(T3) 20-72 · S4(T4) 72-108 · S5(T5) 108-148
-  bands:{ dirt:5, s1:20, s2:46, s3:72, s4:108 },
+  // dirt 0..6-16 (variable soil, see dirtDepthAt) · S1(T2) ~dirt-20 · S2/S3(T3) 20-72 · S4(T4) 72-108 · S5(T5) 108-148
+  bands:{ dirt:5, dirtMax:16, s1:20, s2:46, s3:72, s4:108 },
   palette:{
     sky:['#140806','#2a120a','#3d1d10'],
     glow:['#E8A33D','#7a3c17'],
@@ -6043,6 +6043,20 @@ function surfaceOf(x){
   const rnd=mulberry32((WORLD_SEED ^ Math.imul(x,0x9E3779B1)) >>> 0);
   return Math.floor(h+rnd()*p.surface.jitter);
 }
+// Per-column T1 SOIL depth. The dirt (T1) crust used to be a flat, thin b.dirt rows
+// (5-8); deepened here to a variable pocketed layer so the T1 tier — and the tier-I
+// ancient caches buried in it — have real room to spawn. Two-octave value noise so
+// soil reads as broad thick pockets, not per-column spikes; result runs (b.dirt+1)
+// .. b.dirtMax, so EVERY column is deeper than the old flat crust and the deepest
+// reach b.dirtMax (20 on Terra). It only pushes dirt DOWN into the top of the
+// soft-stone (T2) region — the S1..S5 stone thresholds are untouched, so every deep
+// ore roll (keyed to raw depth) still lands in its own stone band. Deterministic on
+// WORLD_SEED so vaultAnchorAt agrees with genColumn on where the soil bottoms out.
+function dirtDepthAt(x){
+  const b=planet.bands, hi=b.dirtMax||b.dirt, lo=Math.min(b.dirt+1,hi);
+  const n=0.6*valueNoise(x,0,9,(WORLD_SEED+71)>>>0)+0.4*valueNoise(x,0,31,(WORLD_SEED+137)>>>0);
+  return Math.round(lo+n*(hi-lo));
+}
 // Does column x ANCHOR a 2x2 ancient cache? Deterministic, on its own rng so it never
 // perturbs terrain. Returns {vy,tier} for the vault's top-left cell, or null. The vault
 // occupies (x,vy)..(x+1,vy+1); column x lays the left half, column x+1 the right half,
@@ -6050,11 +6064,14 @@ function surfaceOf(x){
 function vaultAnchorAt(x){
   const p=planet, b=p.bands;
   const vr=mulberry32((WORLD_SEED+31) ^ Math.imul(x,0x27D4EB2F));
-  if (vr()>=0.055) return null;
-  const tr=vr(), tier=tr<0.34?1:tr<0.60?2:tr<0.80?3:tr<0.92?4:5;   // deeper tiers rarer
+  if (vr()>=0.065) return null;                                    // slightly more caches overall
+  const tr=vr(), tier=tr<0.42?1:tr<0.64?2:tr<0.82?3:tr<0.93?4:5;   // T1 given a bigger share (they read as sparse); deeper tiers still rarer
   const s=surfaceOf(x);
-  // each tier's vault buries in its own band (T4 in the S4 band, T5 in the S5 band)
-  const LO=[0,2,b.dirt,b.s1,b.s3,b.s4], HI=[0,b.dirt,b.s1,b.s3,b.s4,BEDROCK_Y-s-3];
+  // each tier's vault buries in its own band (T4 in the S4 band, T5 in the S5 band).
+  // T1/T2 use this column's ACTUAL soil depth so tier-I vaults spread through the whole
+  // (now deeper) dirt layer instead of being crammed into a thin 2..7 slot.
+  const dd=dirtDepthAt(x);
+  const LO=[0,2,dd,b.s1,b.s3,b.s4], HI=[0,dd,b.s1,b.s3,b.s4,BEDROCK_Y-s-3];
   const lo=LO[tier], hi=Math.max(lo+2,Math.min(HI[tier],BEDROCK_Y-s-3));
   const vy=s+lo+Math.floor(vr()*Math.max(1,hi-lo));
   if (vy<=0 || vy+1>=BEDROCK_Y) return null;
@@ -6070,6 +6087,7 @@ function genColumn(x){
   for (const w of p.surface.waves) h+=w[1]*Math.sin(x*w[0]+(w[2]||0));
   const s=Math.floor(h+rnd()*p.surface.jitter);
   const b=p.bands;
+  const dd=dirtDepthAt(x);          // this column's T1 soil depth (variable, deeper than the old flat b.dirt)
   for (let y=0;y<WH;y++){
     if (y===BEDROCK_Y){ tiles[y]=T_BEDROCK; continue; }     // world floor
     if (y<s){ tiles[y]=T_AIR; seen[y]=1; continue; }
@@ -6079,7 +6097,7 @@ function genColumn(x){
     const bio=biomeAt(p,x,y);
     if (bio) elem[y]=bio.element==='ice'?2:1;
     const depth=y-s;
-    let t=depth<b.dirt?T_DIRT:depth<b.s1?T_S1:depth<b.s2?T_S2:depth<b.s3?T_S3:depth<b.s4?T_S4:T_S5;
+    let t=depth<dd?T_DIRT:depth<b.s1?T_S1:depth<b.s2?T_S2:depth<b.s3?T_S3:depth<b.s4?T_S4:T_S5;
     const r=rnd();
     if (depth>=b.s3){
       // T4/T5 deep strata: adamant/aether ore + node4/5 laid in CONCENTRATED POCKETS (a
