@@ -11402,7 +11402,7 @@ function renderLab(){
 // core can only go to the excavation bench; a clean one can go to any station.
 function coreShardCount(core){ return core.cells?core.cells.filter(isCrystal).length:0; }
 function coreGlowText(core){
-  if (core.cells===null) return '<span class="sub">unprospected — sealed rough</span>';
+  if (core.cells===null) generateCells(core);   // prospected by default — no "sealed rough" state; show the buried read
   const mat=core.cells.filter(isMatrix).length;
   if (mat>0) return `<span style="color:var(--dim)">buried — ${mat} of matrix still on it</span>`;
   // A cleaned core reveals what it's FOR: its body hue, any condensation hue, and the systems it best
@@ -11479,6 +11479,10 @@ function coreCard(core,clean){
   div.className='card t'+core.tier+(core===activeCore?' active':'');
   div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
   const at=seatWhere(core);
+  // Cores are PROSPECTED by default: generate the cells up front so every storage card shows the
+  // dirty-core thumbnail and its buried/matrix read. (There is no "unprospected — sealed rough"
+  // state any more; cells still generate lazily everywhere else, this just forces it for display.)
+  if (core.cells===null) generateCells(core);
   // a slowly-rotating 3D thumbnail of the ACTUAL core (crystal + any dirt/matrix still on it)
   if (core.cells&&core.cells.length){
     const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=64;
