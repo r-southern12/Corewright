@@ -7877,6 +7877,44 @@ ctx.save();ctx.globalAlpha=.055;for(let i=0;i<1250;i++){const xx=25+rnd()*1907,y
     _bctx.fillStyle='rgba(255,255,255,0.85)'; _bctx.beginPath(); _bctx.arc(L.x-0.6,L.y-0.6,1,0,7); _bctx.fill(); // hot centre
     _bctx.restore();
   }
+  // WING SYMBOLS on the closed hatches — restored to the old lab.png placement (centred on the crossbar
+  // ~y377, wing-hued line art): gem=Lapidary, crucible=Forge, flask=Brewing, figure=Suit. Baked into the
+  // model so a closed hatch identifies its wing; the reveal covers it when the player is beside it. The
+  // new vector hull shipped without these, which is the miss this restores.
+  (function(c){
+    const CY=377, marks=[
+      {X:537.5, col:'79,227,193',  g:'gem'},      // Lapidary
+      {X:915,   col:'232,163,61',  g:'crucible'}, // Forge
+      {X:1317.5,col:'139,124,246', g:'flask'},    // Brewing
+      {X:1697.5,col:'91,110,160',  g:'figure'},   // Suit
+    ];
+    c.save(); c.lineJoin='round'; c.lineCap='round'; c.lineWidth=5;
+    for(const m of marks){
+      c.strokeStyle='rgb('+m.col+')'; const X=m.X, Y=CY;
+      if(m.g==='gem'){
+        c.beginPath(); c.moveTo(X,Y-52); c.lineTo(X+30,Y-24); c.lineTo(X+18,Y+46); c.lineTo(X,Y+56);
+        c.lineTo(X-18,Y+46); c.lineTo(X-30,Y-24); c.closePath(); c.stroke();
+        c.beginPath(); c.moveTo(X-30,Y-24); c.lineTo(X+30,Y-24); c.stroke();               // girdle
+        c.beginPath(); c.moveTo(X-30,Y-24); c.lineTo(X,Y+56); c.moveTo(X+30,Y-24); c.lineTo(X,Y+56);
+        c.moveTo(X,Y-52); c.lineTo(X,Y-24); c.stroke();                                     // crown facets
+      } else if(m.g==='crucible'){
+        c.beginPath(); c.moveTo(X-34,Y-34); c.lineTo(X+34,Y-34); c.lineTo(X+22,Y+46); c.lineTo(X-22,Y+46); c.closePath(); c.stroke();
+        c.beginPath(); c.ellipse(X,Y-34,34,9,0,0,Math.PI*2); c.stroke();                    // rim
+        c.beginPath(); c.moveTo(X-28,Y+10); c.lineTo(X+28,Y+10); c.stroke();                // melt line
+      } else if(m.g==='flask'){
+        c.beginPath(); c.arc(X,Y+18,34,0,Math.PI*2); c.stroke();                            // round body
+        c.beginPath(); c.moveTo(X-9,Y-42); c.lineTo(X-11,Y-12); c.moveTo(X+9,Y-42); c.lineTo(X+11,Y-12); c.stroke(); // neck
+        c.beginPath(); c.moveTo(X-14,Y-44); c.lineTo(X+14,Y-44); c.stroke();                // mouth
+        c.beginPath(); c.moveTo(X-25,Y+30); c.lineTo(X+25,Y+30); c.stroke();                // liquid line
+      } else if(m.g==='figure'){
+        c.beginPath(); c.arc(X,Y-30,13,0,Math.PI*2); c.stroke();                            // head
+        c.beginPath(); c.moveTo(X-24,Y+48); c.lineTo(X-24,Y+2); c.quadraticCurveTo(X-24,Y-12,X,Y-12);
+        c.quadraticCurveTo(X+24,Y-12,X+24,Y+2); c.lineTo(X+24,Y+48); c.stroke();            // torso
+        c.beginPath(); c.moveTo(X-24,Y+22); c.lineTo(X+24,Y+22); c.stroke();                // waist
+      }
+    }
+    c.restore();
+  })(_bctx);
   return cv;
 }
 
