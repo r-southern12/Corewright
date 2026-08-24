@@ -9096,7 +9096,7 @@ function startLabDescent(){
    on every side (airlock left, roof/tanks above, skid wide). Landing scours ALL terrain across that
    VISUAL box so nothing pokes through the ship, and the player salvages any ore/reagents/cores the
    thrusters turn up. Below the save footprint we still pack dirt so the hull rests level. */
-function settleLab(){
+function settleLab(salvage=true){
   const deepestUnder=labGroundY(lab.x);
   // Use the CURRENT (v35) art hull bounds — art x 25..1932 is the WHOLE visible hull, airlock included.
   // (This was still on the old v-art constants after the hull swap, so the cleared box was misaligned /
@@ -9107,11 +9107,13 @@ function settleLab(){
   // Scour the WHOLE column the ship comes down through — from above the drop start to the footprint
   // floor — not just the box it rests in, so it removes every block it passes through (and can never
   // land embedded, even into a hill it fell through). Above open ground this is just air, so no-op.
-  const clearT=Math.floor(lab.y-LAB_DROP0-2);
+  // -6 so the column covers the ship's TALL parts too (the roof/masts sit ~4.6 tiles above lab.y and
+  // ride that much higher at the top of the fall), not just the footprint box.
+  const clearT=Math.floor(lab.y-LAB_DROP0-6);
   for (let cx=clearL; cx<=clearR; cx++){
     for (let cy=clearT; cy<=lab.y+LAB_H-1; cy++){
       const t=getTile(cx,cy);
-      if (t!==T_AIR&&t!==T_BEDROCK){ tileYield(t,true,undefined,cx,cy); setTile(cx,cy,T_AIR); }   // salvage, then clear
+      if (t!==T_AIR&&t!==T_BEDROCK){ if(salvage) tileYield(t,true,undefined,cx,cy); setTile(cx,cy,T_AIR); }   // salvage (landing) or just clear (re-scour on load)
       setSeen(cx,cy,1);
     }
   }
@@ -15418,7 +15420,10 @@ function loadGame(){
     powerBank=d.powerBank||0;
     forgeAnvil=d.forgeAnvil||null;
     if (d.tank){ tank.jet=d.tank.jet||0; tank.brine=d.tank.brine||0; tank.sand=d.tank.sand||0; }
-    if (d.lab){ lab.placed=!!d.lab.placed; lab.x=d.lab.x||0; lab.y=d.lab.y||0; lab.drop=0; }
+    if (d.lab){ lab.placed=!!d.lab.placed; lab.x=d.lab.x||0; lab.y=d.lab.y||0; lab.drop=0;
+      // Re-scour around a restored lab (clear-only, no salvage) so a save from before the wider scour —
+      // or any leftover terrain the ship fell through — is cleaned up on load and never sits embedded.
+      if (lab.placed) settleLab(false); }
     if (d.suitFrames) for (const k in suitFrames) suitFrames[k]=d.suitFrames[k]||null;
     forgedParts=d.forgedParts||[];
     // relink installed frames/bits to their shelf entry so ref-identity (installed detection) holds
