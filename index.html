@@ -10049,7 +10049,10 @@ function drawLab(ctx,camX,camY,now){
       ctx.save(); ctx.beginPath(); ctx.rect(rx,ry+(rh-band)/2,rw,band); ctx.clip();
       if (lapReady){
         if (!lapIntCv) lapIntCv=bakeLapidaryInterior();
-        ctx.drawImage(lapIntCv, rx,ry,rw,rh);
+        // COVER-fit by height so the art keeps its proportions (no squish); the art is wider than the
+        // hatch aperture, so the sides crop a little — which is fine — rather than stretching it thin.
+        const sw=Math.min(lapIntCv.width, lapIntCv.height*(rw/rh)), sx=(lapIntCv.width-sw)/2;
+        ctx.drawImage(lapIntCv, sx,0,sw,lapIntCv.height, rx,ry,rw,rh);
       } else {
         const sx=(M0+i*MW+OP_INS)*2, sy=OP_WY*2, sw=OP_WW*2, sh=OP_WH*2;   // source px in lab_open.png (2x art)
         ctx.drawImage(labOpenImg, sx,sy,sw,sh, rx,ry,rw,rh);
