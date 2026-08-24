@@ -8760,11 +8760,13 @@ function drawLab(ctx,camX,camY,now){
   // hull is drawn AFTER the distance-fog vignette (deliberately, so its detail isn't crushed), so it
   // never got the falloff everything else does. Darken ONLY the lab's pixels (via the fog-tinted
   // silhouette) by distance from the player — a small base keeps it from blazing even up close, and
-  // it fades further out. The running lights below are drawn AFTER this, so they persist through it.
+  // it ramps to a FULL fade at range (the pixels become the fog colour, so the hull disappears into
+  // the gloom entirely). The running lights below are drawn AFTER this and persist, so the fully
+  // faded hull still reads as "something is there" from afar.
   if (!labShadowCv) labShadowCv=bakeLabShadow();
   const _lcx=lab.x+LAB_W/2, _lcy=lab.y+LAB_H/2;
   const _dist=Math.hypot(player.x-_lcx, player.y-_lcy);
-  const _darken=Math.max(0, Math.min(0.72, 0.22 + (_dist-3)/16*0.5));
+  const _darken=Math.max(0, Math.min(1, 0.22 + (_dist-3)/14*0.78));
   if (_darken>0.01){ ctx.save(); ctx.globalAlpha=_darken; ctx.drawImage(labShadowCv,dx,dy,dW,dH); ctx.restore(); }
   // Running lights — additive glows over the darken, so they stay visible when the hull has dimmed.
   { const pulse=0.62+0.38*Math.sin(now*0.004);
