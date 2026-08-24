@@ -9082,11 +9082,12 @@ function labGroundY(x0){
   for (let i=0;i<LAB_W;i++) deepest=Math.max(deepest,surfaceY[x0+i]);
   return deepest;
 }
+const LAB_DROP0=18;                   // tiles above its resting place the descent starts from
 function startLabDescent(){
   const x0=labLandingX();
   lab.x=x0;
   lab.y=labGroundY(x0)-LAB_H;
-  lab.drop=18;                        // tiles above its resting place
+  lab.drop=LAB_DROP0;
   lab.placed=true;
   say('The lab breaks atmosphere and comes down beside you.','good');
 }
@@ -9097,10 +9098,16 @@ function startLabDescent(){
    thrusters turn up. Below the save footprint we still pack dirt so the hull rests level. */
 function settleLab(){
   const deepestUnder=labGroundY(lab.x);
-  const S=1.55, HL=364, HR=2160, cen=lab.x+LAB_W/2;
-  const clearL=Math.floor(cen+((356-HL)/(HR-HL)-0.5)*LAB_W*S);     // hull-left edge (no airlock), in tiles
-  const clearR=Math.ceil (cen+((2160-HL)/(HR-HL)-0.5)*LAB_W*S);    // hull-right edge
-  const clearT=Math.floor(lab.y-1.6);                              // roof/tank overhang top
+  // Use the CURRENT (v35) art hull bounds — art x 25..1932 is the WHOLE visible hull, airlock included.
+  // (This was still on the old v-art constants after the hull swap, so the cleared box was misaligned /
+  //  too narrow and the ship ended up embedded — the airlock especially.)
+  const S=1.55, HL=25, HR=1932, cen=lab.x+LAB_W/2;
+  const clearL=Math.floor(cen+((25  -HL)/(HR-HL)-0.5)*LAB_W*S)-1;  // full visual hull, left edge incl. airlock
+  const clearR=Math.ceil (cen+((1932-HL)/(HR-HL)-0.5)*LAB_W*S)+1;  // full visual hull, right edge
+  // Scour the WHOLE column the ship comes down through — from above the drop start to the footprint
+  // floor — not just the box it rests in, so it removes every block it passes through (and can never
+  // land embedded, even into a hill it fell through). Above open ground this is just air, so no-op.
+  const clearT=Math.floor(lab.y-LAB_DROP0-2);
   for (let cx=clearL; cx<=clearR; cx++){
     for (let cy=clearT; cy<=lab.y+LAB_H-1; cy++){
       const t=getTile(cx,cy);
@@ -9113,6 +9120,18 @@ function settleLab(){
     for (let j=lab.y+LAB_H;j<=deepestUnder;j++){ if (getTile(cx,j)===T_AIR) setTile(cx,j,T_DIRT); }
     setSeen(cx,lab.y+LAB_H,1);
   }
+}
+// Land the lab already settled at the start of a run (no arrival flight) and stand the player at its
+// entry hatch, so a new game never opens with the lab embedded or the player away from it. Uses the
+// same placement + scour as a normal landing; the player emerges at the round airlock (art x185).
+function landLabAtStart(){
+  const x0=labLandingX();
+  lab.x=x0; lab.y=labGroundY(x0)-LAB_H; lab.drop=0; lab.placed=true;
+  settleLab();
+  // Stand the player on the lab's OWN ground line at its left/airlock end (the footprint is packed to
+  // ground there, so this is always solid — using the virgin surfaceY left them floating over the pit
+  // settleLab had just scoured). This is the hatch they pop out of.
+  player.x=lab.x+0.5; player.y=lab.y+LAB_H-1.2; player.vx=0; player.vy=0; player.onGround=true;
 }
 // Which wing (if any) the player is standing at.
 /* Click-to-enter. The wing must be within reach of the player — you walk to the
@@ -15499,6 +15518,7 @@ if (loadGame()){
   say('Run restored. The dig continues.','good');
 } else {
   columns.clear(); spawn();
+  landLabAtStart();                    // lab is already down beside the player, at its hatch, from turn one
   updateMeters(); updateStock();
   tutStart();
 }
