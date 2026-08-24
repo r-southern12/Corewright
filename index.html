@@ -6446,20 +6446,21 @@ function serviceBacking(x,y,w,h){
 }
 
 function underbodyBackplane(){
- // deep chassis cavity
+ // deep chassis cavity begins AFTER the airlock.
+ // The airlock base is now continuous ivory plating.
  ctx.fillStyle='#080c0d';
- ctx.fillRect(47,590,1840,100);
+ ctx.fillRect(394,590,1493,100);
 
  // rear structural rails
  ctx.fillStyle='#141a1c';
- ctx.fillRect(58,642,1818,14);
- ctx.fillRect(58,676,1818,9);
+ ctx.fillRect(405,642,1471,14);
+ ctx.fillRect(405,676,1471,9);
 
  ctx.fillStyle='rgba(255,255,255,.035)';
- ctx.fillRect(58,642,1818,2);
+ ctx.fillRect(405,642,1471,2);
 
  // sparse vertical chassis ribs behind machinery
- for(const x of [172,356,706,1034,1168,1457,1820]){
+ for(const x of [706,1034,1168,1457,1820]){
   const p=pathChamfer(x,599,13,82,3);
   ctx.fillStyle='#111719';
   ctx.fill(p);
@@ -6468,13 +6469,13 @@ function underbodyBackplane(){
   ctx.stroke(p);
  }
 
- // rear cable bundle: deliberately thin and subordinate
+ // rear cable bundle also begins after the airlock section
  ctx.strokeStyle='#070a0b';
  ctx.lineWidth=7;
  ctx.beginPath();
- ctx.moveTo(70,683);
- ctx.bezierCurveTo(330,682,420,688,690,681);
- ctx.bezierCurveTo(1010,673,1350,688,1830,680);
+ ctx.moveTo(410,683);
+ ctx.bezierCurveTo(650,686,900,676,1180,681);
+ ctx.bezierCurveTo(1400,686,1620,682,1830,680);
  ctx.stroke();
 
  ctx.strokeStyle='#242b2d';
@@ -6696,36 +6697,59 @@ function drawHullEndCaps(){
 }
 
 function drawAirlockHullConstruction(){
- // outer airlock area already exists; these seams make it read as assembled armor
- engravedSeam(45,191,104,159);
- engravedSeam(104,159,263,159);
- engravedSeam(263,159,325,199);
+ const cx=185, cy=348;
 
- engravedSeam(45,493,103,531);
- engravedSeam(103,531,273,531);
- engravedSeam(273,531,326,491);
-
- // narrow side service plates attached to the airlock shell
- ivoryArmorPanel(39,266,20,154,5,-0.030);
- ivoryArmorPanel(311,266,20,154,5,-0.022);
-
- for(const yy of [282,345,405]){
-  bolt(49,yy,2.2);
-  bolt(321,yy,2.2);
- }
-
- // subtle outer ring highlight/shadow to make the circular cutout feel machined
- ctx.strokeStyle='rgba(247,230,193,.22)';
- ctx.lineWidth=3;
+ // broad ivory reinforcement ring built into the hull around the pressure door
+ ctx.strokeStyle='rgba(0,0,0,.34)';
+ ctx.lineWidth=34;
  ctx.beginPath();
- ctx.arc(185,345,149,Math.PI*1.08,Math.PI*1.90);
+ ctx.arc(cx+2,cy+3,151,0,Math.PI*2);
  ctx.stroke();
 
- ctx.strokeStyle='rgba(0,0,0,.30)';
+ ctx.strokeStyle=C.ivory0;
+ ctx.lineWidth=28;
+ ctx.beginPath();
+ ctx.arc(cx,cy,151,0,Math.PI*2);
+ ctx.stroke();
+
+ // top-left machined catchlight
+ ctx.strokeStyle='rgba(249,235,204,.36)';
  ctx.lineWidth=4;
  ctx.beginPath();
- ctx.arc(187,351,149,Math.PI*.02,Math.PI*.92);
+ ctx.arc(cx-1,cy-1,151,Math.PI*1.08,Math.PI*1.90);
  ctx.stroke();
+
+ // lower-right hard edge shadow
+ ctx.strokeStyle='rgba(70,63,53,.34)';
+ ctx.lineWidth=5;
+ ctx.beginPath();
+ ctx.arc(cx+1,cy+2,151,Math.PI*.02,Math.PI*.92);
+ ctx.stroke();
+
+ // upper armor seams terminate into the reinforcement ring rather than
+ // floating across the broad ivory face
+ engravedSeam(45,191,102,159);
+ engravedSeam(102,159,268,159);
+ engravedSeam(268,159,325,198);
+
+ engravedSeam(45,191,82,222);
+ engravedSeam(82,222,91,235);
+
+ engravedSeam(325,198,290,224);
+ engravedSeam(290,224,279,238);
+
+ // lower armor seams mirror the upper construction and terminate at the ring
+ engravedSeam(45,493,88,521);
+ engravedSeam(88,521,104,526);
+
+ engravedSeam(326,491,286,519);
+ engravedSeam(286,519,269,526);
+
+ // lower base plating continues to the bottom of the airlock section
+
+ // small broad lower-left / lower-right wear cuts, kept away from the controls
+ armorScratch(52,548,79,555);
+ armorScratch(290,548,315,540);
 }
 
 
@@ -6888,6 +6912,521 @@ function drawCentralProcessCluster(){
 }
 
 
+// ---------------------------------------------------------------------------
+// V24 — Airlock handle refinement
+// Heavier mechanical locking hub for the left pressure hatch.
+// ---------------------------------------------------------------------------
+function drawAirlockHandle(cx,cy){
+ // hard contact shadow so the lock reads as a mounted mechanism
+ ctx.save();
+ ctx.translate(4,5);
+ ctx.globalAlpha=.28;
+ ctx.fillStyle='#000';
+ ctx.beginPath();
+ ctx.arc(cx,cy,56,0,Math.PI*2);
+ ctx.fill();
+ ctx.restore();
+
+ // main brass boss
+ let boss=ctx.createRadialGradient(cx-10,cy-12,8,cx,cy,56);
+ boss.addColorStop(0,C.brass0);
+ boss.addColorStop(.34,C.brass2);
+ boss.addColorStop(.78,C.brass1);
+ boss.addColorStop(1,C.brass3);
+ ctx.fillStyle=boss;
+ ctx.beginPath();
+ ctx.arc(cx,cy,54,0,Math.PI*2);
+ ctx.fill();
+ ctx.strokeStyle=C.brass0;
+ ctx.lineWidth=4;
+ ctx.stroke();
+
+ // inset dark inner seat
+ let seat=ctx.createRadialGradient(cx-6,cy-7,5,cx,cy,35);
+ seat.addColorStop(0,'#384041');
+ seat.addColorStop(.55,'#242b2d');
+ seat.addColorStop(1,'#111517');
+ ctx.fillStyle=seat;
+ ctx.beginPath();
+ ctx.arc(cx,cy,34,0,Math.PI*2);
+ ctx.fill();
+ ctx.strokeStyle='rgba(206,169,95,.38)';
+ ctx.lineWidth=2;
+ ctx.stroke();
+
+ // four substantial locking arms
+ const arms=[
+  [cx-9,cy-41,18,37],   // north
+  [cx+4,cy-9,37,18],    // east
+  [cx-9,cy+4,18,37],    // south
+  [cx-41,cy-9,37,18],   // west
+ ]
+ for(const [x,y,w,h] of arms){
+  const p=pathChamfer(x,y,w,h,5);
+
+  ctx.save();
+  ctx.translate(2,3);
+  ctx.globalAlpha=.20;
+  ctx.fillStyle='#000';
+  ctx.fill(p);
+  ctx.restore();
+
+  fillStroke(p,C.brass2,C.brass3,2);
+
+  ctx.save();
+  ctx.clip(p);
+  let g=ctx.createLinearGradient(x,y,x+w,y+h);
+  g.addColorStop(0,'rgba(255,239,196,.28)');
+  g.addColorStop(.45,'rgba(255,255,255,0)');
+  g.addColorStop(1,'rgba(78,54,20,.22)');
+  ctx.fillStyle=g;
+  ctx.fillRect(x,y,w,h);
+  ctx.restore();
+ }
+
+ // central spindle and cap
+ ctx.fillStyle=C.brass1;
+ ctx.beginPath();
+ ctx.arc(cx,cy,20,0,Math.PI*2);
+ ctx.fill();
+ ctx.strokeStyle=C.brass0;
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ ctx.fillStyle='#4c3212';
+ ctx.beginPath();
+ ctx.arc(cx,cy,8.5,0,Math.PI*2);
+ ctx.fill();
+ ctx.strokeStyle='rgba(255,223,162,.25)';
+ ctx.lineWidth=1.5;
+ ctx.stroke();
+
+ // tiny retaining bolts on the boss
+ for(const a of [Math.PI/4,3*Math.PI/4,5*Math.PI/4,7*Math.PI/4]){
+  bolt(cx+Math.cos(a)*44, cy+Math.sin(a)*44, 2.6)
+ }
+}
+
+
+// ---------------------------------------------------------------------------
+// V26 — Airlock lower service controls
+// Replaces the simple black bar / generic vent with a more mechanical assembly.
+// ---------------------------------------------------------------------------
+function drawAirlockLowerService(){
+ // Move the main service strip lower to give the door more breathing room.
+ const shell=pathChamfer(40,540,278,50,6);
+ hardMachineShadow(shell,3,4,.24);
+ fillStroke(shell,C.steel1,C.steel3,2);
+
+ // left indicator module
+ const indicators=pathChamfer(49,550,76,25,4);
+ fillStroke(indicators,C.steel2,C.steel3,1);
+
+ const lamps=[
+  [58,'#72b083'],
+  [77,'#c49b45'],
+  [96,'#7291a0'],
+  [115,'#a45848']
+ ];
+ for(const [lx,col] of lamps){
+  ctx.fillStyle='#0b0e0f';
+  ctx.fillRect(lx-2,556,12,9);
+  ctx.fillStyle=col;
+  ctx.fillRect(lx,558,8,5);
+ }
+
+ // centre maintenance / hazard strip
+ const hazard=pathChamfer(131,550,88,25,4);
+ fillStroke(hazard,'#242a2c',C.steel3,1);
+
+ ctx.save();
+ ctx.clip(hazard);
+ for(let x=123;x<230;x+=18){
+  ctx.strokeStyle=C.brass2;
+  ctx.lineWidth=7;
+  ctx.beginPath();
+  ctx.moveTo(x,577);
+  ctx.lineTo(x+18,548);
+  ctx.stroke();
+ }
+ ctx.restore();
+
+ // right recessed grille
+ const grille=pathChamfer(226,547,81,31,4);
+ fillStroke(grille,'#151a1c',C.steel3,2);
+ for(let yy=553;yy<=571;yy+=6){
+  ctx.strokeStyle='#080b0c';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(237,yy);
+  ctx.lineTo(296,yy);
+  ctx.stroke();
+
+  ctx.strokeStyle=C.steel0;
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(237,yy-1);
+  ctx.lineTo(296,yy-1);
+  ctx.stroke();
+ }
+
+ // Lower access elements are moved further down into the beige base.
+ const access=pathChamfer(63,610,166,46,5);
+ fillStroke(access,C.ivory2,C.steel2,2);
+ engravedSeam(75,624,217,624);
+ engravedSeam(75,642,217,642);
+ bolt(76,619,2.3);
+ bolt(216,619,2.3);
+ bolt(76,648,2.3);
+ bolt(216,648,2.3);
+
+ // lower-right ventilation/access panel
+ const lowerVent=pathChamfer(226,608,70,48,5);
+ hardMachineShadow(lowerVent,3,4,.20);
+ fillStroke(lowerVent,C.steel1,C.steel3,2);
+
+ const ventInset=pathChamfer(235,617,52,29,3);
+ fillStroke(ventInset,'#181e20',C.steel3,1);
+ for(let yy=622;yy<=641;yy+=6){
+  ctx.strokeStyle='#080b0c';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(243,yy);
+  ctx.lineTo(279,yy);
+  ctx.stroke();
+
+  ctx.strokeStyle=C.steel0;
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(243,yy-1);
+  ctx.lineTo(279,yy-1);
+  ctx.stroke();
+ }
+}
+
+
+// ---------------------------------------------------------------------------
+// V29 — Circular airlock door depth pass
+// Refines only the pressure-door rings/face. Handle geometry remains V24.
+// ---------------------------------------------------------------------------
+function drawAirlockDoor(cx,cy){
+ // deep recess/contact shadow behind the complete circular assembly
+ ctx.save();
+ ctx.translate(6,7);
+ ctx.globalAlpha=.34;
+ ctx.fillStyle='#000';
+ ctx.beginPath();
+ ctx.arc(cx,cy,125,0,Math.PI*2);
+ ctx.fill();
+ ctx.restore();
+
+ // dark machined recess in the ivory hull
+ let recess=ctx.createRadialGradient(cx-18,cy-20,32,cx,cy,126);
+ recess.addColorStop(0,'#3b4243');
+ recess.addColorStop(.66,'#202729');
+ recess.addColorStop(1,'#0a0e0f');
+ ctx.fillStyle=recess;
+ ctx.beginPath();
+ ctx.arc(cx,cy,122,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.strokeStyle='#101516';
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ // heavy brass retaining ring
+ let brass=ctx.createRadialGradient(cx-24,cy-26,36,cx,cy,119);
+ brass.addColorStop(0,C.brass0);
+ brass.addColorStop(.40,C.brass1);
+ brass.addColorStop(.78,C.brass2);
+ brass.addColorStop(1,C.brass3);
+ ctx.fillStyle=brass;
+ ctx.beginPath();
+ ctx.arc(cx,cy,116,0,Math.PI*2);
+ ctx.fill();
+
+ // hard lower-right ring shadow
+ ctx.strokeStyle='rgba(48,30,14,.58)';
+ ctx.lineWidth=8;
+ ctx.beginPath();
+ ctx.arc(cx+1,cy+2,111,Math.PI*.02,Math.PI*.92);
+ ctx.stroke();
+
+ // restrained top-left brass highlight
+ ctx.strokeStyle='rgba(236,196,116,.42)';
+ ctx.lineWidth=5;
+ ctx.beginPath();
+ ctx.arc(cx-1,cy-1,111,Math.PI*1.08,Math.PI*1.90);
+ ctx.stroke();
+
+ // inner black door plate
+ let face=ctx.createRadialGradient(cx-21,cy-23,18,cx,cy,102);
+ face.addColorStop(0,'#242c2e');
+ face.addColorStop(.45,'#171d1f');
+ face.addColorStop(.82,'#0e1315');
+ face.addColorStop(1,'#070a0b');
+ ctx.fillStyle=face;
+ ctx.beginPath();
+ ctx.arc(cx,cy,101,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.strokeStyle='#30383a';
+ ctx.lineWidth=3;
+ ctx.stroke();
+
+ // recessed inner dish
+ let dish=ctx.createRadialGradient(cx-12,cy-14,8,cx,cy,83);
+ dish.addColorStop(0,'#1e2527');
+ dish.addColorStop(.62,'#111719');
+ dish.addColorStop(1,'#080b0c');
+ ctx.fillStyle=dish;
+ ctx.beginPath();
+ ctx.arc(cx,cy,82,0,Math.PI*2);
+ ctx.fill();
+
+ ctx.strokeStyle='#293234';
+ ctx.lineWidth=2;
+ ctx.stroke();
+
+ // subtle plate seams, deliberately low-contrast
+ ctx.save();
+ ctx.strokeStyle='rgba(83,94,96,.18)';
+ ctx.lineWidth=1.5;
+ for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){
+  ctx.beginPath();
+  ctx.moveTo(cx+Math.cos(a)*57,cy+Math.sin(a)*57);
+  ctx.lineTo(cx+Math.cos(a)*97,cy+Math.sin(a)*97);
+  ctx.stroke();
+ }
+ ctx.restore();
+
+ // outer retaining bolts integrated into the brass ring
+ for(let a=0;a<Math.PI*2;a+=Math.PI/4){
+  bolt(cx+Math.cos(a)*111,cy+Math.sin(a)*111,4);
+ }
+
+ // existing approved V24 handle
+ drawAirlockHandle(cx,cy);
+}
+
+
+// ---------------------------------------------------------------------------
+// V33 — Roof pressure tank refinement
+// Rebuilds only the large horizontal tank above the Suit Bay side.
+// ---------------------------------------------------------------------------
+function drawRoofPressureTank(x=1258,y=35,w=316,h=60){
+ // hard contact shadow beneath the whole tank
+ const outer=horizontalCylinderPath(x,y,w,h);
+ ctx.save();
+ ctx.translate(4,5);
+ ctx.globalAlpha=.28;
+ ctx.fillStyle='#000';
+ ctx.fill(outer);
+ ctx.restore();
+
+ // dark steel pressure shell / end caps
+ let og=ctx.createLinearGradient(x,y,x,y+h);
+ og.addColorStop(0,C.steel0);
+ og.addColorStop(.22,C.steel1);
+ og.addColorStop(.68,C.steel2);
+ og.addColorStop(1,C.steel3);
+ ctx.fillStyle=og;
+ ctx.fill(outer);
+ ctx.strokeStyle='#070a0b';
+ ctx.lineWidth=3;
+ ctx.stroke(outer);
+
+ // ivory cylindrical body inset inside the steel end caps
+ const ix=x+34, iy=y+5, iw=w-68, ih=h-10;
+ const inner=horizontalCylinderPath(ix,iy,iw,ih);
+
+ let ig=ctx.createLinearGradient(ix,iy,ix,iy+ih);
+ ig.addColorStop(0,'#eee3c7');
+ ig.addColorStop(.18,C.ivory0);
+ ig.addColorStop(.54,C.ivory1);
+ ig.addColorStop(.82,C.ivory2);
+ ig.addColorStop(1,C.ivory3);
+ ctx.fillStyle=ig;
+ ctx.fill(inner);
+ ctx.strokeStyle=C.steel2;
+ ctx.lineWidth=2;
+ ctx.stroke(inner);
+
+ // subtle top highlight and lower shadow to sell cylinder curvature
+ ctx.save();
+ ctx.clip(inner);
+
+ ctx.fillStyle='rgba(255,249,224,.24)';
+ ctx.fillRect(ix+10,iy+4,iw-20,4);
+
+ ctx.fillStyle='rgba(65,56,45,.18)';
+ ctx.fillRect(ix+10,iy+ih-8,iw-20,5);
+
+ // restrained longitudinal wear
+ ctx.strokeStyle='rgba(86,74,59,.20)';
+ ctx.lineWidth=1.2;
+ ctx.beginPath();
+ ctx.moveTo(ix+62,iy+16);
+ ctx.lineTo(ix+94,iy+13);
+ ctx.stroke();
+
+ ctx.beginPath();
+ ctx.moveTo(ix+168,iy+34);
+ ctx.lineTo(ix+201,iy+38);
+ ctx.stroke();
+
+ ctx.restore();
+
+ // three substantial brass retaining straps
+ const straps=[
+  x+60,
+  x+w/2,
+  x+w-60
+ ];
+
+ for(const sx of straps){
+  const band=pathChamfer(sx-8,y-3,16,h+6,4);
+
+  ctx.save();
+  ctx.translate(2,2);
+  ctx.globalAlpha=.22;
+  ctx.fillStyle='#000';
+  ctx.fill(band);
+  ctx.restore();
+
+  fillStroke(band,C.brass1,C.brass3,2);
+
+  ctx.strokeStyle='rgba(237,198,119,.45)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(sx-5,y+4);
+  ctx.lineTo(sx-5,y+h-4);
+  ctx.stroke();
+ }
+
+ // end retaining collars / machined necks
+ const leftCollar=pathChamfer(x+19,y+10,20,h-20,5);
+ fillStroke(leftCollar,C.brass2,C.brass3,2);
+
+ const rightCollar=pathChamfer(x+w-39,y+10,20,h-20,5);
+ fillStroke(rightCollar,C.brass2,C.brass3,2);
+
+ // center seam / inspection plate
+ const seam=pathChamfer(x+w/2-23,y+18,46,24,4);
+ ctx.fillStyle='rgba(82,74,61,.16)';
+ ctx.fill(seam);
+ ctx.strokeStyle='rgba(77,67,54,.28)';
+ ctx.lineWidth=1;
+ ctx.stroke(seam);
+
+ // small left/right pressure ports
+ const lp=pathChamfer(x-5,y+21,18,18,4);
+ fillStroke(lp,C.steel1,C.steel3,2);
+ collarH(x+1,y+30,10,13,22);
+
+ const rp=pathChamfer(x+w-13,y+21,18,18,4);
+ fillStroke(rp,C.steel1,C.steel3,2);
+ collarH(x+w-1,y+30,10,13,22);
+}
+
+
+// ---------------------------------------------------------------------------
+// V34 — Suit Bay lower machinery cluster
+// Rebuilds only the equipment directly below the right-most hatch.
+// ---------------------------------------------------------------------------
+function drawSuitBayLowerCluster(){
+ // Larger machinery cluster below the Suit Bay hatch.
+ // It sits behind the foreground manifold at y=606 and is now visibly fed
+ // by the right-hand hatch-side teal riser.
+
+ // visible drop from the right-hand hatch plumbing lane into the new cluster
+ pipe([[1812,560],[1812,628],[1798,642]],12,C.teal3,C.teal0,10);
+
+ // dark round regulator / valve housing on the left
+ const valveBody=pathChamfer(1548,616,72,60,7);
+ hardMachineShadow(valveBody,4,5,.26);
+ fillStroke(valveBody,C.steel1,C.steel3,2);
+
+ ctx.fillStyle=C.steel3;
+ ctx.beginPath();
+ ctx.arc(1584,646,24,0,Math.PI*2);
+ ctx.fill();
+ ctx.strokeStyle=C.brass2;
+ ctx.lineWidth=5;
+ ctx.stroke();
+
+ // substantial valve wheel
+ valve(1584,646,16);
+
+ // short steel feed into the radiator body
+ pipe([[1620,646],[1638,646]],11,C.steel0,C.steel0,8);
+ flangeH(1620,646,11);
+
+ // larger brass finned heat exchanger / radiator
+ const rad=pathChamfer(1634,612,92,68,6);
+ hardMachineShadow(rad,4,5,.25);
+ fillStroke(rad,C.steel1,C.steel3,2);
+
+ const radFace=pathChamfer(1644,620,72,52,4);
+ fillStroke(radFace,C.brass3,C.steel3,2);
+
+ for(let x=1651;x<=1708;x+=7){
+  ctx.strokeStyle='#3f2a12';
+  ctx.lineWidth=5.5;
+  ctx.beginPath();
+  ctx.moveTo(x,626);
+  ctx.lineTo(x,666);
+  ctx.stroke();
+
+  ctx.strokeStyle=C.brass0;
+  ctx.lineWidth=1.6;
+  ctx.beginPath();
+  ctx.moveTo(x-1,626);
+  ctx.lineTo(x-1,666);
+  ctx.stroke();
+ }
+
+ // radiator inlet/outlet collars
+ collarH(1635,646,11,16,30);
+ collarH(1725,646,11,16,30);
+
+ // larger chunky corrugated expansion / coil section to the right
+ pipe([[1726,646],[1790,646]],14,C.steel0,C.steel0,9);
+
+ for(let x=1737;x<1786;x+=8){
+  ctx.strokeStyle=C.brass3;
+  ctx.lineWidth=7.5;
+  ctx.beginPath();
+  ctx.moveTo(x,631);
+  ctx.lineTo(x,661);
+  ctx.stroke();
+
+  ctx.strokeStyle=C.brass1;
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(x-1,633);
+  ctx.lineTo(x-1,659);
+  ctx.stroke();
+ }
+
+ // right-hand termination / coupling block now larger and clearly fed from above
+ const endBlock=pathChamfer(1786,624,43,44,5);
+ hardMachineShadow(endBlock,3,4,.22);
+ fillStroke(endBlock,C.steel2,C.steel3,2);
+ bolt(1798,636,2.5);
+ bolt(1818,655,2.5);
+
+ // connect the descending teal branch directly into the end block
+ collarH(1790,646,12,16,28);
+ pipe([[1798,642],[1798,646]],12,C.teal3,C.teal0,6);
+
+ // small top service cap on radiator
+ const cap=pathChamfer(1665,602,26,14,3);
+ fillStroke(cap,C.brass2,C.brass3,1.5);
+ bolt(1678,609,2.2);
+}
+
+
 ctx.clearRect(0,0,1962,801);
 
 // 1) CORE HULL SILHOUETTE — PASS D MATERIAL / PANEL CONSTRUCTION
@@ -6910,32 +7449,14 @@ ctx.fillRect(40,145,1875,8);
 drawHullEndCaps();
 
 // 2) LEFT PRESSURE AIRLOCK
-ivoryArmorPanel(25,145,360,421,18,-0.006);
+ivoryArmorPanel(25,145,360,537,18,-0.006);
 // removed artifact fasteners;
-ctx.fillStyle=C.ivory0;ctx.beginPath();ctx.arc(185,348,146,Math.PI,Math.PI*2);ctx.lineTo(331,348);ctx.lineTo(331,530);ctx.lineTo(39,530);ctx.lineTo(39,348);ctx.closePath();ctx.fill();ctx.strokeStyle=C.steel2;ctx.lineWidth=3;ctx.stroke();
+// circular surround handled by drawAirlockHullConstruction();
 drawAirlockHullConstruction();
 
-ctx.save();
-ctx.translate(6,7);
-ctx.globalAlpha=.34;
-ctx.fillStyle='#000';
-ctx.beginPath();
-ctx.arc(185,348,121,0,Math.PI*2);
-ctx.fill();
-ctx.restore();
-
-ctx.fillStyle=C.steel3;
-ctx.beginPath();
-ctx.arc(185,348,115,0,Math.PI*2);
-ctx.fill();
-ctx.strokeStyle=C.brass1;
-ctx.lineWidth=14;
-ctx.stroke();
-ctx.strokeStyle='#2f3638';ctx.lineWidth=2;ctx.beginPath();ctx.arc(185,348,94,0,Math.PI*2);ctx.stroke();
-ctx.fillStyle=C.brass2;ctx.beginPath();ctx.arc(185,348,48,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass0;ctx.lineWidth=5;ctx.stroke();for(let a=0;a<Math.PI*2;a+=Math.PI/2){ctx.strokeStyle=C.brass1;ctx.lineWidth=12;ctx.beginPath();ctx.moveTo(185,348);ctx.lineTo(185+Math.cos(a)*42,348+Math.sin(a)*42);ctx.stroke()}bolt(185,348,9);
-for(let a=0;a<Math.PI*2;a+=Math.PI/4){bolt(185+Math.cos(a)*112,348+Math.sin(a)*112,4)}
-vent(70,112,54,40,4);vent(226,535,60,38,4);
-plate(41,507,276,48,C.steel1,5,2);for(let x=56;x<125;x+=22){ctx.fillStyle=x===56?'#72b083':x===78?'#c49b45':x===100?'#7291a0':'#a45848';ctx.fillRect(x,520,10,7)}for(let x=152;x<300;x+=25){ctx.strokeStyle=C.steel0;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,519);ctx.lineTo(x+15,519);ctx.stroke()}
+drawAirlockDoor(185,348);
+vent(70,94,54,40,4);
+drawAirlockLowerService();
 
 // 3) FOUR SHUTTERED HATCHES
 const HX=[[440,635],[815,1015],[1220,1415],[1600,1795]];
@@ -7053,11 +7574,14 @@ plate(508,58,82,42,C.steel0,9,2);
 ctx.fillStyle=C.brass1;ctx.fillRect(518,68,62,7);bolt(527,80,3);bolt(571,80,3);
 pipe([[549,100],[549,109]],9,C.steel0,C.steel0,5);
 
-plate(1265,44,285,48,C.steel0,13,3);
-plate(1298,45,218,43,C.ivory1,10,2);
-for(const xx of [1320,1406,1491])plate(xx-8,40,16,54,C.brass1,3,1);
-ctx.strokeStyle=C.ivory0;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(1308,49);ctx.lineTo(1505,49);ctx.stroke();
-pipe([[1265,63],[1240,63],[1240,109]],13,C.steel0,C.steel0,8);
+// large roof pressure tank
+drawRoofPressureTank(1258,35,316,60);
+
+// left dark-steel feed rises from the roof manifold into the tank
+pipe([[1240,109],[1240,76],[1248,65],[1258,65]],13,C.steel0,C.steel0,9);
+
+// right teal return exits the tank and drops back into the roof manifold
+pipe([[1574,65],[1588,65],[1596,74],[1596,109]],11,C.teal3,C.teal0,9);
 
 // upper roof manifold — thin and continuous
 pipe([[331,109],[1845,109]],10,C.steel0,C.steel0,8);
@@ -7123,6 +7647,10 @@ collarV(417,437,9,24,12);
 valve(417,487,12);
 collarV(417,459,9,24,12);
 collarV(417,515,9,24,12);
+
+// redraw the airlock reinforcement on top of the adjacent service lane
+// so the new armor cleanly clips over the slight right-edge intrusion
+drawAirlockHullConstruction();
 
 
 // ---------------------------------------------------------------------------
@@ -7264,7 +7792,7 @@ junction(1855,355,9,23,22,C.brass1);
 underbodyBackplane();
 
 // background returns
-pipe([[48,658],[410,658],[428,673],[702,673]],11,C.steel0,C.steel0,13);
+pipe([[394,658],[410,658],[428,673],[702,673]],11,C.steel0,C.steel0,13);
 pipe([[805,678],[1110,678],[1127,663],[1448,663]],9,C.steel0,C.steel0,12);
 pipe([[1470,672],[1812,672]],10,C.teal3,C.teal0,12);
 
@@ -7272,18 +7800,11 @@ pipe([[1470,672],[1812,672]],10,C.teal3,C.teal0,12);
 drawLowerHorizontalTank(472,620,182,54);
 drawUnderbodyRadiator(765,620,128,52,6);
 drawUnderbodyRadiator(1190,620,145,52,7);
-plate(1616,620,88,52,C.steel1,7,2);
-for(let xx=1631;xx<1691;xx+=9){
- ctx.fillStyle=C.brass1;
- ctx.fillRect(xx,629,4,31);
-}
+drawSuitBayLowerCluster();
 
 for(const [x,y,w,h] of [
- [34,623,122,41],
- [190,624,143,41],
  [1070,623,93,43],
- [1342,623,113,41],
- [1712,624,114,41]
+ [1342,623,113,41]
 ]){
  plate(x,y,w,h,C.steel1,5,1);
  for(let bx=x+14;bx<x+w-10;bx+=35)bolt(bx,y+12,2);
@@ -7307,7 +7828,7 @@ for(const [x,pw] of [
  junction(x,606,pw,pw+18,pw+16,C.brass1);
 }
 
-for(const xx of [522,880,1260,1678]){
+for(const xx of [522,880,1260]){
  collarH(xx,606,16,18,33);
 }
 
