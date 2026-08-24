@@ -5741,8 +5741,14 @@ function bakeLabShadow(){
   c.globalCompositeOperation='source-in'; c.fillStyle='#05070f'; c.fillRect(0,0,cv.width,cv.height);  // fog-tinted, not pure black
   return cv;
 }
+// Pre-bake both lab canvases shortly after load — off the gameplay critical path — so the first time
+// the lab comes on screen there is no mid-game bake stall (the vector art is ~2k canvas ops). drawLab
+// still lazy-bakes as a fallback if this hasn't run yet. bakeLabExterior is hoisted (declared below).
+setTimeout(()=>{ try{ if(!labArtCv) labArtCv=bakeLabExterior(); if(!labShadowCv) labShadowCv=bakeLabShadow(); }catch(e){} }, 250);
 function bakeLabExterior(){
-  const BAKE=2;   // supersample so the vector art stays crisp when scaled to the footprint
+  const BAKE=1;   // 1962px already exceeds the on-screen lab width (<=~1100px even at 4K), so no
+                  // supersample is needed — it only downsamples. Keeps this ~2k-op bake cheap (2x cost
+                  // ~4x this and was the "laggy for a while when the lab loads" hitch).
   const cv=document.createElement('canvas'); cv.width=LAB_ART_W*BAKE; cv.height=LAB_ART_H*BAKE;
   const _bctx=cv.getContext('2d'); _bctx.setTransform(BAKE,0,0,BAKE,0,0);
   (function(ctx){
