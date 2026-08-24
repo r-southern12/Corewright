@@ -5722,6 +5722,25 @@ const labOpenImg=new Image(); labOpenImg.src='assets/lab_open.png';
 //    valve/gauge/pathChamfer...) never collide with the game's globals.
 const LAB_ART_W=1962, LAB_ART_H=801;
 let labArtCv=null;
+// Indicator / running lights on the lab (art coords, 1962x801; c = "r,g,b"). Baked as small pips into
+// the model so the standard sprite carries them, AND drawn as additive glows in drawLab AFTER the
+// atmospheric darken — so they keep reading through the gloom once the hull itself has dimmed into the
+// fog. The four hatch lamps are wing-hued (teal/amber/violet/steel), doubling as wayfinding from afar.
+const LAB_LIGHTS=[
+  {x:537.5,y:178,c:'79,227,193'},  {x:915,y:178,c:'232,163,61'},
+  {x:1317.5,y:178,c:'139,124,246'},{x:1697.5,y:178,c:'91,110,160'},
+  {x:120,y:232,c:'216,178,100'},   // airlock lamp
+  {x:920,y:14,c:'224,119,106'},    // roof beacon
+];
+// Black-fog silhouette of the baked lab, used to darken ONLY the lab's own pixels by distance (a flat
+// dark rect would leave a halo over the transparent margins). Baked once, matches labArtCv exactly.
+let labShadowCv=null;
+function bakeLabShadow(){
+  const cv=document.createElement('canvas'); cv.width=labArtCv.width; cv.height=labArtCv.height;
+  const c=cv.getContext('2d'); c.drawImage(labArtCv,0,0);
+  c.globalCompositeOperation='source-in'; c.fillStyle='#05070f'; c.fillRect(0,0,cv.width,cv.height);  // fog-tinted, not pure black
+  return cv;
+}
 function bakeLabExterior(){
   const BAKE=2;   // supersample so the vector art stays crisp when scaled to the footprint
   const cv=document.createElement('canvas'); cv.width=LAB_ART_W*BAKE; cv.height=LAB_ART_H*BAKE;
@@ -7309,6 +7328,14 @@ let seed=72891;function rnd(){seed=(seed*1664525+1013904223)>>>0;return seed/429
 ctx.save();ctx.globalAlpha=.055;for(let i=0;i<1250;i++){const xx=25+rnd()*1907,yy=79+rnd()*603;ctx.fillStyle=rnd()>.55?'#fff':'#000';ctx.fillRect(xx,yy,1,1)}ctx.restore();
 
   })(_bctx);
+  // bake the physical light fixtures into the model (art coords; _bctx is still scaled by BAKE)
+  for(const L of LAB_LIGHTS){
+    _bctx.save();
+    _bctx.fillStyle='rgba(10,12,14,0.92)'; _bctx.beginPath(); _bctx.arc(L.x,L.y,4,0,7); _bctx.fill();      // dark socket
+    _bctx.fillStyle='rgb('+L.c+')';        _bctx.beginPath(); _bctx.arc(L.x,L.y,2.6,0,7); _bctx.fill();    // lit lens
+    _bctx.fillStyle='rgba(255,255,255,0.85)'; _bctx.beginPath(); _bctx.arc(L.x-0.6,L.y-0.6,1,0,7); _bctx.fill(); // hot centre
+    _bctx.restore();
+  }
   return cv;
 }
 
@@ -8729,6 +8756,26 @@ function drawLab(ctx,camX,camY,now){
   // the baked hull (offscreen canvas, baked once on first draw)
   if (!labArtCv) labArtCv=bakeLabExterior();
   ctx.imageSmoothingEnabled=true; ctx.drawImage(labArtCv,dx,dy,dW,dH);
+  // Sink the lab into the atmosphere so it stops reading as a bright beacon against the gloom. The
+  // hull is drawn AFTER the distance-fog vignette (deliberately, so its detail isn't crushed), so it
+  // never got the falloff everything else does. Darken ONLY the lab's pixels (via the fog-tinted
+  // silhouette) by distance from the player — a small base keeps it from blazing even up close, and
+  // it fades further out. The running lights below are drawn AFTER this, so they persist through it.
+  if (!labShadowCv) labShadowCv=bakeLabShadow();
+  const _lcx=lab.x+LAB_W/2, _lcy=lab.y+LAB_H/2;
+  const _dist=Math.hypot(player.x-_lcx, player.y-_lcy);
+  const _darken=Math.max(0, Math.min(0.72, 0.22 + (_dist-3)/16*0.5));
+  if (_darken>0.01){ ctx.save(); ctx.globalAlpha=_darken; ctx.drawImage(labShadowCv,dx,dy,dW,dH); ctx.restore(); }
+  // Running lights — additive glows over the darken, so they stay visible when the hull has dimmed.
+  { const pulse=0.62+0.38*Math.sin(now*0.004);
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    for(const L of LAB_LIGHTS){
+      const lx=SX(L.x), ly=SY(L.y), rr=Math.max(9, 40*sc);
+      const g=ctx.createRadialGradient(lx,ly,0,lx,ly,rr);
+      g.addColorStop(0,`rgba(${L.c},${0.85*pulse})`); g.addColorStop(0.4,`rgba(${L.c},${0.42*pulse})`); g.addColorStop(1,`rgba(${L.c},0)`);
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(lx,ly,rr,0,7); ctx.fill();
+    }
+    ctx.restore(); }
   // Per-wing hatch geometry taken straight from the v23 artwork (its four shuttered hatches). The
   // click-rects, reveal and near-wing highlight map each hatch's shutter APERTURE (x0+27..x1-27,
   // y194..540 in art space — see the "FOUR SHUTTERED HATCHES" pass) into screen space via SX/SY.
