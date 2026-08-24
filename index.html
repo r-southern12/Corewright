@@ -1885,6 +1885,16 @@ function coreBestSystems(core,n){
   return CORE_SYSTEMS.slice().sort((a,b)=>s[b.key]-s[a.key]).slice(0,n||2)
     .filter(sys=>s[sys.key]>=0.6).map(sys=>sys.label);
 }
+// Each suitability SYSTEM becomes one carving COMPONENT (template). coreBestComp returns the template a
+// core's hue suits best — its top axis, unfiltered so there's always a pick — used to default a fresh
+// core to the part it wants to become when it's first benched (see loadCore).
+const SYS_TO_COMP={drill:'drill', power:'cell', scan:'coil', ward:'prism', aegis:'torus', forge:'anvil'};
+function coreBestComp(core){
+  const s=coreHueSuit(core); if (!s) return null;
+  let bk=null,bv=-Infinity; for (const sys of CORE_SYSTEMS){ if (s[sys.key]>bv){ bv=s[sys.key]; bk=sys.key; } }
+  const c=bk&&SYS_TO_COMP[bk];
+  return (c&&COMPONENTS[c])?c:null;
+}
 // LIVE suitability = hue shape × refinement of the stone RIGHT NOW. Refining (more surface) lifts every
 // axis; wasting stone outside the template drags it back — the spider chart reacts as you cut or ruin it.
 function coreSuitLive(){
@@ -2452,7 +2462,11 @@ function loadCore(core){
   // Bring back the template THIS core was shaped toward, so clamping a different core doesn't leave the
   // previous core's template selected (the reported bug). Alignment is keyed per-core-per-template, so
   // restoreAlign() pulls the right offset/orientation only once comp matches the core again.
+  // A core already shaped toward a component keeps it; a FRESH core defaults to the template its hue
+  // suits best (its "suits:" recommendation), so it starts on the part it wants to become. The player
+  // can still change the template, and markCleanIfDone records whatever's selected when it cleans.
   if (core.comp) comp=core.comp;
+  else { const rec=coreBestComp(core); if (rec) comp=rec; }
   { const cc=document.querySelector('#compChip b'); if (cc) cc.textContent=COMPONENTS[comp].label; }
   restoreAlign();                          // bring back this core's saved offset + socket orientation
   for (const c of core.cells) addVoxelMesh(c,core.polish);
