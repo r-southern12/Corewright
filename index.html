@@ -5709,8 +5709,11 @@ canvas.addEventListener('touchend',e=>{
    ============================================================ */
 const world2d=document.getElementById('world2d');
 const ctx=world2d.getContext('2d');
-// (Former baked PNGs assets/lab.png / lab_open.png are superseded by the vector v23 exterior baked
-//  below; the drawLab reveal that used lab_open.png is gone with this exterior-only source.)
+// The four hatch INTERIORS (assets/lab_open.png). The v23 exterior is closed-only, so we keep the
+// OLD interior art and reveal it through the NEW hatch apertures: drawLab parts a shutter from the
+// centre of the hatch you're beside and blits that wing's interior region out of this PNG. (labImg,
+// the old closed exterior PNG, is fully superseded by the baked vector art below and is gone.)
+const labOpenImg=new Image(); labOpenImg.src='assets/lab_open.png';
 // -- Lab exterior artwork (corewright_lab_v23, 1962x801 logical coordinate system). Baked ONCE
 //    to an offscreen canvas and blitted in drawLab -- the same baked-sprite pattern as the tile
 //    bases and the assets/lab.png it replaces. The body below is the supplied source of truth,
@@ -8703,6 +8706,7 @@ function _labWingMachine(ctx,i,cx,cy,r,col,now){
   ctx.restore();
 }
 let _labWinRects=[];   // per-frame window screen-rects for clickLabWing (the sprite is scaled, so tiles don't map)
+let _labOpenT=[0,0,0,0], _labOpenLast=0;   // per-wing hatch-open animation (0=shut, 1=fully revealed) + last timestamp
 function drawLab(ctx,camX,camY,now){
   if (!lab.placed) return;
   const spx=lab.x*TS-camX, w=LAB_W*TS, h=LAB_H*TS;
@@ -8726,18 +8730,36 @@ function drawLab(ctx,camX,camY,now){
   if (!labArtCv) labArtCv=bakeLabExterior();
   ctx.imageSmoothingEnabled=true; ctx.drawImage(labArtCv,dx,dy,dW,dH);
   // Per-wing hatch geometry taken straight from the v23 artwork (its four shuttered hatches). The
-  // click-rects and the near-wing highlight map each hatch's shutter APERTURE (x0+27..x1-27, y194..540
-  // in art space — see the "FOUR SHUTTERED HATCHES" pass) into screen space via SX/SY. This source is
-  // exterior-only, so there is no baked interior to reveal: the affordance is the coloured outline on
-  // the hatch you're standing at, and clickLabWing turns a hit into enterWing.
+  // click-rects, reveal and near-wing highlight map each hatch's shutter APERTURE (x0+27..x1-27,
+  // y194..540 in art space — see the "FOUR SHUTTERED HATCHES" pass) into screen space via SX/SY.
   const HATCHES=[[440,635],[815,1015],[1220,1415],[1600,1795]];   // art-space [x0,x1] per wing, matching the artwork
+  // The v23 exterior is closed-only, so the interior comes from the OLD lab_open.png. Each wing's
+  // interior lived at the old-art opening region (mx=380+i*445, +OP_INS=124.6, OP_WY=212, OP_WW=195.8,
+  // OP_WH=422); the PNG is 2x that art, so multiply by 2 for source pixels. We blit that region into
+  // the NEW hatch aperture, revealed through a shutter parting from the centre.
+  const OP_INS=124.6, OP_WY=212, OP_WW=195.8, OP_WH=422, M0=380, MW=445;
   const near=labWingAt(player.x,player.y);
+  // advance the per-wing open animation (frame-rate independent; ~0.28s to fully part)
+  const dt=_labOpenLast? Math.min(0.05,(now-_labOpenLast)/1000):0; _labOpenLast=now;
   LAB_WINGS.forEach((wing,i)=>{
     const [hx0,hx1]=HATCHES[i];
     const rx=SX(hx0+27), ry=SY(194), rw=(hx1-hx0-54)*sc, rh=346*sc;
     _labWinRects.push({key:wing.key, view:wing.view, x:rx, y:ry, w:rw, h:rh});
+    _labOpenT[i]=Math.max(0,Math.min(1,_labOpenT[i]+((near&&near.key===wing.key)?1:-1)*dt/0.28));
+    // reveal this wing's OLD interior through the NEW hatch, shutter parting from the centre
+    const t=_labOpenT[i];
+    if (t>0.02 && labOpenImg.complete && labOpenImg.naturalWidth){
+      const sx=(M0+i*MW+OP_INS)*2, sy=OP_WY*2, sw=OP_WW*2, sh=OP_WH*2;   // source px in lab_open.png (2x art)
+      const band=t*rh;
+      ctx.save(); ctx.beginPath(); ctx.rect(rx,ry+(rh-band)/2,rw,band); ctx.clip();
+      ctx.drawImage(labOpenImg, sx,sy,sw,sh, rx,ry,rw,rh); ctx.restore();
+      // lit seams on the parting shutter edges
+      if (t<0.98){ ctx.strokeStyle='rgba(255,232,150,0.5)'; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(rx,ry+(rh-band)/2); ctx.lineTo(rx+rw,ry+(rh-band)/2);
+        ctx.moveTo(rx,ry+(rh+band)/2); ctx.lineTo(rx+rw,ry+(rh+band)/2); ctx.stroke(); }
+    }
     if (near&&near.key===wing.key){
-      // coloured near-wing outline is the affordance
+      // opened hatch + coloured near-wing outline are the affordance
       ctx.save(); ctx.shadowColor=wing.col; ctx.shadowBlur=16; ctx.strokeStyle=wing.col; ctx.lineWidth=2.5; _rr(ctx,rx,ry,rw,rh,4); ctx.stroke(); ctx.restore();
     }
   });
