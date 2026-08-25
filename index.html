@@ -16953,8 +16953,10 @@ function drawLapScene(){
   // faint grain
   let seed=90125; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
   g.globalAlpha=0.04; for (let i=0;i<600;i++){ g.fillStyle=rnd()>0.5?'#fff':'#000'; g.fillRect(rnd()*w,rnd()*h,1,1); } g.globalAlpha=1;
-  g.textAlign='center'; g.fillStyle='#c89a52'; g.font=`${Math.round(h*0.05)}px Georgia, serif`;
-  g.fillText('THE LAPIDARY', w*0.5, h*0.12);
+  /* No scene title here: the wing nav bar already names the Lapidary and sits
+     right over the top band, so a drawn heading only ghosts through the gaps
+     between the nav tiles. */
+  g.textAlign='center';
   const cnt=lapCounts();
   for (const z of LAP_ZONES) drawLapPanel(g,z,cnt[z.kind]);
   g.textAlign='left';
