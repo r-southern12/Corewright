@@ -6423,7 +6423,7 @@ drawLapidary();
 // Pre-bake both lab canvases shortly after load — off the gameplay critical path — so the first time
 // the lab comes on screen there is no mid-game bake stall (the vector art is ~2k canvas ops). drawLab
 // still lazy-bakes as a fallback if this hasn't run yet. bakeLabExterior is hoisted (declared below).
-setTimeout(()=>{ try{ if(!labArtCv) labArtCv=bakeLabExterior(); if(!labShadowCv) labShadowCv=bakeLabShadow(); if(!lapIntCv) lapIntCv=bakeLapidaryInterior(); if(!_drawForgeInt) initForgeInterior(); if(!_drawBrewInt) initBrewingInterior(); }catch(e){} }, 250);
+setTimeout(()=>{ try{ if(!labArtCv) labArtCv=bakeLabExterior(); if(!labShadowCv) labShadowCv=bakeLabShadow(); if(!lapIntCv) lapIntCv=bakeLapidaryInterior(); if(!_drawForgeInt) initForgeInterior(); if(!_drawBrewInt) initBrewingInterior(); if(!_drawSuitInt) initSuitInterior(); }catch(e){} }, 250);
 // -- Forge WING interior (corewright_forge_interior_v7, 360x620, LIVE-ANIMATED fire). Unlike the static
 //    interiors this one animates, so it is NOT baked: makeForgeInterior(ctx) runs the source art's defs
 //    (verbatim, minus its #c acquisition and the demo RAF/#small harness) and returns its drawForge(time)
@@ -8416,6 +8416,326 @@ function drawBrewing(){
 function initBrewingInterior(){
   brewIntCv=document.createElement('canvas'); brewIntCv.width=BREW_ART_W; brewIntCv.height=BREW_ART_H;
   brewIntCtx=brewIntCv.getContext('2d'); _drawBrewInt=makeBrewingInterior(brewIntCtx);
+}
+// -- Suit & Systems WING interior (corewright_suit_bay_interior_v9d, 360x620, LIVE-ANIMATED service arm).
+//    Same live approach as the forge: makeSuitInterior(ctx) runs the source defs (verbatim minus #c
+//    acquisition and demo RAF/#small/click harness) and returns drawSuitBay(timeMs) bound to a private
+//    offscreen. drawLab draws it live into the Suit hatch each frame while open.
+const SUIT_ART_W=360, SUIT_ART_H=620;
+let suitIntCv=null, suitIntCtx=null, _drawSuitInt=null;
+function makeSuitInterior(ctx){
+  ctx.imageSmoothingEnabled=true;
+ctx.imageSmoothingEnabled = true;
+
+const C = {
+  steel0:'#4a5457', steel1:'#2a3133', steel2:'#171c1e', steel3:'#0a0e0f',
+  brass0:'#c29a55', brass1:'#936737', brass2:'#5e4022', brass3:'#342218',
+  teal0:'#91c9c2', teal1:'#5b918a', teal2:'#315b57', teal3:'#193633',
+  ivory0:'#d9cbae', ivory1:'#bfae8e', ivory2:'#91836a', ivory3:'#625846',
+  lamp:'#8ef1ec'
+};
+
+function pathChamfer(x,y,w,h,c=6){
+  const p=new Path2D();
+  p.moveTo(x+c,y); p.lineTo(x+w-c,y); p.lineTo(x+w,y+c);
+  p.lineTo(x+w,y+h-c); p.lineTo(x+w-c,y+h); p.lineTo(x+c,y+h);
+  p.lineTo(x,y+h-c); p.lineTo(x,y+c); p.closePath();
+  return p;
+}
+function fillStroke(p,fill,stroke=C.steel3,lw=2){ ctx.fillStyle=fill; ctx.fill(p); ctx.strokeStyle=stroke; ctx.lineWidth=lw; ctx.stroke(p); }
+function shadowPath(p,dx=4,dy=5,a=.28){ ctx.save(); ctx.translate(dx,dy); ctx.globalAlpha=a; ctx.fillStyle='#000'; ctx.fill(p); ctx.restore(); }
+function bolt(x,y,r=3){ const g=ctx.createRadialGradient(x-r*.4,y-r*.4,0,x,y,r); g.addColorStop(0,C.brass0); g.addColorStop(.45,C.brass1); g.addColorStop(1,C.brass3); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#1d130b'; ctx.lineWidth=1; ctx.stroke(); }
+
+function pipePath(points,r=14){
+  const p=new Path2D(); p.moveTo(...points[0]);
+  for(let i=1;i<points.length-1;i++){
+    const a=points[i-1],b=points[i],c=points[i+1];
+    const v1=[b[0]-a[0],b[1]-a[1]],v2=[c[0]-b[0],c[1]-b[1]];
+    const l1=Math.hypot(...v1),l2=Math.hypot(...v2),rr=Math.min(r,l1*.42,l2*.42);
+    p.lineTo(b[0]-v1[0]/l1*rr,b[1]-v1[1]/l1*rr);
+    p.quadraticCurveTo(b[0],b[1],b[0]+v2[0]/l2*rr,b[1]+v2[1]/l2*rr);
+  }
+  p.lineTo(...points[points.length-1]); return p;
+}
+function pipe(points,body=14,color=C.steel0,hi=C.steel0,r=14){
+  const p=pipePath(points,r);
+  ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.save(); ctx.translate(4,5); ctx.globalAlpha=.3; ctx.strokeStyle='#000'; ctx.lineWidth=body+10; ctx.stroke(p); ctx.restore();
+  ctx.strokeStyle=C.steel3; ctx.lineWidth=body+8; ctx.stroke(p);
+  ctx.strokeStyle=color; ctx.lineWidth=body; ctx.stroke(p);
+  ctx.save(); ctx.translate(-2,-2); ctx.globalAlpha=.5; ctx.strokeStyle=hi; ctx.lineWidth=Math.max(2,body*.18); ctx.stroke(p); ctx.restore();
+  ctx.restore();
+}
+function collarV(x,y,pw,w=pw+18,h=18){ const p=pathChamfer(x-w/2,y-h/2,w,h,3); fillStroke(p,C.brass2,C.brass3,2); const q=pathChamfer(x-(w-6)/2,y-(h-5)/2,w-6,h-5,2); ctx.fillStyle=C.brass1; ctx.fill(q); bolt(x-w/2+7,y,2); bolt(x+w/2-7,y,2); }
+function collarH(x,y,ph,w=18,h=ph+18){ const p=pathChamfer(x-w/2,y-h/2,w,h,3); fillStroke(p,C.brass2,C.brass3,2); const q=pathChamfer(x-(w-5)/2,y-(h-6)/2,w-5,h-6,2); ctx.fillStyle=C.brass1; ctx.fill(q); }
+
+function gauge(x,y,r=19){
+  ctx.fillStyle=C.steel3; ctx.beginPath(); ctx.arc(x,y,r+6,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=C.brass1; ctx.lineWidth=5; ctx.beginPath(); ctx.arc(x,y,r+2,0,Math.PI*2); ctx.stroke();
+  const g=ctx.createRadialGradient(x-r*.30,y-r*.34,0,x,y,r); g.addColorStop(0,'#f2eee1'); g.addColorStop(.68,'#d9cfb8'); g.addColorStop(1,'#a79d87');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  const wedges=[{a0:-2.58,a1:-1.46,color:'#22b14c'},{a0:-1.38,a1:-0.52,color:'#ffd34a'},{a0:-0.44,a1:0.22,color:'#d94b41'}];
+  ctx.globalAlpha=.92; for(const w of wedges){ ctx.fillStyle=w.color; ctx.beginPath(); ctx.moveTo(x,y); ctx.arc(x,y,r-1,w.a0,w.a1); ctx.closePath(); ctx.fill(); } ctx.globalAlpha=1;
+  const gloss=ctx.createRadialGradient(x-r*.20,y-r*.25,0,x,y,r*.92); gloss.addColorStop(0,'rgba(255,255,255,.24)'); gloss.addColorStop(.55,'rgba(255,255,255,.06)'); gloss.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=gloss; ctx.beginPath(); ctx.arc(x,y,r-1,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#151a1a'; ctx.lineWidth=5.5; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(x-2,y+2); ctx.lineTo(x+10,y-12); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.32)'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+8,y-10); ctx.stroke();
+  bolt(x,y,4);
+}
+function gaugeForge(x,y,r=12){
+  ctx.fillStyle=C.steel3; ctx.beginPath(); ctx.arc(x,y,r+4,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=C.brass1; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(x,y,r+1,0,Math.PI*2); ctx.stroke();
+  const g=ctx.createRadialGradient(x-r*.3,y-r*.35,0,x,y,r); g.addColorStop(0,'#f5f0e0'); g.addColorStop(.75,'#d8cdb5'); g.addColorStop(1,'#b4a98c');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); bolt(x,y,3);
+  ctx.strokeStyle='#1a1d1f'; ctx.lineWidth=2.3; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+6,y-6); ctx.stroke();
+}
+
+function drawBackWall(){
+  const g=ctx.createLinearGradient(0,0,360,620); g.addColorStop(0,'#151b1d'); g.addColorStop(.5,'#0a0f10'); g.addColorStop(1,'#101719');
+  ctx.fillStyle=g; ctx.fillRect(0,0,360,620);
+  ctx.fillStyle='#1b2325'; ctx.fillRect(16,16,8,588); ctx.fillRect(178,16,6,588); ctx.fillRect(336,16,8,588);
+  ctx.fillStyle='rgba(255,255,255,.035)'; ctx.fillRect(16,16,1,588); ctx.fillRect(178,16,1,588); ctx.fillRect(336,16,1,588);
+}
+
+function drawSuitHelmet(cx,cy,w=118,h=106){
+  // outer ivory shell
+  const shell=new Path2D();
+  shell.moveTo(cx-w*.34,cy-h*.38);
+  shell.quadraticCurveTo(cx-w*.48,cy-h*.08,cx-w*.42,cy+h*.22);
+  shell.quadraticCurveTo(cx-w*.32,cy+h*.46,cx,cy+h*.48);
+  shell.quadraticCurveTo(cx+w*.32,cy+h*.46,cx+w*.42,cy+h*.22);
+  shell.quadraticCurveTo(cx+w*.48,cy-h*.08,cx+w*.34,cy-h*.38);
+  shell.quadraticCurveTo(cx,cy-h*.54,cx-w*.34,cy-h*.38);
+  shell.closePath();
+  shadowPath(shell,6,7,.30);
+  const sg=ctx.createLinearGradient(cx-w*.4,cy-h*.45,cx+w*.4,cy+h*.4);
+  sg.addColorStop(0,C.ivory0);
+  sg.addColorStop(.55,C.ivory1);
+  sg.addColorStop(1,C.ivory3);
+  fillStroke(shell,sg,C.steel3,3);
+
+  // brass neck ring
+  const neck=pathChamfer(cx-w*.30,cy+h*.33,w*.60,h*.19,8);
+  fillStroke(neck,C.brass1,C.brass3,2.5);
+
+  // visor recess
+  const visorOuter=new Path2D();
+  visorOuter.moveTo(cx-w*.29,cy-h*.16);
+  visorOuter.quadraticCurveTo(cx,cy-h*.31,cx+w*.29,cy-h*.16);
+  visorOuter.lineTo(cx+w*.25,cy+h*.18);
+  visorOuter.quadraticCurveTo(cx,cy+h*.30,cx-w*.25,cy+h*.18);
+  visorOuter.closePath();
+  shadowPath(visorOuter,3,4,.20);
+  fillStroke(visorOuter,C.steel2,C.brass3,2.5);
+
+  const visor=new Path2D();
+  visor.moveTo(cx-w*.23,cy-h*.11);
+  visor.quadraticCurveTo(cx,cy-h*.23,cx+w*.23,cy-h*.11);
+  visor.lineTo(cx+w*.19,cy+h*.13);
+  visor.quadraticCurveTo(cx,cy+h*.23,cx-w*.19,cy+h*.13);
+  visor.closePath();
+  const vg=ctx.createRadialGradient(cx-w*.08,cy-h*.05,3,cx,cy,w*.30);
+  vg.addColorStop(0,'rgba(132,230,220,.62)');
+  vg.addColorStop(.52,'rgba(41,121,117,.72)');
+  vg.addColorStop(1,'rgba(11,45,46,.96)');
+  fillStroke(visor,vg,'rgba(180,248,240,.34)',1.5);
+
+  // visor highlight
+  ctx.strokeStyle='rgba(220,255,250,.32)';
+  ctx.lineWidth=2.2;
+  ctx.beginPath();
+  ctx.arc(cx-w*.02,cy-h*.05,w*.18,3.55,5.20);
+  ctx.stroke();
+
+  // side comm ports
+  for(const sx of [cx-w*.43,cx+w*.43]){
+    ctx.fillStyle=C.steel1;
+    ctx.beginPath();ctx.arc(sx,cy+h*.02,12,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=C.brass1;ctx.lineWidth=4;ctx.stroke();
+    bolt(sx,cy+h*.02,3.2);
+  }
+}
+
+function drawTwinPack(x,y,w=52,h=178){
+  const cage=pathChamfer(x,y,w,h,10); shadowPath(cage,5,6,.25); fillStroke(cage,C.steel1,C.steel3,2.5);
+  const gap=8; const cw=(w-24-gap)/2;
+  for(let i=0;i<2;i++){
+    const cx=x+8+i*(cw+gap); const body=pathChamfer(cx,y+26,cw,h-52,8);
+    const g=ctx.createLinearGradient(cx,y,cx+cw,y+h); g.addColorStop(0,'#6baea9'); g.addColorStop(.45,'#3f7f7c'); g.addColorStop(1,'#244d4b');
+    fillStroke(body,g,C.steel3,2.2); collarV(cx+cw/2,y+34,10,cw+8,14); collarV(cx+cw/2,y+h-34,10,cw+8,14);
+  }
+  const bridge=pathChamfer(x+10,y+4,w-20,26,6); fillStroke(bridge,C.brass2,C.brass3,2.2); gaugeForge(x+w*.50,y+18,12);
+  const lower=pathChamfer(x+14,y+h-24,w-28,20,5); fillStroke(lower,C.brass2,C.brass3,2);
+}
+
+function drawControlPanel(x,y,w=86,h=112){
+  const panel=pathChamfer(x,y,w,h,8); shadowPath(panel,4,5,.20); fillStroke(panel,C.steel1,C.steel3,2.5);
+  const cols=['#54c786','#ffc34c','#ef675c','#55c9e7'];
+  for(let i=0;i<4;i++){ const px=x+24+(i%2)*38; const py=y+28+Math.floor(i/2)*38; ctx.fillStyle=C.steel3;ctx.beginPath();ctx.arc(px,py,13,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass2;ctx.lineWidth=3;ctx.stroke();ctx.fillStyle=cols[i];ctx.beginPath();ctx.arc(px,py,7,0,Math.PI*2);ctx.fill(); }
+  const bar=pathChamfer(x+15,y+h-24,w-30,12,4); fillStroke(bar,C.teal1,C.steel3,1.5);
+  for(let i=0;i<5;i++){ ctx.fillStyle='rgba(155,245,235,.65)'; ctx.fillRect(x+20+i*10,y+h-20,7,4); }
+}
+
+function drawToolPanel(x,y,w=92,h=118){
+  const p=pathChamfer(x,y,w,h,8); shadowPath(p,4,5,.20); fillStroke(p,C.steel1,C.steel3,2.5);
+  ctx.strokeStyle='#838b8e';ctx.lineWidth=8;ctx.lineCap='round'; ctx.beginPath();ctx.moveTo(x+28,y+30);ctx.lineTo(x+28,y+88);ctx.stroke();
+  ctx.strokeStyle=C.brass2;ctx.lineWidth=4;ctx.beginPath();ctx.arc(x+28,y+26,10,.55,2.6);ctx.stroke();
+  const drill=pathChamfer(x+48,y+34,28,18,5);fillStroke(drill,C.steel0,C.steel3,1.8);
+  const grip=pathChamfer(x+57,y+50,10,28,4);fillStroke(grip,C.brass2,C.brass3,1.5);
+  pipe([[x+62,y+78],[x+62,y+98]],6,C.teal2,C.teal0,4);
+}
+
+function lerp(a,b,t){ return a+(b-a)*t; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function easeInOut(t){ return t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+function easeOut(t){ return 1-Math.pow(1-t,3); }
+function smoothStep(t){ return t*t*(3-2*t); }
+function phaseMix(t, keys){
+  for(let i=0;i<keys.length-1;i++){
+    const a=keys[i], b=keys[i+1];
+    if(t>=a.t && t<=b.t){ const u=(t-a.t)/(b.t-a.t); return b.e ? b.e(u) : smoothStep(u); }
+  }
+  return 0;
+}
+
+function drawArmJoint(x,y,r=15){
+  const g=ctx.createRadialGradient(x-r*.35,y-r*.35,0,x,y,r);
+  g.addColorStop(0,C.brass0); g.addColorStop(.55,C.brass1); g.addColorStop(1,C.brass3);
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#24170d'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle=C.steel1; ctx.beginPath(); ctx.arc(x,y,r*.46,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.20)'; ctx.lineWidth=1.5; ctx.stroke();
+  bolt(x,y,3.6);
+}
+
+function drawArmSegment(x1,y1,x2,y2,w=24){
+  const ang=Math.atan2(y2-y1,x2-x1), len=Math.hypot(x2-x1,y2-y1);
+  ctx.save(); ctx.translate(x1,y1); ctx.rotate(ang);
+
+  const body=pathChamfer(0,-w/2,len,w,6);
+  shadowPath(body,3,4,.22);
+  const g=ctx.createLinearGradient(0,-w/2,0,w/2);
+  g.addColorStop(0,'#778286'); g.addColorStop(.45,'#4d585b'); g.addColorStop(1,'#252d2f');
+  fillStroke(body,g,C.steel3,2.4);
+
+  const inset=pathChamfer(9,-w*.20,len-18,w*.40,4);
+  fillStroke(inset,'#3a4447','#1a2123',1.4);
+
+  ctx.strokeStyle=C.brass1; ctx.lineWidth=3.2; ctx.beginPath(); ctx.moveTo(8,w*.24); ctx.lineTo(len-8,w*.24); ctx.stroke();
+  ctx.strokeStyle='rgba(230,240,240,.18)'; ctx.lineWidth=1.8; ctx.beginPath(); ctx.moveTo(8,-w*.24); ctx.lineTo(len-8,-w*.24); ctx.stroke();
+  ctx.restore();
+}
+
+function drawEndEffector(x,y,ang,glow=1){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+  const collar=pathChamfer(-4,-10,16,20,4); fillStroke(collar,C.brass2,C.brass3,2);
+  const head=pathChamfer(8,-13,28,26,6); shadowPath(head,2,3,.20); fillStroke(head,C.steel1,C.steel3,2.1);
+  const lensG=ctx.createRadialGradient(36,0,1,36,0,10); lensG.addColorStop(0,'rgba(220,255,255,.95)'); lensG.addColorStop(.45,'rgba(116,229,220,.90)'); lensG.addColorStop(1,'rgba(49,145,138,.55)');
+  ctx.fillStyle=lensG; ctx.beginPath(); ctx.arc(36,0,8,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(220,255,255,.55)'; ctx.lineWidth=2; ctx.stroke();
+  ctx.globalAlpha=.25*glow; ctx.fillStyle='#7ef0ea'; ctx.beginPath(); ctx.arc(36,0,15,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawAnimatedServiceArm(timeMs){
+  const t = (timeMs*0.001) % 6.0;
+  let p;
+  if(t<1.2) p = easeInOut(t/1.2)*0.30;              // wake from rest
+  else if(t<2.5) p = 0.30 + easeInOut((t-1.2)/1.3)*0.70; // approach helmet
+  else if(t<3.5) p = 1.0;                            // hold/service
+  else if(t<4.8) p = 1.0 - easeInOut((t-3.5)/1.3)*0.80;  // retract partway
+  else p = 0.20 - easeInOut((t-4.8)/1.2)*0.20;      // settle back to rest
+
+  const benchY=420;
+  const baseX=208, baseY=398;
+  const L1=82, L2=62;
+
+  // Move a target point, then solve real rigid two-link arm geometry.
+  const targetX = lerp(252,230,p);
+  const targetY = lerp(302,262,p);
+
+  const dx=targetX-baseX, dy=targetY-baseY;
+  const d2=dx*dx+dy*dy;
+  const cosElbow=clamp((d2-L1*L1-L2*L2)/(2*L1*L2),-1,1);
+  const relElbow=-Math.acos(cosElbow);
+  const shoulder=Math.atan2(dy,dx)-Math.atan2(L2*Math.sin(relElbow),L1+L2*Math.cos(relElbow));
+  const forearm=shoulder+relElbow;
+
+  const elbowX = baseX + Math.cos(shoulder)*L1;
+  const elbowY = baseY + Math.sin(shoulder)*L1;
+  const wristX = elbowX + Math.cos(forearm)*L2;
+  const wristY = elbowY + Math.sin(forearm)*L2;
+
+  // vertical support/riser
+  const riser=pathChamfer(baseX-10,baseY,20,benchY-baseY+8,5);
+  shadowPath(riser,3,4,.22); fillStroke(riser,C.steel0,C.steel3,2.4);
+  const foot=pathChamfer(baseX-18,benchY-12,36,18,5); fillStroke(foot,C.brass2,C.brass3,2.2);
+
+  // shadow under moving arm
+  ctx.save(); ctx.globalAlpha=.18; ctx.strokeStyle='#000'; ctx.lineCap='round'; ctx.lineWidth=18;
+  ctx.beginPath(); ctx.moveTo(baseX,baseY); ctx.lineTo(elbowX,elbowY); ctx.lineTo(wristX,wristY); ctx.stroke(); ctx.restore();
+
+  drawArmSegment(baseX,baseY,elbowX,elbowY,26);
+  drawArmSegment(elbowX,elbowY,wristX,wristY,22);
+  drawArmJoint(baseX,baseY,16);
+  drawArmJoint(elbowX,elbowY,15);
+
+  // service light pulses during the hold near helmet
+  const holdGlow = t>2.2 && t<3.6 ? (0.65 + 0.35*Math.sin((t-2.2)*8)**2) : 0.35;
+  drawEndEffector(wristX,wristY,forearm,holdGlow);
+
+  // small service beam toward the helmet when near service pose
+  if(p>.72){
+    const beamA = clamp((p-.72)/.28,0,1)*0.22;
+    ctx.save(); ctx.globalAlpha=beamA;
+    const beam=ctx.createLinearGradient(wristX,wristY,wristX-22,wristY-24);
+    beam.addColorStop(0,'rgba(126,240,234,.70)'); beam.addColorStop(1,'rgba(126,240,234,0)');
+    ctx.fillStyle=beam; ctx.beginPath(); ctx.moveTo(wristX+6,wristY-5); ctx.lineTo(wristX+6,wristY+5); ctx.lineTo(240,248); ctx.lineTo(236,236); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawSuitBay(timeMs=0){
+  drawBackWall();
+
+  pipe([[34,58],[34,520]],12,C.steel0,C.steel0,10);
+  pipe([[326,64],[326,520]],12,C.steel0,C.steel0,10);
+
+  const lampMount=pathChamfer(154,34,52,18,6); fillStroke(lampMount,C.brass2,C.brass3,2.2);
+  pipe([[180,52],[180,78]],12,C.steel0,C.steel0,8);
+  const lamp=pathChamfer(160,74,40,26,7); fillStroke(lamp,C.steel1,C.steel3,2.3);
+  ctx.fillStyle='#b9ffff';ctx.fillRect(169,94,22,5);
+  ctx.save(); const beam=ctx.createLinearGradient(180,98,180,250); beam.addColorStop(0,'rgba(108,232,225,.16)');beam.addColorStop(1,'rgba(108,232,225,0)'); ctx.fillStyle=beam;ctx.beginPath();ctx.moveTo(170,98);ctx.lineTo(190,98);ctx.lineTo(220,260);ctx.lineTo(140,260);ctx.closePath();ctx.fill();ctx.restore();
+
+  drawControlPanel(40,196,82,110);
+  drawToolPanel(40,322,92,110);
+  drawSuitHelmet(178,228,122,108);
+  drawTwinPack(270,190,52,178);
+
+  // clean service hose tying helmet to pack
+  pipe([[238,244],[264,244],[264,298]],8,C.teal2,C.teal0,6);
+
+  const bench=pathChamfer(78,420,208,50,8); shadowPath(bench,5,6,.22); fillStroke(bench,C.steel1,C.steel3,2.5);
+  for(const [x,w] of [[104,42],[276,36]]){ ctx.strokeStyle=C.brass1;ctx.lineWidth=7; ctx.beginPath();ctx.ellipse(x,443,w*.34,10,0,0,Math.PI*2);ctx.stroke(); }
+  const coupler=pathChamfer(144,432,30,20,6); fillStroke(coupler,C.steel0,C.steel3,2); ctx.fillStyle='#65d8d0'; ctx.beginPath();ctx.arc(159,442,5,0,Math.PI*2);ctx.fill();
+
+  // animated single mechanical arm only
+  drawAnimatedServiceArm(timeMs);
+
+  const lower=pathChamfer(82,488,196,44,7); fillStroke(lower,C.steel1,C.steel3,2.5);
+  const lowerFace=pathChamfer(96,498,62,22,5);fillStroke(lowerFace,C.steel2,C.steel3,1.8);
+  const drillSlot=pathChamfer(174,498,78,22,5);fillStroke(drillSlot,C.steel2,C.steel3,1.8);
+  pipe([[244,510],[284,510],[284,536]],7,C.teal2,C.teal0,5);
+
+  pipe([[26,548],[334,548]],14,C.brass1,C.brass1,10); collarH(94,548,14,24,18);collarH(266,548,14,24,18);
+  ctx.fillStyle='#06090b';ctx.fillRect(0,556,360,80);
+}
+
+  return drawSuitBay;
+}
+function initSuitInterior(){
+  suitIntCv=document.createElement('canvas'); suitIntCv.width=SUIT_ART_W; suitIntCv.height=SUIT_ART_H;
+  suitIntCtx=suitIntCv.getContext('2d'); _drawSuitInt=makeSuitInterior(suitIntCtx);
 }
 
 function bakeLabExterior(){
@@ -12061,7 +12381,8 @@ function drawLab(ctx,camX,camY,now){
     const lapReady = wing.key==='lapidary';
     const forgeReady = wing.key==='forge';
     const brewReady = wing.key==='brewing';
-    if (t>0.02 && (lapReady || forgeReady || brewReady || (labOpenImg.complete && labOpenImg.naturalWidth))){
+    const suitReady = wing.key==='suit';
+    if (t>0.02 && (lapReady || forgeReady || brewReady || suitReady || (labOpenImg.complete && labOpenImg.naturalWidth))){
       const band=t*rh;
       ctx.save(); ctx.beginPath(); ctx.rect(rx,ry+(rh-band)/2,rw,band); ctx.clip();
       if (lapReady){
@@ -12082,6 +12403,12 @@ function drawLab(ctx,camX,camY,now){
         brewIntCtx.clearRect(0,0,BREW_ART_W,BREW_ART_H); _drawBrewInt(now);
         const sw=Math.min(brewIntCv.width, brewIntCv.height*(rw/rh)), sx=(brewIntCv.width-sw)/2;
         ctx.drawImage(brewIntCv, sx,0,sw,brewIntCv.height, rx,ry,rw,rh);
+      } else if (suitReady){
+        // live-animated service arm: redraw into its offscreen each frame, then cover-fit it in
+        if (!_drawSuitInt) initSuitInterior();
+        suitIntCtx.clearRect(0,0,SUIT_ART_W,SUIT_ART_H); _drawSuitInt(now);
+        const sw=Math.min(suitIntCv.width, suitIntCv.height*(rw/rh)), sx=(suitIntCv.width-sw)/2;
+        ctx.drawImage(suitIntCv, sx,0,sw,suitIntCv.height, rx,ry,rw,rh);
       } else {
         const sx=(M0+i*MW+OP_INS)*2, sy=OP_WY*2, sw=OP_WW*2, sh=OP_WH*2;   // source px in lab_open.png (2x art)
         ctx.drawImage(labOpenImg, sx,sy,sw,sh, rx,ry,rw,rh);
