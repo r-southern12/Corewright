@@ -72,10 +72,29 @@
   .wingArt{display:flex;align-items:center;justify-content:center;
     width:38px;height:38px;border:1px solid #2c3550;border-radius:6px;font-size:16px}
   .wingTile.out .wingArt{color:var(--dim)}
-  #optsBtn{position:fixed;top:10px;right:10px;z-index:60;width:34px;height:34px;
-    border-radius:8px;background:rgba(20,26,44,.9);border:1px solid #2c3550;
-    color:var(--dim);font-size:16px;cursor:pointer}
-  #optsBtn:hover{border-color:var(--crystal);color:var(--crystal)}
+  /* Settings gear and overlay exit are milled brass DIALS, matched to the gauge
+     cluster — a raised bezel, an inner ring, a warm core, one light top-left —
+     not the flat web chips they used to be. The two share this whole look so
+     they read as a pair; only the hue and hover glow differ. */
+  #optsBtn,.closeX{
+    width:44px;height:44px;border-radius:50%;box-sizing:border-box;
+    display:flex;align-items:center;justify-content:center;
+    font-size:18px;line-height:1;cursor:pointer;padding:0;
+    border:1px solid var(--brass-dark);clip-path:none;
+    background:
+      radial-gradient(circle at 36% 28%,rgba(255,255,255,.16),transparent 46%),
+      radial-gradient(circle at 50% 120%,rgba(0,0,0,.5),transparent 60%),
+      radial-gradient(circle at 50% 44%,#1a2135,#0c111e);
+    box-shadow:0 3px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.18),
+      inset 0 -3px 6px rgba(0,0,0,.55),inset 0 0 13px rgba(200,154,82,.10);
+    text-shadow:var(--engrave);transition:box-shadow .16s,color .16s,border-color .16s}
+  #optsBtn::before,.closeX::before{content:'';position:absolute;inset:5px;
+    border-radius:50%;border:1px solid rgba(200,154,82,.22);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.5);pointer-events:none}
+  #optsBtn{position:fixed;top:12px;right:12px;z-index:60;color:#cdb98a}
+  #optsBtn:hover{color:var(--crystal);border-color:var(--crystal);
+    box-shadow:0 3px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.18),
+      inset 0 -3px 6px rgba(0,0,0,.55),0 0 16px rgba(79,227,193,.32),inset 0 0 15px rgba(79,227,193,.18)}
   #stationBar{position:fixed;top:94px;left:0;right:0;display:none;gap:6px;justify-content:center;
     flex-wrap:wrap;z-index:9;padding:3px 10px}
   #stationBar.on{display:flex}
@@ -222,7 +241,7 @@
   /* Lapidary hub: a full-bleed 2D scene with transparent clickable hotspots over the drawn zones. */
   .lapHub{padding:0}
   #lapScene{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}
-  .lapHub .closeX{position:absolute;top:14px;right:14px;float:none;z-index:5}
+  .lapHub .closeX{position:absolute;top:12px;right:12px;float:none;z-index:61}
   .lapHotspot{position:absolute;z-index:2;min-height:0;background:transparent;border:2px solid transparent;
     padding:0;margin:0;cursor:pointer;clip-path:none;box-shadow:none;border-radius:0;
     transition:border-color .16s,box-shadow .16s}
@@ -237,8 +256,12 @@
   .overlay h2{font-size:10px;letter-spacing:.32em;text-transform:uppercase;color:var(--violet);
     font-weight:normal;margin:22px 0 10px;display:flex;align-items:center;gap:10px}
   .overlay h2::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
-  .closeX{position:sticky;top:0;float:right;width:44px;height:44px;border-radius:50%;
-    font-size:20px;line-height:1;color:var(--amber);border-color:var(--amber);z-index:2}
+  /* Sizing/bezel live in the shared #optsBtn,.closeX rule up top; here only the
+     placement inside a scrolling card and the amber hue + hover glow. */
+  .closeX{position:sticky;top:0;float:right;color:var(--amber);z-index:2}
+  .closeX:hover{border-color:var(--amber);color:#ffcf7a;
+    box-shadow:0 3px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.18),
+      inset 0 -3px 6px rgba(0,0,0,.55),0 0 16px rgba(232,163,61,.36),inset 0 0 15px rgba(232,163,61,.20)}
   .card{background:var(--solid);border:1px solid var(--line);border-left:3px solid var(--line);
     border-radius:8px;padding:11px 13px;margin-bottom:8px;display:flex;justify-content:space-between;
     align-items:center;gap:10px}
@@ -17316,11 +17339,14 @@ function showView(name){
   // and the forge shows its ores in the top feed strip already, so the bulky rail is redundant there.
   // A class, not an inline display, so the stylesheet stays in control.
   document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb'||name==='lapidary');
-  // The forge is its own workspace — the drill/air/dust meters aren't relevant while you pour, and
-  // the player questioned why they were there, so the top meter strip is hidden in the forge bench.
-  // On expedition the milled dial cluster IS the HUD, so the italic text strip is hidden there;
-  // benches keep the strip (dust/power still matter at the press and bench).
-  document.getElementById('meters').style.display=(name==='forgeb'||name==='brewb'||isExped)?'none':'';
+  // The italic hp/dust/power/air/drill strip only belongs at a shaping/cleaning bench, where
+  // dust and power actually matter. On expedition the milled dial cluster IS the HUD; on the
+  // wing HUBS (lapidary/forge/brew/suit) it's just clutter the player called out, so show it
+  // ONLY on the benches (isMachine) and hide it everywhere else.
+  document.getElementById('meters').style.display=isMachine?'':'none';
+  // Lapidary is a full-bleed scene, so the fixed gear and the hub's exit X share the top-right
+  // corner and used to stack. Slide the gear left of the exit into a neat instrument pair.
+  document.getElementById('optsBtn').style.right=(name==='lapidary')?'64px':'';
   document.getElementById('hudCluster').classList.toggle('on',isExped);
   document.getElementById('condHud').classList.toggle('on',isExped);
   document.getElementById('fieldActions').classList.toggle('on',isExped);
