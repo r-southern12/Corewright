@@ -686,6 +686,9 @@
   }
   /* The lit/selected control gets a brass rim and a warm inner glow, as
      though the lamp above the bench is catching it. */
+  /* The active wing tile is `disabled` so it can't be re-entered, but a lit
+     control must not read as greyed-out — opacity stays full, cursor idle. */
+  .wingTile.on{opacity:1;cursor:default}
   .chip.lit,button.potion.active,.wingTile.on{
     border-color:var(--brass);
     color:#f0d9a6;
@@ -713,7 +716,10 @@
   /* Stamped labels. These are the strongest single cue that the surface
      is metal rather than a web page. */
   header h1,#machineName,.railLbl,#stationBar::before,#chips::before,
-  .overlay h2,.wingTile b,.minibar .lbl{ text-shadow:var(--engrave) }
+  .overlay h2,.minibar .lbl{ text-shadow:var(--engrave) }
+  /* Wing labels take a single dark shadow, NOT --engrave: the engrave's
+     top highlight ghosts a second copy of 11px type behind each title. */
+  .wingTile b{ text-shadow:0 1px 1px rgba(0,0,0,.85) }
   header h1{color:#d8ae63}
 
   /* The bench is lit by one warm lamp overhead, and the hull is dark.
@@ -11404,10 +11410,10 @@ function animTick(dt){
    ============================================================ */
 const LAB_W=8, LAB_H=4;              // four 2x2 wings in a row
 const LAB_WINGS=[
-  {key:'lapidary', label:'The Lapidary',      view:'lapidary', col:'#4FE3C1'},
-  {key:'forge',    label:'The Forge',         view:'forge',  col:'#E8A33D'},
-  {key:'brewing',  label:'Brewing Station',   view:'brew',   col:'#8B7CF6'},
-  {key:'suit',     label:'Suit & Systems',    view:'lab',    col:'#5b6ea0'}
+  {key:'lapidary', label:'The Lapidary',      short:'Lapidary', view:'lapidary', col:'#4FE3C1'},
+  {key:'forge',    label:'The Forge',         short:'Forge',    view:'forge',  col:'#E8A33D'},
+  {key:'brewing',  label:'Brewing Station',   short:'Brewing',  view:'brew',   col:'#8B7CF6'},
+  {key:'suit',     label:'Suit & Systems',    short:'Suit Bay', view:'lab',    col:'#5b6ea0'}
 ];
 const LAB_RECALL_DIST=40;            // surface further than this and it re-lands
 let lab={placed:false, x:0, y:0, drop:0};   // drop>0 = still falling
@@ -11528,15 +11534,22 @@ function renderWingNav(){
   const LAPIDARY_INNER=['dig','cleave','brute','facet','polish','seatbench'];
   const here=LAB_WINGS.find(w=>w.view===view)
     || (LAPIDARY_INNER.includes(view)?LAB_WINGS[0]:null)
-    || (view==='brewb'?LAB_WINGS.find(w=>w.key==='brewing'):null);   // the 3D brewing line keeps the brewing wing's nav
+    || (view==='brewb'?LAB_WINGS.find(w=>w.key==='brewing'):null)    // the 3D brewing line keeps the brewing wing's nav
+    || (view==='forgeb'?LAB_WINGS.find(w=>w.key==='forge'):null);    // the 3D flux-press bench keeps the forge wing's nav
   if (!here){ nav.innerHTML=''; nav.classList.remove('wings'); return; }
   nav.classList.add('wings');
+  /* Every wing shows the full crew of tiles — Surface plus all four workshops —
+     with the current one lit and inert. The player asked for a fixed instrument
+     bar, not a menu that omits wherever you happen to be standing; leaving the
+     active wing out is what stranded the scene you were in with no button. */
   nav.innerHTML=
     `<button class="wingTile out" id="w_out"><span class="wingArt">▼</span><b>Surface</b></button>`+
-    LAB_WINGS.filter(w=>w.key!==here.key).map(w=>
-      `<button class="wingTile" data-wing="${w.key}">
+    LAB_WINGS.map(w=>{
+      const on=w.key===here.key;
+      return `<button class="wingTile${on?' on':''}" ${on?'disabled':`data-wing="${w.key}"`}>
          <span class="wingArt" style="color:${w.col};border-color:${w.col}55">◈</span>
-         <b>${w.label}</b></button>`).join('');
+         <b>${w.short}</b></button>`;
+    }).join('');
   document.getElementById('w_out').onclick=()=>showView('exped');
   nav.querySelectorAll('[data-wing]').forEach(b=>{
     b.onclick=()=>{ const w=LAB_WINGS.find(x=>x.key===b.dataset.wing); if (w) enterWing(w); };
