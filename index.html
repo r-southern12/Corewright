@@ -219,6 +219,21 @@
     background:rgba(9,11,22,.94);padding:96px 14px 28px}
   .overlay.on{display:block}
   .wrap{max-width:600px;margin:0 auto}
+  /* Lapidary hub: a full-bleed 2D scene with transparent clickable hotspots over the drawn zones. */
+  .lapHub{padding:0}
+  #lapScene{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}
+  .lapHub .closeX{position:absolute;top:14px;right:14px;float:none;z-index:5}
+  .lapHotspot{position:absolute;z-index:2;min-height:0;background:transparent;border:2px solid transparent;
+    padding:0;margin:0;cursor:pointer;clip-path:none;box-shadow:none;border-radius:0;
+    transition:border-color .16s,box-shadow .16s}
+  .lapHotspot:hover,.lapHotspot:focus-visible{background:transparent;border-color:var(--crystal);
+    box-shadow:inset 0 0 34px rgba(79,227,193,.14),0 0 18px rgba(79,227,193,.16);outline:none}
+  /* core picker controls */
+  #corePicker .cpBar{display:flex;gap:8px;margin:2px 0 12px}
+  #cpSearch{flex:1;min-height:36px;padding:6px 12px;color:var(--ink);background:#0d1122;
+    border:1px solid var(--line);font:13px Georgia,serif}
+  #cpSearch:focus{border-color:var(--crystal);outline:none}
+  #cpSort{min-height:36px;padding:0 8px}
   .overlay h2{font-size:10px;letter-spacing:.32em;text-transform:uppercase;color:var(--violet);
     font-weight:normal;margin:22px 0 10px;display:flex;align-items:center;gap:10px}
   .overlay h2::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
@@ -1063,17 +1078,30 @@
   </div>
 </div>
 
-<div id="lapidary" class="overlay">
+<div id="lapidary" class="overlay lapHub">
+  <canvas id="lapScene"></canvas>
+  <button class="lapHotspot" id="lapHot_raw" data-kind="raw"></button>
+  <button class="lapHotspot" id="lapHot_clean" data-kind="clean"></button>
+  <button class="lapHotspot" id="lapHot_wrought" data-kind="wrought"></button>
   <button class="closeX" id="x_lapidary" aria-label="Close lapidary">✕</button>
+</div>
+
+<!-- Shared core picker: opened from a Lapidary hub hotspot; lists that store's cores with
+     search + sort and the per-store actions (clean / wrought / grind / burn / delete). -->
+<div id="corePicker" class="overlay">
+  <button class="closeX" id="x_corePicker" aria-label="Close picker">✕</button>
   <div class="wrap">
-    <h2 class="fold" id="fold_raw"><span class="foldArrow">▾</span> Raw ores — haul</h2>
-    <div class="foldBody" id="rawFold"><div class="tierTabs" id="rawTabs"></div><div id="rawList"></div></div>
-    <h2 class="fold" id="fold_store"><span class="foldArrow">▾</span> Core storage — cleaned</h2>
-    <div class="foldBody" id="storeFold"><div class="tierTabs" id="storeTabs"></div><div id="storeList"></div></div>
-    <h2 class="fold" id="fold_wrought"><span class="foldArrow">▾</span> Wrought core storage</h2>
-    <div class="foldBody" id="wroughtFold"><div class="tierTabs" id="wroughtTabs"></div><div id="wroughtList"></div></div>
-    <h2>Lapidary stations <span class="mono" id="lapNote"></span></h2>
-    <div id="lapStationList"></div>
+    <h2 id="cpTitle">Cores</h2>
+    <div class="cpBar">
+      <input id="cpSearch" type="text" placeholder="search name or #id" autocomplete="off">
+      <select id="cpSort" aria-label="Sort cores">
+        <option value="date">Newest</option>
+        <option value="tier">Tier</option>
+        <option value="color">Colour</option>
+        <option value="name">Name</option>
+      </select>
+    </div>
+    <div id="cpList"></div>
   </div>
 </div>
 
@@ -16835,51 +16863,164 @@ function renderCoreSection(key,cores,clean,emptyMsg){
   }
   for (const c of shown) listEl.appendChild(coreCard(c,clean));
 }
-function renderLapidary(){
-  clearThumbs();
-  // A seated core is EQUIPMENT — it leaves the lapidary until it's pulled back out of its slot.
+// ---------- Lapidary HUB (clickable 2D scene) ----------
+// The wing is a room you operate, not a stack of lists: a procedural workshop scene (placeholder art)
+// with three clickable stores — the raw ore bin, cleaned-ore storage and wrought-core rack — each
+// opening the shared core picker. Zone rects are fractions of the scene, the single source of truth
+// for BOTH the drawn panels and the transparent DOM hotspots over them.
+const LAP_ZONES=[
+  {kind:'raw',    label:'Raw Ore Bin',            x:0.045,y:0.20,w:0.28,h:0.62, accent:'232,163,61'},
+  {kind:'clean',  label:'Cleaned Ore Storage',    x:0.36, y:0.20,w:0.28,h:0.62, accent:'79,227,193'},
+  {kind:'wrought',label:'Wrought Core Rack',      x:0.675,y:0.20,w:0.28,h:0.62, accent:'139,124,246'},
+];
+// Cores in the lab (never the seated ones) split into the three stores.
+function lapCounts(){
   const inLab=inventory.filter(c=>!seatWhere(c));
-  const raw=inLab.filter(c=>!coreIsClean(c));                    // dirty haul — excavation bench only
-  const clean=inLab.filter(c=>coreIsClean(c)&&!c.wrought);       // cleaned, not yet shaped to a template
-  const wrought=inLab.filter(c=>coreIsClean(c)&&c.wrought);      // finished to its template (stray cubes are fine)
-  renderCoreSection('raw',raw,false,'No dirty roughs. Dig for glowing nodes.');
-  renderCoreSection('store',clean,true,'No cleaned cores yet. Clear the matrix at the excavation bench.');
-  renderCoreSection('wrought',wrought,true,'No wrought cores yet. Shape a clean core to its template and seat it.');
-  document.getElementById('lapNote').textContent=`— ${clean.length} clean / ${wrought.length} wrought / ${raw.length} raw`;
-  const list=document.getElementById('lapStationList');
-  list.innerHTML='';
-  for (const key of SHAPING_STATIONS){
-    const m=MACHINES[key];
-    const div=document.createElement('div');
-    div.className='card';
-    div.innerHTML=`<div class="info">${m.title}<div class="sub">${m.desc}</div></div>`;
-    const btn=document.createElement('button');
-    if (m.unlocked){
-      btn.className='act';
-      const cleanBench=activeCore&&coreIsClean(activeCore);
-      const dark=!adminOn&&m.powered&&powerBank<=0&&key!=='brute';
-      btn.textContent=dark?'No power':'Enter';
-      btn.disabled=!cleanBench||dark;
-      btn.onclick=()=>showView(key);
-    } else {
-      // No longer bought with dust — the tool is recovered from an ancient cache in the world.
-      btn.className='act'; btn.textContent='◇ sealed'; btn.disabled=true;
-      btn.title='Recovered from an ancient cache — hunt the tier-gated vaults underground.';
-      div.classList.add('t3');
-      const sub=div.querySelector('.sub');
-      if (sub) sub.innerHTML+=' <span style="color:var(--brass)">· sealed until recovered from an ancient cache</span>';
-    }
-    div.appendChild(btn); list.appendChild(div);
+  return { raw:inLab.filter(c=>!coreIsClean(c)).length,
+           clean:inLab.filter(c=>coreIsClean(c)&&!c.wrought).length,
+           wrought:inLab.filter(c=>coreIsClean(c)&&c.wrought).length };
+}
+function positionLapHotspots(){
+  for (const z of LAP_ZONES){ const el=document.getElementById('lapHot_'+z.kind); if (!el) continue;
+    el.style.left=(z.x*100)+'%'; el.style.top=(z.y*100)+'%';
+    el.style.width=(z.w*100)+'%'; el.style.height=(z.h*100)+'%';
+    el.setAttribute('aria-label',z.label);
   }
 }
-// Collapsible section headers on the lapidary page.
-function bindFold(headId,bodyId){
-  const head=document.getElementById(headId), body=document.getElementById(bodyId);
-  head.onclick=()=>{ head.classList.toggle('collapsed'); body.classList.toggle('collapsed'); };
+function _lapChamfer(g,x,y,w,h,c){ g.beginPath(); g.moveTo(x+c,y); g.lineTo(x+w,y); g.lineTo(x+w,y+h-c);
+  g.lineTo(x+w-c,y+h); g.lineTo(x,y+h); g.lineTo(x,y+c); g.closePath(); }
+function drawLapIcon(g,kind,ix,iy,iw,ih,z){
+  const ax=`rgba(${z.accent},`;
+  if (kind==='raw'){
+    const cx=ix+iw/2, top=iy+ih*0.22, bot=iy+ih*0.82, tW=iw*0.52, bW=iw*0.26;
+    g.beginPath(); g.moveTo(cx-tW/2,top); g.lineTo(cx+tW/2,top); g.lineTo(cx+bW/2,bot); g.lineTo(cx-bW/2,bot); g.closePath();
+    g.fillStyle='#20262f'; g.fill(); g.lineWidth=3; g.strokeStyle=ax+'0.7)'; g.stroke();
+    for (const [ox,oy,r] of [[cx-tW*0.22,top+ih*0.12,ih*0.10],[cx+tW*0.14,top+ih*0.07,ih*0.12],[cx-tW*0.01,top+ih*0.22,ih*0.10]]){
+      g.beginPath(); g.arc(ox,oy,r,0,7); g.fillStyle='#7a5a34'; g.fill(); g.strokeStyle='#3a2a18'; g.lineWidth=1.5; g.stroke(); }
+  } else if (kind==='clean'){
+    for (let s=0;s<2;s++){ const sy=iy+ih*(0.42+s*0.32);
+      g.strokeStyle=ax+'0.6)'; g.lineWidth=3; g.beginPath(); g.moveTo(ix+iw*0.15,sy); g.lineTo(ix+iw*0.85,sy); g.stroke();
+      for (let k=0;k<3;k++){ const gx=ix+iw*(0.28+k*0.22), gy=sy-ih*0.06, r=ih*0.06;
+        g.beginPath(); g.moveTo(gx,gy-r); g.lineTo(gx+r*0.7,gy); g.lineTo(gx,gy+r); g.lineTo(gx-r*0.7,gy); g.closePath();
+        g.fillStyle=ax+'0.5)'; g.fill(); g.strokeStyle=ax+'0.95)'; g.lineWidth=1; g.stroke(); } }
+  } else {
+    g.strokeStyle=ax+'0.5)'; g.lineWidth=3; g.strokeRect(ix+iw*0.16,iy+ih*0.18,iw*0.68,ih*0.64);
+    for (let k=0;k<3;k++){ const gx=ix+iw*(0.32+k*0.18), gy=iy+ih*0.5, r=ih*0.13;
+      g.beginPath(); for (let a=0;a<6;a++){ const an=a/6*6.283-0.52, px=gx+Math.cos(an)*r, py=gy+Math.sin(an)*r; g[a?'lineTo':'moveTo'](px,py); } g.closePath();
+      g.fillStyle=ax+'0.5)'; g.fill(); g.strokeStyle=ax+'0.95)'; g.lineWidth=1.5; g.stroke(); }
+  }
 }
-bindFold('fold_raw','rawFold');
-bindFold('fold_store','storeFold');
-bindFold('fold_wrought','wroughtFold');
+function drawLapPanel(g,z,count){
+  const cv=document.getElementById('lapScene'), W=cv.width, H=cv.height;
+  const x=z.x*W, y=z.y*H, w=z.w*W, h=z.h*H, c=Math.min(20,w*0.09);
+  _lapChamfer(g,x,y,w,h,c);
+  const pg=g.createLinearGradient(x,y,x,y+h); pg.addColorStop(0,'#2a3140'); pg.addColorStop(1,'#141a24');
+  g.fillStyle=pg; g.fill(); g.lineWidth=2; g.strokeStyle=`rgba(${z.accent},0.55)`; g.stroke();
+  g.strokeStyle='rgba(255,255,255,0.08)'; g.beginPath(); g.moveTo(x+c,y+2); g.lineTo(x+w-2,y+2); g.stroke();
+  // label bar
+  g.fillStyle=`rgba(${z.accent},0.14)`; g.fillRect(x,y,w,h*0.11);
+  g.textAlign='center'; g.fillStyle='#e8ecf8'; g.font=`${Math.round(h*0.052)}px Georgia, serif`;
+  g.fillText(z.label, x+w/2, y+h*0.078);
+  drawLapIcon(g,z.kind,x,y+h*0.15,w,h*0.6,z);
+  // count + hint
+  g.fillStyle=`rgba(${z.accent},0.95)`; g.font=`bold ${Math.round(h*0.14)}px Georgia, serif`;
+  g.fillText(String(count), x+w/2, y+h*0.9);
+  g.fillStyle='rgba(200,208,228,0.5)'; g.font=`${Math.round(h*0.032)}px Georgia, serif`;
+  g.fillText('click to open', x+w/2, y+h*0.965);
+}
+function drawLapScene(){
+  const cv=document.getElementById('lapScene'); if (!cv) return;
+  const w=cv.width=Math.max(2,cv.clientWidth||innerWidth), h=cv.height=Math.max(2,cv.clientHeight||innerHeight);
+  const g=cv.getContext('2d');
+  const bg=g.createLinearGradient(0,0,0,h); bg.addColorStop(0,'#12171c'); bg.addColorStop(1,'#0a0e10');
+  g.fillStyle=bg; g.fillRect(0,0,w,h);
+  const lamp=g.createRadialGradient(w*0.5,-h*0.12,20,w*0.5,-h*0.12,h*0.95);
+  lamp.addColorStop(0,'rgba(232,190,120,0.10)'); lamp.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=lamp; g.fillRect(0,0,w,h);
+  // faint grain
+  let seed=90125; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
+  g.globalAlpha=0.04; for (let i=0;i<600;i++){ g.fillStyle=rnd()>0.5?'#fff':'#000'; g.fillRect(rnd()*w,rnd()*h,1,1); } g.globalAlpha=1;
+  g.textAlign='center'; g.fillStyle='#c89a52'; g.font=`${Math.round(h*0.05)}px Georgia, serif`;
+  g.fillText('THE LAPIDARY', w*0.5, h*0.12);
+  const cnt=lapCounts();
+  for (const z of LAP_ZONES) drawLapPanel(g,z,cnt[z.kind]);
+  g.textAlign='left';
+}
+
+// ---------- shared core picker ----------
+let cpKind=null;
+const cpState={raw:{sort:'date',q:''}, clean:{sort:'date',q:''}, wrought:{sort:'date',q:''}};
+const CP_TITLES={raw:'Raw Ore Bin', clean:'Cleaned Ore Storage', wrought:'Wrought Core Rack'};
+function coreStoreList(kind){
+  const inLab=inventory.filter(c=>!seatWhere(c));
+  if (kind==='raw') return inLab.filter(c=>!coreIsClean(c));
+  if (kind==='clean') return inLab.filter(c=>coreIsClean(c)&&!c.wrought);
+  return inLab.filter(c=>coreIsClean(c)&&c.wrought);
+}
+function openCorePicker(kind){
+  cpKind=kind; const st=cpState[kind];
+  document.getElementById('cpTitle').textContent=CP_TITLES[kind];
+  document.getElementById('cpSearch').value=st.q;
+  document.getElementById('cpSort').value=st.sort;
+  document.getElementById('corePicker').classList.add('on');
+  cpRender();
+}
+function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on'); }
+function cpCard(core,kind){
+  const div=document.createElement('div'); div.className='card t'+core.tier;
+  div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
+  if (core.cells===null) generateCells(core);
+  if (core.cells&&core.cells.length){ const cv=document.createElement('canvas'); cv.className='thumb3d'; cv.width=cv.height=64;
+    cv.style.cssText='width:64px;height:64px;flex:0 0 64px'; div.appendChild(cv); registerThumb(cv,coreThumbMesh(core)); }
+  const info=document.createElement('div'); info.style.flex='1';
+  info.innerHTML=`<div class="info">${core.name}<div class="sub">${coreGlowText(core)}</div></div>`;
+  div.appendChild(info);
+  const btns=document.createElement('div'); btns.className='cardBtns';
+  const mk=(label,title,fn,cls)=>{ const b=document.createElement('button'); b.className=cls||'tiny'; b.textContent=label; if (title) b.title=title; b.onclick=fn; btns.appendChild(b); };
+  if (kind==='raw'){
+    mk('Clean →','Clear the matrix at the excavation bench',()=>{ loadCore(core); closeCorePicker(); showView('dig'); },'act');
+    mk('Grind → dust 20%','Grind this dirty core straight to powder at a 20% return',()=>grindToPowder(core,0.2));
+    mk('Burn → ⚡'+coreBurnPower(core,0.2),'Burn this dirty core for lab power at a 20% return',()=>burnCoreForPower(core,0.2));
+  } else if (kind==='clean'){
+    mk('Wrought →','Shape this core to its template at the wroughting bench',()=>{ loadCore(core); closeCorePicker(); showView('cleave'); },'act');
+    mk('Grind → powder','Grind this core to coloured potion powder',()=>grindToPowder(core));
+    mk('Burn → ⚡'+coreBurnPower(core),'Burn this core for lab power',()=>burnCoreForPower(core));
+  } else {
+    mk('To wroughting →','Back to the wroughting bench (seat / re-shape)',()=>{ loadCore(core); closeCorePicker(); showView('cleave'); },'act');
+    mk('Grind → powder','Grind this core to coloured potion powder',()=>grindToPowder(core));
+    mk('Burn → ⚡'+coreBurnPower(core),'Burn this core for lab power',()=>burnCoreForPower(core));
+  }
+  mk('✕','Delete core',()=>deleteCore(core),'tiny danger');
+  div.appendChild(btns); return div;
+}
+function cpRender(){
+  if (!cpKind) return;
+  const st=cpState[cpKind]; let list=coreStoreList(cpKind);
+  const q=st.q.trim().toLowerCase();
+  if (q) list=list.filter(c=>(c.name||'').toLowerCase().includes(q)||('#'+c.id).includes(q));
+  list=list.slice().sort((a,b)=>{
+    if (st.sort==='tier') return b.tier-a.tier || b.id-a.id;
+    if (st.sort==='color') return (a.hueIdx||0)-(b.hueIdx||0) || b.id-a.id;
+    if (st.sort==='name') return (a.name||'').localeCompare(b.name||'');
+    return b.id-a.id;                                   // date: newest first (id is monotonic acquisition order)
+  });
+  const el=document.getElementById('cpList'); clearThumbs(); el.innerHTML='';
+  if (!list.length){ el.innerHTML=`<div class="card"><div class="info sub">${q?'No cores match.':'Nothing here yet.'}</div></div>`; return; }
+  for (const core of list) el.appendChild(cpCard(core,cpKind));
+}
+// Repurposed: draw the hub scene + counts, and refresh the picker if it's open. Called from showView
+// and from every core action (grind/burn/delete already call it), so the hub always reflects state.
+function renderLapidary(){
+  positionLapHotspots();
+  drawLapScene();
+  if (cpKind && document.getElementById('corePicker').classList.contains('on')) cpRender();
+}
+// Hub wiring (elements exist in the initial markup).
+for (const z of LAP_ZONES){ const el=document.getElementById('lapHot_'+z.kind); if (el) el.onclick=()=>openCorePicker(z.kind); }
+{ const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
+{ const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
+{ const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
+addEventListener('resize',()=>{ if (view==='lapidary'){ positionLapHotspots(); drawLapScene(); } });
 document.getElementById('adminBtn').onclick=()=>{
   adminOn=!adminOn;
   document.getElementById('adminBtn').textContent=adminOn?'ON':'off';
@@ -17140,6 +17281,9 @@ function showView(name){
   document.getElementById('brew').classList.toggle('on',name==='brew');
   document.getElementById('forge').classList.toggle('on',name==='forge');
   document.getElementById('lapidary').classList.toggle('on',name==='lapidary');
+  // The core picker lives only inside the Lapidary hub; close it whenever we navigate elsewhere.
+  if (name!=='lapidary'){ const cp=document.getElementById('corePicker');
+    if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); } }
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
   document.getElementById('coreSpider').classList.toggle('on', ['cleave','brute','facet','polish'].includes(name) && !!activeCore);
@@ -17156,7 +17300,7 @@ function showView(name){
   // The shaping benches AND the forge hide the reagent rail — glassware/ores are no use mid-cut,
   // and the forge shows its ores in the top feed strip already, so the bulky rail is redundant there.
   // A class, not an inline display, so the stylesheet stays in control.
-  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb');
+  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb'||name==='lapidary');
   // The forge is its own workspace — the drill/air/dust meters aren't relevant while you pour, and
   // the player questioned why they were there, so the top meter strip is hidden in the forge bench.
   // On expedition the milled dial cluster IS the HUD, so the italic text strip is hidden there;
@@ -17503,8 +17647,8 @@ const TUT_STEPS=[
  {sel:null, view:'exped', manual:true,
   body:`The lab stands outside. <b>Click the Lapidary wing</b> — the leftmost one — to go in. That's where roughs are cleaned and cores are shaped.`,
   done:()=>view==='lapidary'},
- {sel:'#rawList button', view:'lapidary',
-  body:`Your rough is in <b>Raw cores</b>. <b>Clamp it in</b> — it goes straight to the <b>Excavation Bench</b>, because it came out of the ground wrapped in host rock.`,
+ {sel:'#lapHot_raw', view:'lapidary',
+  body:`Your rough is in the <b>Raw Ore Bin</b>. <b>Open it</b> and choose <b>Clean →</b> — it goes straight to the <b>Excavation Bench</b>, because it came out of the ground wrapped in host rock.`,
   done:()=>view==='dig'&&!!activeCore},
  {sel:'#tools_dig', view:'dig',
   body:`The <b>scribe</b> is free and fast — but in the lab I won't let it bite the crystal (it can't tell rock from prize, and outside the tutorial it would <b style="color:#E0523D">crack the grain</b>). <b>Rub the dull rock</b> to chip the matrix off, or use <b>Jet Rinse</b> to blast it. Clear it all.`,
@@ -17512,8 +17656,8 @@ const TUT_STEPS=[
  {sel:'#finishChip', view:'dig',
   body:`Clean. Press <b>✓ finished</b> to send it back to the lapidary — it now lives in <b>Core storage</b>, ready to shape.`,
   done:()=>view==='lapidary'},
- {sel:'#storeList button', view:'lapidary',
-  body:`Now <b>clamp it in</b> from <b>Core storage</b> — a clean core opens the shaping stations. This takes you to the <b>Cleaving Block</b>.`,
+ {sel:'#lapHot_clean', view:'lapidary',
+  body:`Now open <b>Cleaned Ore Storage</b> and choose <b>Wrought →</b> — a clean core opens the shaping bench. This takes you to the <b>Cleaving Block</b>.`,
   done:()=>view==='cleave'&&!!activeCore},
  {sel:null, view:'cleave',
   body:`That violet sphere is the <b>template</b> — the socket your core must fit. A <i>Power Cell</i> wants the glow <b>dead centre</b>.<br><br><b>Drag the crystal</b> to turn it. Find the gold shards.`,
