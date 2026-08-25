@@ -880,6 +880,15 @@
      is walked to now, so there is nothing to toggle. -->
 <div id="nav"></div>
 <button id="optsBtn" title="Options">⚙</button>
+<!-- Overlay exits live at BODY level, siblings of the gear, so they share the gear's
+     root stacking context and render above the toast/notification layer (#notes, z-index 12)
+     instead of being trapped inside their overlay's low z-index. syncCloseX() shows only the
+     one for the overlay currently on top. -->
+<button class="closeX" id="x_lab" aria-label="Close lab" style="display:none">✕</button>
+<button class="closeX" id="x_forge" aria-label="Close forge" style="display:none">✕</button>
+<button class="closeX" id="x_lapidary" aria-label="Close lapidary" style="display:none">✕</button>
+<button class="closeX" id="x_corePicker" aria-label="Close picker" style="display:none">✕</button>
+<button class="closeX" id="x_brew" aria-label="Close brewing" style="display:none">✕</button>
 
 <div id="stationBar"></div>
 
@@ -1019,7 +1028,6 @@
 </div>
 
 <div id="lab" class="overlay">
-  <button class="closeX" id="x_lab" aria-label="Close lab">✕</button>
   <div class="wrap">
     <div id="labMain">
     <h2>Drill assembly</h2>
@@ -1097,7 +1105,6 @@
 <div id="fbPower" title="Torch flux — tap to widen the torch's reach (powered by the anvil core + press upgrade)"></div>
 
 <div id="forge" class="overlay">
-  <button class="closeX" id="x_forge" aria-label="Close forge">✕</button>
   <div class="wrap">
     <h2>Metal stores</h2>
     <div id="forgeOreList"></div>
@@ -1117,13 +1124,11 @@
   <button class="lapHotspot" id="lapHot_raw" data-kind="raw"></button>
   <button class="lapHotspot" id="lapHot_clean" data-kind="clean"></button>
   <button class="lapHotspot" id="lapHot_wrought" data-kind="wrought"></button>
-  <button class="closeX" id="x_lapidary" aria-label="Close lapidary">✕</button>
 </div>
 
 <!-- Shared core picker: opened from a Lapidary hub hotspot; lists that store's cores with
      search + sort and the per-store actions (clean / wrought / grind / burn / delete). -->
 <div id="corePicker" class="overlay">
-  <button class="closeX" id="x_corePicker" aria-label="Close picker">✕</button>
   <div class="wrap">
     <h2 id="cpTitle">Cores</h2>
     <div class="cpBar">
@@ -1140,7 +1145,6 @@
 </div>
 
 <div id="brew" class="overlay">
-  <button class="closeX" id="x_brew" aria-label="Close brewing">✕</button>
   <div class="wrap">
     <h2>Brewing line <span class="mono" id="lineStrengthNote"></span></h2>
     <div class="sub">Fit each apparatus with a forged vessel and a power core, then enter the line. Better gear lifts the ceiling on potion strength — skill decides how close you get to it.</div>
@@ -17006,9 +17010,10 @@ function openCorePicker(kind){
   document.getElementById('cpSearch').value=st.q;
   document.getElementById('cpSort').value=st.sort;
   document.getElementById('corePicker').classList.add('on');
+  syncCloseX();
   cpRender();
 }
-function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on'); }
+function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on'); syncCloseX(); }
 function cpCard(core,kind){
   const div=document.createElement('div'); div.className='card t'+core.tier;
   div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
@@ -17304,6 +17309,19 @@ document.getElementById('modeBtn').onclick=()=>{
   hardcore=!hardcore; renderLab();
   say(hardcore?'Hardcore: death drops your haul at the corpse.':'Soft mode: death costs nothing but pride.');
 };
+/* The overlay exits are body-level siblings of the gear now, so they no longer hide/show with
+   their parent overlay's display. Show only the exit for whichever overlay is on top — the core
+   picker when it's open (it covers the lapidary), otherwise the single open hub overlay. */
+function syncCloseX(){
+  const map={x_lapidary:'lapidary', x_forge:'forge', x_brew:'brew', x_lab:'lab', x_corePicker:'corePicker'};
+  const pickerOn=document.getElementById('corePicker').classList.contains('on');
+  for (const id in map){
+    const ov=document.getElementById(map[id]);
+    let show=!!ov && ov.classList.contains('on');
+    if (id!=='x_corePicker' && pickerOn) show=false;   // the picker sits on top and owns the corner
+    const el=document.getElementById(id); if (el) el.style.display=show?'':'none';
+  }
+}
 function showView(name){
   // A shaping station will not accept a dirty core — clean it at the excavation
   // bench first. Bounce back to the lapidary rather than opening a broken bench.
@@ -17327,6 +17345,7 @@ function showView(name){
   // The core picker lives only inside the Lapidary hub; close it whenever we navigate elsewhere.
   if (name!=='lapidary'){ const cp=document.getElementById('corePicker');
     if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); } }
+  syncCloseX();   // exits are root-level now — show the one for the overlay on top
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
   document.getElementById('coreSpider').classList.toggle('on', ['cleave','brute','facet','polish'].includes(name) && !!activeCore);
