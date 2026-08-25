@@ -241,7 +241,8 @@
   /* Lapidary hub: a full-bleed 2D scene with transparent clickable hotspots over the drawn zones. */
   .lapHub{padding:0}
   #lapScene{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}
-  .lapHub .closeX{position:absolute;top:12px;right:12px;float:none;z-index:61}
+  /* .closeX is fixed to the viewport corner for every overlay now (see its rule
+     below), so the lapHub needs no special placement. */
   .lapHotspot{position:absolute;z-index:2;min-height:0;background:transparent;border:2px solid transparent;
     padding:0;margin:0;cursor:pointer;clip-path:none;box-shadow:none;border-radius:0;
     transition:border-color .16s,box-shadow .16s}
@@ -257,8 +258,12 @@
     font-weight:normal;margin:22px 0 10px;display:flex;align-items:center;gap:10px}
   .overlay h2::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
   /* Sizing/bezel live in the shared #optsBtn,.closeX rule up top; here only the
-     placement inside a scrolling card and the amber hue + hover glow. */
-  .closeX{position:sticky;top:0;float:right;color:var(--amber);z-index:2}
+     placement and the amber hue + hover glow. Every overlay pins its exit to the
+     SAME fixed viewport corner as the gear (which slides left of it) so the two
+     dials align identically on every workshop page — not floated inside the card,
+     which put the exit in a different spot on each screen. Fixed also keeps it
+     parked while a card overlay scrolls. Hidden with its overlay via display:none. */
+  .closeX{position:fixed;top:12px;right:12px;color:var(--amber);z-index:61}
   .closeX:hover{border-color:var(--amber);color:#ffcf7a;
     box-shadow:0 3px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.18),
       inset 0 -3px 6px rgba(0,0,0,.55),0 0 16px rgba(232,163,61,.36),inset 0 0 15px rgba(232,163,61,.20)}
@@ -17344,9 +17349,11 @@ function showView(name){
   // wing HUBS (lapidary/forge/brew/suit) it's just clutter the player called out, so show it
   // ONLY on the benches (isMachine) and hide it everywhere else.
   document.getElementById('meters').style.display=isMachine?'':'none';
-  // Lapidary is a full-bleed scene, so the fixed gear and the hub's exit X share the top-right
-  // corner and used to stack. Slide the gear left of the exit into a neat instrument pair.
-  document.getElementById('optsBtn').style.right=(name==='lapidary')?'64px':'';
+  // Every overlay hub pins its exit X to the fixed top-right corner, where the gear also lives.
+  // Slide the gear left of the exit into a matched instrument pair on all of them; on the benches
+  // (no exit X) the gear stays in the corner alone.
+  const hubOverlay=['lapidary','forge','brew','lab','opts'].includes(name);
+  document.getElementById('optsBtn').style.right=hubOverlay?'64px':'';
   document.getElementById('hudCluster').classList.toggle('on',isExped);
   document.getElementById('condHud').classList.toggle('on',isExped);
   document.getElementById('fieldActions').classList.toggle('on',isExped);
