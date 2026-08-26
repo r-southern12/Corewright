@@ -96,14 +96,16 @@
   #optsBtn:hover{color:var(--crystal);border-color:var(--crystal);
     box-shadow:0 3px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.18),
       inset 0 -3px 6px rgba(0,0,0,.55),0 0 16px rgba(79,227,193,.32),inset 0 0 15px rgba(79,227,193,.18)}
-  #stationBar{position:fixed;top:94px;left:0;right:0;display:none;gap:6px;justify-content:center;
+  /* Sits just under the wing nav bar, whose height varies with viewport (--navH,
+     set by drawWingNav); falls back to the old fixed offset before the nav draws. */
+  #stationBar{position:fixed;top:calc(var(--navH,98px) + 6px);left:0;right:0;display:none;gap:6px;justify-content:center;
     flex-wrap:wrap;z-index:9;padding:3px 10px}
   #stationBar.on{display:flex}
   #stationBar::before{content:'STATION';position:absolute;top:-9px;left:50%;transform:translateX(-50%);
     font-size:8px;letter-spacing:2px;color:var(--brass-dark);background:var(--void);padding:0 6px}
   #stationBar .chip{font-size:12px;padding:6px 12px;min-height:34px;border-radius:6px}
   #stationBar .chip.lit{border-color:var(--crystal);color:var(--crystal);background:rgba(79,227,193,.10)}
-  #chips{position:fixed;top:138px;left:0;right:0;display:none;gap:7px;justify-content:center;
+  #chips{position:fixed;top:calc(var(--navH,98px) + 50px);left:0;right:0;display:none;gap:7px;justify-content:center;
     flex-wrap:wrap;z-index:9;padding:3px 10px;max-width:760px;margin:0 auto}
   #chips.on{display:flex}
   #chips::before{content:'TEMPLATE & VIEW';position:absolute;top:-9px;left:50%;transform:translateX(-50%);
@@ -11883,12 +11885,14 @@ let wingNavHover=null, wingNavActiveKey=null;
 function drawWingNav(){
   const cv=document.getElementById('wingNavCv'); if (!cv) return;
   const dpr=Math.min(2, window.devicePixelRatio||1);
-  // A fixed ~90px-tall bar, centred, capped so it never runs under the corner gear/exit
-  // dials or below the bench station bar (top:94).
-  const dispW=Math.min(WorkshopHeader.W, Math.max(520, innerWidth-240), 90*WorkshopHeader.W/WorkshopHeader.H);
+  // Near full-size bar (up to the art's native 1155×142), centred and only capped so it
+  // still clears the corner gear/exit dials (~120px each side). The bench control stack
+  // (station bar, chips) is pushed below it via --navH so a tall bar never buries them.
+  const dispW=Math.min(WorkshopHeader.W, Math.max(560, innerWidth-240));
   const dispH=dispW*WorkshopHeader.H/WorkshopHeader.W;
   cv.style.width=dispW+'px'; cv.style.height=dispH+'px';
   cv.width=Math.round(WorkshopHeader.W*dpr); cv.height=Math.round(WorkshopHeader.H*dpr);
+  document.documentElement.style.setProperty('--navH',(4+dispH)+'px');   // 4px = #nav top offset
   const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   const activeTab=WorkshopHeader.TABS.find(t=>t.wingKey===wingNavActiveKey);
   const active=wingNavHover || (activeTab?activeTab.label:null);   // hover previews; else the current wing is lit
