@@ -245,6 +245,11 @@
   .lapHub{padding:0}
   /* 16:9 line, letterboxed and positioned by sizeLapCanvas (below the nav bar). */
   #lapScene{position:absolute;display:block;z-index:0}
+  /* The picked core, dropped from the ore hatch: a rotating 3D thumbnail you drag
+     into a machine. Fixed to the viewport, sized/placed by the drag code. */
+  .cleanDragCore{position:fixed;z-index:30;cursor:grab;touch-action:none;pointer-events:auto;
+    filter:drop-shadow(0 5px 9px rgba(0,0,0,.6))}
+  .cleanDragCore:active{cursor:grabbing}
   /* .closeX is fixed to the viewport corner for every overlay now (see its rule
      below), so the lapHub needs no special placement. */
   .lapHotspot{position:absolute;z-index:2;min-height:0;background:transparent;border:2px solid transparent;
@@ -18076,6 +18081,7 @@ function coreStoreList(kind){
   return inLab.filter(c=>coreIsClean(c)&&c.wrought);
 }
 function openCorePicker(kind){
+  if (typeof cancelCleanDrag==='function') cancelCleanDrag();   // drop any core mid-drag before a new pick
   cpKind=kind; const st=cpState[kind];
   document.getElementById('cpTitle').textContent=CP_TITLES[kind];
   document.getElementById('cpSearch').value=st.q;
@@ -18100,7 +18106,7 @@ function cpCard(core,kind){
   const btns=document.createElement('div'); btns.className='cardBtns';
   const mk=(label,title,fn,cls)=>{ const b=document.createElement('button'); b.className=cls||'tiny'; b.textContent=label; if (title) b.title=title; b.onclick=fn; btns.appendChild(b); };
   if (kind==='raw'){
-    mk('Clean →','Clear the matrix at the excavation bench',()=>{ loadCore(core); closeCorePicker(); showView('dig'); },'act');
+    mk('Clean →','Drop this rough out of the hatch — drag it into the Cleaning Station',()=>{ closeCorePicker(); spawnCleanDrag(core); },'act');
     mk('Grind → dust 20%','Grind this dirty core straight to powder at a 20% return',()=>grindToPowder(core,0.2));
     mk('Burn → ⚡'+coreBurnPower(core,0.2),'Burn this dirty core for lab power at a 20% return',()=>burnCoreForPower(core,0.2));
   } else if (kind==='clean'){
@@ -18159,7 +18165,47 @@ function lapZoneAction(id){
 { const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
 { const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
 { const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
-addEventListener('resize',()=>{ if (view==='lapidary') drawLapScene(); });
+addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene(); if (cleanDrag) placeCleanDragLogical(cleanDrag.restLX,cleanDrag.restLY); } });
+
+/* ---------- Clean flow: drag the picked rough out of the hatch (Phase 2 slice) ----------
+   Choosing "Clean →" drops the real core out of the ore hatch as a ROTATING 3D image
+   (a position:fixed thumbnail canvas — thumbTick spins it every frame). Drag it onto the
+   Cleaning Station to enter the excavation bench with that core; drop it anywhere else and it
+   snaps back to the output tray. It exists only on the lapidary hub. The other machines still
+   go through the picker for now; extending the drag to them is the next slice. */
+let cleanDrag=null;
+function lapSceneRect(){ const cv=document.getElementById('lapScene'); return cv?cv.getBoundingClientRect():null; }
+function lapLogicalFromScreen(sx,sy){ const r=lapSceneRect(); if (!r||!r.width) return null;
+  return {x:(sx-r.left)*LapLine.W/r.width, y:(sy-r.top)*LapLine.H/r.height}; }
+function placeCleanDragScreen(sx,sy){ if (!cleanDrag) return; const r=lapSceneRect(); if (!r) return;
+  const s=Math.max(58, 150*(r.width/LapLine.W)); const el=cleanDrag.el;
+  el.style.width=el.style.height=s+'px'; el.style.left=(sx-s/2)+'px'; el.style.top=(sy-s/2)+'px'; }
+function placeCleanDragLogical(lx,ly){ const r=lapSceneRect(); if (!r) return;
+  placeCleanDragScreen(r.left+(lx/LapLine.W)*r.width, r.top+(ly/LapLine.H)*r.height); }
+function cancelCleanDrag(){ if (cleanDrag){ cleanDrag.el.remove(); cleanDrag=null; } }
+function spawnCleanDrag(core){
+  cancelCleanDrag();
+  if (core.cells===null) generateCells(core);
+  const mesh=coreThumbMesh(core);
+  if (!mesh){ loadCore(core); showView('dig'); return; }             // no geometry — fall back to the old jump
+  const el=document.createElement('canvas'); el.width=el.height=160; el.className='cleanDragCore';
+  document.body.appendChild(el); registerThumb(el, mesh);
+  cleanDrag={core, el, grabbed:false, restLX:102, restLY:468};       // 102,468 ≈ the OUTPUT tray in scene coords
+  placeCleanDragLogical(102,318);                                    // start up at the hatch
+  el.addEventListener('pointerdown',e=>{ e.preventDefault(); if (!cleanDrag) return;
+    cleanDrag.grabbed=true; try{ el.setPointerCapture&&el.setPointerCapture(e.pointerId); }catch(_){} placeCleanDragScreen(e.clientX,e.clientY); });
+  const t0=performance.now(), fromY=318, toY=cleanDrag.restLY;       // drop out of the hatch onto the tray
+  (function fall(now){ if (!cleanDrag||cleanDrag.grabbed) return; const k=Math.min(1,(now-t0)/460);
+    placeCleanDragLogical(102, fromY+(toY-fromY)*(k*(2-k)));         // ease-out fall
+    if (k<1) requestAnimationFrame(fall); })(t0);
+  say('Core dropped on the tray — drag it into the Cleaning Station to clean it.','good');
+}
+addEventListener('pointermove',e=>{ if (cleanDrag&&cleanDrag.grabbed) placeCleanDragScreen(e.clientX,e.clientY); });
+addEventListener('pointerup',e=>{ if (!cleanDrag||!cleanDrag.grabbed) return; cleanDrag.grabbed=false;
+  const lg=lapLogicalFromScreen(e.clientX,e.clientY), zone=lg?LapLine.hitZone(lg.x,lg.y):null;
+  if (zone==='cleaning'){ const core=cleanDrag.core; cancelCleanDrag(); loadCore(core); showView('dig'); }
+  else placeCleanDragLogical(cleanDrag.restLX,cleanDrag.restLY);     // missed — snap back to the tray
+});
 document.getElementById('adminBtn').onclick=()=>{
   adminOn=!adminOn;
   document.getElementById('adminBtn').textContent=adminOn?'ON':'off';
@@ -18435,7 +18481,8 @@ function showView(name){
   document.getElementById('lapidary').classList.toggle('on',name==='lapidary');
   // The core picker lives only inside the Lapidary hub; close it whenever we navigate elsewhere.
   if (name!=='lapidary'){ const cp=document.getElementById('corePicker');
-    if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); } }
+    if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); }
+    if (typeof cancelCleanDrag==='function') cancelCleanDrag(); }   // a core mid-drag shouldn't float over the next screen
   syncCloseX();   // exits are root-level now — show the one for the overlay on top
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
