@@ -11908,16 +11908,14 @@ function wingNavTabAt(cv,e){
 function renderWingNav(){
   const nav=document.getElementById('nav');
   if (!nav) return;
-  /* Benches live INSIDE the lapidary, so they count as being in that wing —
-     otherwise stepping from the lapidary onto the cleaving block would strip the
-     navigation away and strand the player. */
-  const LAPIDARY_INNER=['dig','cleave','brute','facet','polish','seatbench'];
-  const here=LAB_WINGS.find(w=>w.view===view)
-    || (LAPIDARY_INNER.includes(view)?LAB_WINGS[0]:null)
-    || (view==='brewb'?LAB_WINGS.find(w=>w.key==='brewing'):null)    // the 3D brewing line keeps the brewing wing's nav
-    || (view==='forgeb'?LAB_WINGS.find(w=>w.key==='forge'):null);    // the 3D flux-press bench keeps the forge wing's nav
+  /* The switcher belongs on the workshop HUBS only. On the 3D working screens
+     (excavation/cleaning, the wroughting benches incl. seating, the flux press,
+     the brewing line) it's just clutter — those screens exit with their own
+     "✓ finished" / "✕ leave", so the bar is dropped there. */
+  const here=LAB_WINGS.find(w=>w.view===view);
   if (!here){ nav.innerHTML=''; nav.classList.remove('wings'); wingNavHover=null; return; }
   nav.classList.add('wings');
+  nav.style.display='';   // undo any hide left by the core picker
   let cv=document.getElementById('wingNavCv');
   if (!cv){
     nav.innerHTML='';
@@ -18083,10 +18081,13 @@ function openCorePicker(kind){
   document.getElementById('cpSearch').value=st.q;
   document.getElementById('cpSort').value=st.sort;
   document.getElementById('corePicker').classList.add('on');
+  document.getElementById('nav').style.display='none';   // the picker is the foreground; the switcher steps back behind it
   syncCloseX();
   cpRender();
 }
-function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on'); syncCloseX(); }
+function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on');
+  document.getElementById('nav').style.display='';       // restore the switcher over the hub
+  syncCloseX(); }
 function cpCard(core,kind){
   const div=document.createElement('div'); div.className='card t'+core.tier;
   div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
