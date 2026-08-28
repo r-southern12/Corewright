@@ -5133,6 +5133,11 @@ function seatWhere(c){
   if (occupantId('forgeAnvil')===c.id) return 'forge anvil';
   return null;
 }
+/* Broader than seatWhere: a core counts as INSTALLED — done, not a loose piece to place again — if it
+   occupies a slot OR is fitted as the drill's power core. A fitted power cell deliberately stays in
+   storage (so seatWhere, which hides slot occupants from the bins, excludes it), but for the physical
+   line it must not pop back out onto the floor when you leave the seating bench. */
+function coreIsInstalled(c){ return !!(c && (seatWhere(c) || (drill.power && drill.power.id===c.id))); }
 // Seat the ACTIVE core into a slot at its current bench orientation.
 function seatInto(slot){
   if (!activeCore) return false;
@@ -18611,7 +18616,7 @@ function showView(name){
   else if (name==='brewb'){ say('The brewing line. Pick a potion, then work each apparatus in turn.'); }
   else if (name==='lapidary'){ renderLapidary();
     // Coming back from a station? The worked core pops out of that machine and clangs onto the floor.
-    if (LAP_STATION_VIEWS.includes(prevView) && activeCore && !seatWhere(activeCore)) spawnGroundDrop(activeCore, prevView);
+    if (LAP_STATION_VIEWS.includes(prevView) && activeCore && !coreIsInstalled(activeCore)) spawnGroundDrop(activeCore, prevView);
     else say('The lapidary. Clean roughs, then shape the crystal.'); }
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
   if (inForge||inBrew) resize();               // re-aim the camera at the equipment centre
