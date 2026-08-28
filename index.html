@@ -481,7 +481,7 @@
   #guideText b{color:var(--crystal);font-weight:normal}
   #guideText i{color:var(--violet);font-style:normal}
   #guideRow{display:flex;gap:8px;margin-top:11px;align-items:center}
-  #guideHide{font-size:10px;color:var(--dim);border-color:transparent;background:transparent;padding:6px 6px}
+  #guideHide,#guideSkip{font-size:10px;color:var(--dim);border-color:transparent;background:transparent;padding:6px 6px}
   #guideRecall{position:fixed;left:16px;bottom:16px;z-index:13;display:none;width:46px;height:46px;
     border-radius:50%;font-size:20px;border:1px solid var(--crystal);color:var(--crystal);
     background:rgba(15,19,33,.95);box-shadow:0 0 14px rgba(79,227,193,.3),var(--thick);cursor:pointer;
@@ -1252,7 +1252,7 @@
   <div id="guideBubble">
     <div id="guideName">SHARD</div>
     <div id="guideText"></div>
-    <div id="guideRow"><button class="act" id="guideNext">Got it</button><button id="guideHide">Hide</button></div>
+    <div id="guideRow"><button class="act" id="guideNext">Got it</button><button id="guideHide">Hide</button><button id="guideSkip" style="display:none">skip tutorial</button></div>
   </div>
 </div>
 <button id="guideRecall" aria-label="Call the guide">?</button>
@@ -18743,6 +18743,7 @@ function showView(name){
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
   if (inForge||inBrew) resize();               // re-aim the camera at the equipment centre
   if (tut.on) tutDock();
+  if (typeof guideVisit==='function') guideVisit(name);   // Shard greets a screen on its first visit
 }
 // The station-switch bar: hop between the four shaping stations without a trip
 // back to the lab. Excavation is deliberately absent — you leave it via Finished.
@@ -19012,22 +19013,22 @@ document.getElementById('seatChip').onclick=seatCore;
 // read the whole thing without ever cutting a shard, and it stalled whenever
 // a click didn't land. Now it cannot advance until the work is actually done.
 const TUT_STEPS=[
- {sel:null, view:'lab', manual:true,
-  body:`Welcome to the lab, corewright. The drill outside is a factory shim — it won't bite anything harder than topsoil. To go deeper you shape your own <b>cores</b> from the roughs you haul back.<br><br>I've put a <i>Tier I rough</i> in your crate. Let's make a <b>Power Cell</b>.`},
+ {sel:null, view:'lab', manual:true, expr:'happy',
+  body:`Hi! I'm <b>Shard</b> — a chip of core that woke up. Welcome to the lab, corewright. The drill outside is a factory shim; it won't bite anything harder than topsoil. To go deeper you shape your own <b>cores</b> from the roughs you haul back.<br><br>I've put a <i>Tier I rough</i> in your crate. Let's make a <b>Power Cell</b>.`},
  {sel:null, view:'exped', manual:true,
   body:`The lab stands outside. <b>Click the Lapidary wing</b> — the leftmost one — to go in. That's where roughs are cleaned and cores are shaped.`,
   done:()=>view==='lapidary'},
  {sel:'#lapScene', view:'lapidary',
-  body:`Your rough is in the <b>Raw Ore Bin</b> (far left of the line). <b>Click it</b> and choose <b>Clean →</b> — it goes straight to the <b>Excavation Bench</b>, because it came out of the ground wrapped in host rock.`,
+  body:`Your rough sits in the <b>Raw Ore Bin</b> (far left of the line). <b>Click it</b>, pick the rough and choose <b>Clean →</b>. It drops out of the hatch — then <b>drag it into the Cleaning Station</b> to load it. The machine runs; click it to step inside.`,
   done:()=>view==='dig'&&!!activeCore},
  {sel:'#tools_dig', view:'dig',
   body:`The <b>scribe</b> is free and fast — but in the lab I won't let it bite the crystal (it can't tell rock from prize, and outside the tutorial it would <b style="color:#E0523D">crack the grain</b>). <b>Rub the dull rock</b> to chip the matrix off, or use <b>Jet Rinse</b> to blast it. Clear it all.`,
   done:()=>coreIsClean(activeCore)},
- {sel:'#finishChip', view:'dig',
-  body:`Clean. Press <b>✓ finished</b> to send it back to the lapidary — it now lives in <b>Core storage</b>, ready to shape.`,
+ {sel:'#finishChip', view:'dig', expr:'happy',
+  body:`Clean! Press <b>✓ finished</b> — the core pops back out onto the lapidary floor, host rock gone, ready to shape.`,
   done:()=>view==='lapidary'},
  {sel:'#lapScene', view:'lapidary',
-  body:`Now click <b>Cleaned Ore Storage</b> on the line and choose <b>Wrought →</b> — a clean core opens the shaping bench. This takes you to the <b>Cleaving Block</b>.`,
+  body:`There it is on the floor. <b>Drag the clean core into a shaping machine</b> — the <b>Bruting</b> or <b>Faceting</b> stand — to open the wroughting bench. This takes you to the <b>Cleaving Block</b>.`,
   done:()=>view==='cleave'&&!!activeCore},
  {sel:null, view:'cleave',
   body:`That violet sphere is the <b>template</b> — the socket your core must fit. A <i>Power Cell</i> wants the glow <b>dead centre</b>.<br><br><b>Drag the crystal</b> to turn it. Find the gold shards.`,
@@ -19035,13 +19036,13 @@ const TUT_STEPS=[
  {sel:'#alignChip', view:'cleave',
   body:`The template can move. Tap <b>align</b>, then use the arrows to slide it over the glow — <i>red X, green Y, blue Z</i>. The arrows sit on the template and turn with your core.`,
   done:()=>Math.hypot(gx,gy,gz)>0.15},
- {sel:'#tools_cleave', view:'cleave',
+ {sel:'#tools_cleave', view:'cleave', expr:'alarm',
   body:`Everything <b style="color:#E0523D">red</b> sits outside the template and has to go. Pick <b>Level</b> or <b>Standing</b>, set the plane, <b>Cleave</b>.<br><br>Potions are free while you learn, and I won't let you cut into the template itself.`,
   done:()=>tutCuts>0},
  {sel:'#tools_cleave', view:'cleave',
   body:`Keep going until <b>nothing is red</b>. Turn the crystal and cleave from every side — the readout below tells you how many shards are still outside.`,
   done:()=>{const s=coreStats(); return s&&s.fits;}},
- {sel:'#seatChip', view:'cleave',
+ {sel:'#seatChip', view:'cleave', expr:'happy',
   body:`It <b style="color:var(--crystal)">fits</b>. Your <i>density</i> score is how much crystal you packed into the socket — the <b>Faceting Saw</b> and <b>Polishing Lamp</b> would raise it further, but that's a lesson for a richer day.<br><br>Press <b>seat core</b>.`,
   done:()=>!!pendingCell},
  {sel:'#routeRow', view:'cleave',
@@ -19063,15 +19064,10 @@ function tutDock(){
 function tutShow(){
   const st=TUT_STEPS[tut.step];
   if (!st){ tutEnd(); return; }
-  const t=document.getElementById('tut');
-  t.classList.add('on'); t.classList.remove('hid');
-  document.getElementById('tutMin').classList.remove('on');
-  tutDock();
-  document.getElementById('tutStep').textContent=`step ${tut.step+1} of ${TUT_STEPS.length}`;
-  document.getElementById('tutBody').innerHTML=st.body;
-  document.getElementById('tutOk').style.display=st.manual?'':'none';
-  tutHalo(st.sel);
   if (st.view&&view!==st.view&&st.view==='lab') showView('lab');
+  // Presented BY the guide (Shard) now, not the old brass card.
+  guideSay(st.body, {name:'SHARD', expr:st.expr, manual:st.manual, next:st.manual?'Got it':undefined, skip:true});
+  tutHalo(st.sel);
 }
 function tutHalo(sel){
   const h=document.getElementById('tutHalo');
@@ -19123,6 +19119,7 @@ function tutEnd(){
   tut.on=false; tut.protect=false;
   document.getElementById('tut').classList.remove('on');
   document.getElementById('tutHalo').classList.remove('on');
+  if (typeof guideDismiss==='function') guideDismiss();   // Shard steps aside (the "?" stays for per-screen hints)
   updateStock();                       // ∞ -> real counts
   if (wasOn){
     floatText('THE PLANET IS YOURS','var(--amber)');
@@ -19229,18 +19226,52 @@ function guideSay(html,opts){
   document.getElementById('guideText').innerHTML=html;
   document.getElementById('guideName').textContent=opts.name||'SHARD';
   const nb=document.getElementById('guideNext'); nb.style.display=opts.manual?'':'none'; nb.textContent=opts.next||'Got it';
+  document.getElementById('guideSkip').style.display=opts.skip?'':'none';
   document.getElementById('guide').classList.add('on');
-  document.getElementById('guideRecall').classList.remove('on');
-  GUIDE.open=true;
+  GUIDE.open=true; guideSyncRecall();
   guideSetExpr(opts.expr||'talk', opts.expr?0:1500);       // a plain line talks briefly then idles
 }
-function guideHideBubble(){ document.getElementById('guide').classList.remove('on'); document.getElementById('guideRecall').classList.add('on'); GUIDE.open=false; }
-function guideDismiss(){ document.getElementById('guide').classList.remove('on'); document.getElementById('guideRecall').classList.remove('on'); GUIDE.open=false; }
-let guideNext=()=>guideHideBubble();                          // replaced by the chapter engine (Stage B)
-let guideRecall=()=>{ if (GUIDE.lastOpts) guideSay(GUIDE.lastHtml,GUIDE.lastOpts); };
+function guideHideBubble(){ document.getElementById('guide').classList.remove('on'); GUIDE.open=false; guideSyncRecall(); }
+function guideDismiss(){ document.getElementById('guide').classList.remove('on'); GUIDE.open=false; guideSyncRecall(); }
+// The "?" recall button shows when Shard is tucked away but has something to say on this screen.
+function guideSyncRecall(){
+  const show = !GUIDE.open && (tut.on || !!GUIDE_HINTS[view]);
+  document.getElementById('guideRecall').classList.toggle('on', show);
+}
+/* Per-screen chapters shown the FIRST time you enter a screen (outside the linear onboarding), and
+   re-summonable any time via the "?" button. Persisted so they don't nag every load. */
+const GUIDE_HINTS={
+  exped:{html:`Out here is the <b>surface</b>. Drill down, haul roughs home, and walk into the <b>lab</b> to shape them. Deeper rock needs a stronger drill — which needs better cores.`},
+  forge:{html:`The <b>Forge</b>. Melt metal and let it slump into a mould to cast drill and suit parts — press and hold the torch, patience fills the cavity.`, expr:'happy'},
+  brew:{html:`The <b>Brewing line</b>. Fit each apparatus with a forged vessel and a power core, then work the potions that feed your tools.`},
+  lab:{html:`<b>Suit &amp; Systems</b>. Fit your finest cores into your kit here — drill core and power, scanner coil, elemental wards.`},
+};
+const GUIDE_SEEN_KEY='corewright.guideSeen.v1';
+let guideSeen=new Set();
+try{ guideSeen=new Set(JSON.parse(localStorage.getItem(GUIDE_SEEN_KEY)||'[]')); }catch(_){}
+function guideMarkSeen(k){ if (guideSeen.has(k)) return; guideSeen.add(k);
+  try{ localStorage.setItem(GUIDE_SEEN_KEY, JSON.stringify([...guideSeen])); }catch(_){} }
+// Called on every showView: the tutorial owns Shard while it runs; otherwise the first visit to a
+// screen pops its chapter, and later visits just leave the "?" available.
+function guideVisit(v){
+  if (tut.on) return;
+  const h=GUIDE_HINTS[v];
+  if (h && !guideSeen.has(v)){ guideMarkSeen(v); guideSay(h.html,{name:'SHARD',expr:h.expr,manual:true,next:'Got it'}); }
+  else if (!GUIDE.open) guideSyncRecall();
+}
+let guideNext=()=>guideHideBubble();                          // wired below: advance the tutorial, else tuck away
+let guideRecall=()=>{};
 document.getElementById('guideHide').onclick=guideHideBubble;
 document.getElementById('guideRecall').onclick=()=>guideRecall();
 document.getElementById('guideNext').onclick=()=>guideNext();
+document.getElementById('guideSkip').onclick=()=>{ if (tut.on) tutEnd(); else guideHideBubble(); };
+guideNext=()=>{ if (tut.on) tutAdvance(); else guideHideBubble(); };
+guideRecall=()=>{
+  if (tut.on){ tutShow(); return; }
+  const h=GUIDE_HINTS[view];
+  if (h) guideSay(h.html,{name:'SHARD',expr:h.expr,manual:true,next:'Got it'});
+  else if (GUIDE.lastOpts) guideSay(GUIDE.lastHtml,GUIDE.lastOpts);
+};
 
 /* ============================================================
    PERSISTENCE — Stage B (versioned, refresh-safe)
