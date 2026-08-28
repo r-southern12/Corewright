@@ -462,6 +462,32 @@
   #tutHalo.on{display:block}
   @keyframes halo{50%{box-shadow:0 0 0 6px rgba(232,163,61,.18)}}
 
+  /* ---------- the Guide (cube-alien) ---------- */
+  #guide{position:fixed;left:16px;bottom:16px;z-index:14;display:none;align-items:flex-end;gap:10px;pointer-events:none}
+  #guide.on{display:flex}
+  #guideChar{pointer-events:auto;width:120px;height:120px;flex:0 0 120px;filter:drop-shadow(0 6px 14px rgba(0,0,0,.55));
+    animation:guideFloat 3.4s ease-in-out infinite}
+  #guideCv{width:100%;height:100%;display:block;cursor:pointer}
+  @keyframes guideFloat{50%{transform:translateY(-6px)}}
+  #guideBubble{pointer-events:auto;max-width:360px;margin-bottom:14px;position:relative;
+    background:linear-gradient(158deg,rgba(44,50,65,.98),rgba(15,19,33,.98));
+    border:1px solid var(--brass);box-shadow:var(--thick),0 10px 30px rgba(0,0,0,.55);
+    padding:12px 15px;clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+  #guideBubble::before{content:'';position:absolute;left:-9px;bottom:20px;width:14px;height:14px;
+    background:inherit;border-left:1px solid var(--brass);border-bottom:1px solid var(--brass);transform:rotate(45deg)}
+  #guideName{font-size:9px;letter-spacing:.26em;color:var(--crystal);margin-bottom:5px;
+    text-shadow:0 0 8px rgba(79,227,193,.4)}
+  #guideText{font-size:13px;line-height:1.5;color:var(--ink)}
+  #guideText b{color:var(--crystal);font-weight:normal}
+  #guideText i{color:var(--violet);font-style:normal}
+  #guideRow{display:flex;gap:8px;margin-top:11px;align-items:center}
+  #guideHide{font-size:10px;color:var(--dim);border-color:transparent;background:transparent;padding:6px 6px}
+  #guideRecall{position:fixed;left:16px;bottom:16px;z-index:13;display:none;width:46px;height:46px;
+    border-radius:50%;font-size:20px;border:1px solid var(--crystal);color:var(--crystal);
+    background:rgba(15,19,33,.95);box-shadow:0 0 14px rgba(79,227,193,.3),var(--thick);cursor:pointer;
+    animation:guideFloat 3.4s ease-in-out infinite}
+  #guideRecall.on{display:block}
+
   #seat{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(11,14,26,.85);z-index:10;text-align:center;padding:20px}
   #seat.on{display:flex}
@@ -1218,6 +1244,18 @@
     </div>
   </div>
 </div>
+
+<!-- The Guide: a small living crystal-cube alien (procedural voxel body + drawn face) that walks the
+     player through each screen. Rendered by guideTick into #guideCv; speech in #guideBubble. -->
+<div id="guide">
+  <div id="guideChar"><canvas id="guideCv" width="220" height="220"></canvas></div>
+  <div id="guideBubble">
+    <div id="guideName">SHARD</div>
+    <div id="guideText"></div>
+    <div id="guideRow"><button class="act" id="guideNext">Got it</button><button id="guideHide">Hide</button></div>
+  </div>
+</div>
+<button id="guideRecall" aria-label="Call the guide">?</button>
 
 <div id="seat"><div class="card2">
   <h2 id="seatTitle">Core seated</h2>
@@ -19116,6 +19154,93 @@ document.getElementById('tutMin').onclick=()=>{
 };
 addEventListener('resize',()=>{ if (tut.on) tutHalo(TUT_STEPS[tut.step]?.sel); });
 
+/* ============================================================
+   THE GUIDE — a living crystal-cube alien that walks the player
+   through each screen. Procedural voxel body (rendered through the
+   shared thumbnail WebGL context) + a drawn, expressive face; a
+   speech bubble carries each screen's chapter. Stage A: the character
+   and its say/recall API. The chapter engine wires into guideNext/
+   guideRecall next.
+   ============================================================ */
+const GUIDE={ mesh:null, expr:'idle', open:false, exprUntil:0, lastHtml:'', lastOpts:null };
+function guideBuildMesh(){
+  if (GUIDE.mesh || typeof THREE==='undefined') return GUIDE.mesh;
+  _thumbInit();
+  // a 3x3x3 rubik's cube of crystal cubelets, tinted across a crystalline palette
+  const list=[], sz=0.60, gap=0.72;
+  const hues=[0x4FE3C1,0x2fb9a8,0x8B7CF6,0x6a5ad6,0x5bb8e0,0x39c9b8,0x9be0d0,0x7f6fe0];
+  let i=0;
+  for (let x=-1;x<=1;x++) for (let y=-1;y<=1;y++) for (let z=-1;z<=1;z++){
+    list.push([x*gap,y*gap,z*gap,sz,hues[i++%hues.length]]);
+  }
+  GUIDE.mesh=_voxThumb(list, new THREE.MeshStandardMaterial({metalness:0.28,roughness:0.34,emissive:0x0a0c16,emissiveIntensity:0.32}));
+  return GUIDE.mesh;
+}
+// Draw the expressive face over the rendered cube: two eyes (blink) + a mouth, keyed off GUIDE.expr.
+function guideFace(g,W,H,now){
+  if (GUIDE.exprUntil && now>GUIDE.exprUntil){ GUIDE.expr=GUIDE.open?'idle':'idle'; GUIDE.exprUntil=0; }
+  const expr=GUIDE.expr;
+  const sway=Math.sin(now*0.001*0.8)*0.12, shift=sway*W*0.16;
+  const cx1=W*0.415+shift, cx2=W*0.585+shift, ey=H*0.44, er=W*0.062;
+  // blink: quick close/open ~ every 3.4s (not while alarmed)
+  let lid=1; const cyc=now%3400;
+  if (expr!=='alarm'){ if (cyc<95) lid=1-cyc/95; else if (cyc<190) lid=(cyc-95)/95; }
+  const eyeCol='#0b1418', glow='rgba(120,255,240,0.9)';
+  g.save();
+  if (expr==='alarm'){ const rg=g.createRadialGradient(W/2,H/2,W*0.1,W/2,H/2,W*0.55);
+    rg.addColorStop(0,'rgba(220,70,60,0.28)'); rg.addColorStop(1,'rgba(220,70,60,0)'); g.fillStyle=rg; g.fillRect(0,0,W,H); }
+  function eye(cx){
+    if (expr==='happy'){ g.strokeStyle=eyeCol; g.lineWidth=er*0.7; g.lineCap='round';
+      g.beginPath(); g.arc(cx,ey+er*0.5,er*1.05,Math.PI*1.15,Math.PI*1.85); g.stroke(); return; }
+    const eh=(expr==='alarm')?er*1.35:er, ew=(expr==='alarm')?er*1.1:er;
+    const yoff=(expr==='think')? -er*0.5 : 0;
+    g.save(); g.translate(cx,ey+yoff); g.scale(1, Math.max(0.12,lid));
+    g.fillStyle=eyeCol; g.beginPath(); g.ellipse(0,0,ew,eh,0,0,7); g.fill();
+    g.fillStyle=glow; g.beginPath(); g.arc(-ew*0.3,-eh*0.3,ew*0.30,0,7); g.fill();     // catchlight
+    g.restore();
+  }
+  eye(cx1); eye(cx2);
+  // mouth
+  const mx=(cx1+cx2)/2, my=H*0.60;
+  g.strokeStyle=eyeCol; g.fillStyle=eyeCol; g.lineWidth=W*0.018; g.lineCap='round';
+  if (expr==='happy'){ g.beginPath(); g.arc(mx,my-er*0.4,er*1.2,Math.PI*0.15,Math.PI*0.85); g.stroke(); }
+  else if (expr==='talk'){ const o=(0.5+0.5*Math.sin(now*0.02))*er*0.9; g.beginPath(); g.ellipse(mx,my,er*0.7,Math.max(er*0.18,o),0,0,7); g.fill(); }
+  else if (expr==='alarm'){ g.beginPath(); g.arc(mx,my,er*0.5,0,7); g.fill(); }
+  else { g.beginPath(); g.moveTo(mx-er*0.6,my); g.lineTo(mx+er*0.6,my); g.stroke(); }   // idle/think: neutral
+  g.restore();
+}
+function guideTick(now){
+  const wrap=document.getElementById('guide'); if (!wrap||!wrap.classList.contains('on')) return;
+  const mesh=guideBuildMesh(), cv=document.getElementById('guideCv'); if (!mesh||!cv||!thumbRenderer) return;
+  const t=now*0.001;
+  thumbHolder.clear(); thumbHolder.add(mesh);
+  mesh.position.set(0,0,0);
+  mesh.rotation.set(0.30+Math.sin(t*1.1)*0.05, Math.sin(t*0.8)*0.12, Math.sin(t*1.3)*0.04);   // breathe + gentle sway, front to camera
+  mesh.scale.setScalar(1.18);
+  thumbRenderer.render(thumbScene,thumbCam);
+  const g=cv.getContext('2d'); g.clearRect(0,0,cv.width,cv.height);
+  g.drawImage(thumbRenderer.domElement,0,0,cv.width,cv.height);
+  guideFace(g,cv.width,cv.height,now);
+}
+function guideSetExpr(e,ms){ GUIDE.expr=e; GUIDE.exprUntil=ms?performance.now()+ms:0; }
+// Show the guide with a line. opts: {name, expr, manual(show Next), next(label)}.
+function guideSay(html,opts){
+  opts=opts||{}; GUIDE.lastHtml=html; GUIDE.lastOpts=opts;
+  document.getElementById('guideText').innerHTML=html;
+  document.getElementById('guideName').textContent=opts.name||'SHARD';
+  const nb=document.getElementById('guideNext'); nb.style.display=opts.manual?'':'none'; nb.textContent=opts.next||'Got it';
+  document.getElementById('guide').classList.add('on');
+  document.getElementById('guideRecall').classList.remove('on');
+  GUIDE.open=true;
+  guideSetExpr(opts.expr||'talk', opts.expr?0:1500);       // a plain line talks briefly then idles
+}
+function guideHideBubble(){ document.getElementById('guide').classList.remove('on'); document.getElementById('guideRecall').classList.add('on'); GUIDE.open=false; }
+function guideDismiss(){ document.getElementById('guide').classList.remove('on'); document.getElementById('guideRecall').classList.remove('on'); GUIDE.open=false; }
+let guideNext=()=>guideHideBubble();                          // replaced by the chapter engine (Stage B)
+let guideRecall=()=>{ if (GUIDE.lastOpts) guideSay(GUIDE.lastHtml,GUIDE.lastOpts); };
+document.getElementById('guideHide').onclick=guideHideBubble;
+document.getElementById('guideRecall').onclick=()=>guideRecall();
+document.getElementById('guideNext').onclick=()=>guideNext();
 
 /* ============================================================
    PERSISTENCE — Stage B (versioned, refresh-safe)
@@ -19407,6 +19532,7 @@ let t=0, lastNow=0;
     if (_fg){ const fc=_fg.getContext('2d'); fc.clearRect(0,0,1600,900); if (_dockSeat) LapLine.drawForeground(fc,'seating',_t); } }
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
+  if (typeof guideTick==='function') guideTick(now); // render the cube-alien guide when it's on screen
   frameStats(now);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's
