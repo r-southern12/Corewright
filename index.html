@@ -465,6 +465,10 @@
   /* ---------- the Guide (cube-alien) ---------- */
   #guide{position:fixed;left:16px;bottom:16px;z-index:14;display:none;align-items:flex-end;gap:10px;pointer-events:none}
   #guide.on{display:flex}
+  /* On the 3D benches the toolbar owns the bottom, so Shard docks to the top-left instead. */
+  #guide.hi{bottom:auto;top:96px;align-items:flex-start}
+  #guide.hi #guideBubble{margin-bottom:0;margin-top:8px}
+  #guide.hi #guideBubble::before{bottom:auto;top:20px}
   #guideChar{pointer-events:auto;width:120px;height:120px;flex:0 0 120px;filter:drop-shadow(0 6px 14px rgba(0,0,0,.55));
     animation:guideFloat 3.4s ease-in-out infinite}
   #guideCv{width:100%;height:100%;display:block;cursor:pointer}
@@ -487,6 +491,7 @@
     background:rgba(15,19,33,.95);box-shadow:0 0 14px rgba(79,227,193,.3),var(--thick);cursor:pointer;
     animation:guideFloat 3.4s ease-in-out infinite}
   #guideRecall.on{display:block}
+  #guideRecall.hi{bottom:auto;top:96px}
 
   #seat{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(11,14,26,.85);z-index:10;text-align:center;padding:20px}
@@ -18743,6 +18748,7 @@ function showView(name){
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
   if (inForge||inBrew) resize();               // re-aim the camera at the equipment centre
   if (tut.on) tutDock();
+  if (typeof guideDock==='function') guideDock();         // keep Shard clear of the bench toolbar
   if (typeof guideVisit==='function') guideVisit(name);   // Shard greets a screen on its first visit
 }
 // The station-switch bar: hop between the four shaping stations without a trip
@@ -19228,7 +19234,7 @@ function guideSay(html,opts){
   const nb=document.getElementById('guideNext'); nb.style.display=opts.manual?'':'none'; nb.textContent=opts.next||'Got it';
   document.getElementById('guideSkip').style.display=opts.skip?'':'none';
   document.getElementById('guide').classList.add('on');
-  GUIDE.open=true; guideSyncRecall();
+  GUIDE.open=true; guideDock(); guideSyncRecall();
   guideSetExpr(opts.expr||'talk', opts.expr?0:1500);       // a plain line talks briefly then idles
 }
 function guideHideBubble(){ document.getElementById('guide').classList.remove('on'); GUIDE.open=false; guideSyncRecall(); }
@@ -19237,6 +19243,12 @@ function guideDismiss(){ document.getElementById('guide').classList.remove('on')
 function guideSyncRecall(){
   const show = !GUIDE.open && (tut.on || !!GUIDE_HINTS[view]);
   document.getElementById('guideRecall').classList.toggle('on', show);
+}
+// On the 3D benches the bottom toolbar is in the way, so dock Shard (and the "?") to the top-left.
+function guideDock(){
+  const hi=['dig','cleave','brute','facet','polish','seatbench','forgeb','brewb'].includes(view);
+  document.getElementById('guide').classList.toggle('hi',hi);
+  document.getElementById('guideRecall').classList.toggle('hi',hi);
 }
 /* Per-screen chapters shown the FIRST time you enter a screen (outside the linear onboarding), and
    re-summonable any time via the "?" button. Persisted so they don't nag every load. */
