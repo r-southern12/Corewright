@@ -245,6 +245,9 @@
   .lapHub{padding:0}
   /* 16:9 line, letterboxed and positioned by sizeLapCanvas (below the nav bar). */
   #lapScene{position:absolute;display:block;z-index:0}
+  /* Foreground pass, layered ABOVE the docked core (z-index 30) so machine parts like the seating
+     claws grip over it. Same box as #lapScene; never eats pointers. */
+  #lapFg{position:absolute;display:block;z-index:35;pointer-events:none}
   /* The picked core, dropped from the ore hatch: a rotating 3D thumbnail you drag
      into a machine. Fixed to the viewport, sized/placed by the drag code. */
   .cleanDragCore{position:fixed;z-index:30;cursor:grab;touch-action:none;pointer-events:auto;
@@ -1130,6 +1133,7 @@
 
 <div id="lapidary" class="overlay lapHub">
   <canvas id="lapScene"></canvas>
+  <canvas id="lapFg"></canvas>
 </div>
 
 <!-- Shared core picker: opened from a Lapidary hub hotspot; lists that store's cores with
@@ -17282,8 +17286,8 @@ const LapLine=(function(){
 
 const canvas = document.getElementById('lapScene');
 canvas.width=1600; canvas.height=900;
-const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = true;
+let ctx = canvas.getContext('2d');   // `let`: drawForeground swaps this to a foreground canvas so the SAME
+ctx.imageSmoothingEnabled = true;    // brass helpers can redraw the seating claws ON TOP of the docked core
 
 const W = 1600;
 const H = 900;
@@ -18067,7 +18071,23 @@ function handlePointerMove(evt){
     const bob=Math.sin(time*.007+(m.preview.x*.01))*2.2;
     return {x:m.preview.x, y:m.preview.y+bob, rot:Math.sin(time*.002+m.preview.x)*.08};
   }
-  return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview, corePos };
+  // Redraw just the seating chuck's four clamping jaws onto ANOTHER canvas (layered above the docked
+  // core) so the claws grip OVER the core instead of hiding behind it. Same jaw art as the scene, at the
+  // same animated reach, so the two coincide and read as one set of claws in front.
+  function drawForeground(fgCtx, zone, time){
+    if(zone!=='seating') return;
+    const saved=ctx; ctx=fgCtx;
+    const m=seatingMotion(time), reach=30-m.clamp*16;
+    for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){
+      const x=1190+Math.cos(a)*reach, y=414+Math.sin(a)*reach;
+      ctx.save(); ctx.translate(x,y); ctx.rotate(a);
+      const jaw=chamferPath(-10,-6,20,12,3);
+      fillStroke(jaw, m.clamp>.75?brassGrad(-10,-6,20,12):C.brass2, C.brass4, 1.4);
+      ctx.restore();
+    }
+    ctx=saved;
+  }
+  return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview, corePos, drawForeground };
 })();
 
 // Cores in the lab (never the seated ones) split into the three stores. Kept for count badges.
@@ -18088,6 +18108,8 @@ function sizeLapCanvas(){
   const dw=1600*scale, dh=900*scale;
   cv.style.width=dw+'px'; cv.style.height=dh+'px';
   cv.style.left=((availW-dw)/2)+'px'; cv.style.top=(top0+(availH-dh)/2)+'px';
+  const fg=document.getElementById('lapFg');   // foreground pass shares the exact box + backing store
+  if (fg){ fg.width=1600; fg.height=900; fg.style.width=cv.style.width; fg.style.height=cv.style.height; fg.style.left=cv.style.left; fg.style.top=cv.style.top; }
 }
 /* Kept the drawLapScene name so the existing resize/action callers keep working. */
 function drawLapScene(){ const cv=document.getElementById('lapScene'); if (!cv) return; sizeLapCanvas(); LapLine.draw(performance.now()); }
@@ -19377,9 +19399,12 @@ let t=0, lastNow=0;
   if (view==='brewb') brewTick(dt);      // the brewing line: the active station's minigame
   if (view==='lapidary' && typeof LapLine!=='undefined'){ const _t=performance.now();
     LapLine.draw(_t);                                                                        // run the line's machines while on the hub
+    const _dockSeat = lapCore && lapCore.docked && lapCore.dockZone==='seating';
     if (lapCore && lapCore.docked && !lapCore.grabbed){ const p=LapLine.corePos(lapCore.dockZone,_t);   // ride the core with the mechanism
       if (p){ lapCore.dockLX=p.x; lapCore.dockLY=p.y; placeLapCoreLogical(p.x,p.y);
-        lapCore.el.style.transform=(typeof p.rot==='number')?('rotate('+p.rot+'rad)'):''; } } }
+        lapCore.el.style.transform=(typeof p.rot==='number')?('rotate('+p.rot+'rad)'):''; } }
+    const _fg=document.getElementById('lapFg');                                              // seating claws grip OVER the core
+    if (_fg){ const fc=_fg.getContext('2d'); fc.clearRect(0,0,1600,900); if (_dockSeat) LapLine.drawForeground(fc,'seating',_t); } }
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   frameStats(now);
