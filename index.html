@@ -1210,7 +1210,7 @@
   </div>
   <!-- Mine and Blast moved out: the DRILL compass (#hudCluster) is the mine button, Blast lives in #fieldActions. -->
 </div>
-<div id="expedHud">depth <b id="depthVal">0m</b> · <b>WASD</b> move · <b>arrows</b>/<b>space</b>/<b>⛏</b> drill · <b>◎</b> blast</div>
+<div id="expedHud">depth <b id="depthVal">0m</b> · <b>WASD</b>/<b>arrows</b> move · hold <b>⛏</b>/<b>space</b> or an <b>arrow</b> to drill · <b>◎</b> blast</div>
 
 <!-- Soft organic vignettes the floating field HUD sits on (no hard plates). -->
 <div id="hudGlow"></div>
@@ -12050,12 +12050,14 @@ addEventListener('keydown',e=>{
   }
   if (view!=='exped') return;
   if ([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();  // no page scroll / button nudge
-  // WASD moves the body; ARROWS aim (and drive) the drill; SPACE drills in the aimed/faced direction.
-  if (e.key==='a'||e.key==='A') keys.left=true;
-  if (e.key==='d'||e.key==='D') keys.right=true;
-  if (e.key==='w'||e.key==='W') keys.jump=true;
-  if (e.key==='s'||e.key==='S') keys.down=true;
-  if (e.key==='ArrowLeft')  keys.aimL=true;
+  // Movement is UNCHANGED: arrows AND WASD both move. ADDITIVE on top: holding an arrow also drives
+  // the drill in that direction, and SPACE is an extra drill button. The old hold-to-mine (⛏ / x)
+  // still works exactly as before, aimed by whatever direction you hold.
+  if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A') keys.left=true;
+  if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') keys.right=true;
+  if (e.key==='ArrowUp'||e.key==='w'||e.key==='W') keys.jump=true;
+  if (e.key==='ArrowDown'||e.key==='s'||e.key==='S') keys.down=true;
+  if (e.key==='ArrowLeft')  keys.aimL=true;      // arrow-only flags: an arrow also DRILLS its way
   if (e.key==='ArrowRight') keys.aimR=true;
   if (e.key==='ArrowUp')    keys.aimU=true;
   if (e.key==='ArrowDown')  keys.aimD=true;
@@ -12064,10 +12066,10 @@ addEventListener('keydown',e=>{
   if (e.key==='f'||e.key==='F') throwPhial();
 });
 addEventListener('keyup',e=>{
-  if (e.key==='a'||e.key==='A') keys.left=false;
-  if (e.key==='d'||e.key==='D') keys.right=false;
-  if (e.key==='w'||e.key==='W') keys.jump=false;
-  if (e.key==='s'||e.key==='S') keys.down=false;
+  if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A') keys.left=false;
+  if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') keys.right=false;
+  if (e.key==='ArrowUp'||e.key==='w'||e.key==='W') keys.jump=false;
+  if (e.key==='ArrowDown'||e.key==='s'||e.key==='S') keys.down=false;
   if (e.key==='ArrowLeft')  keys.aimL=false;
   if (e.key==='ArrowRight') keys.aimR=false;
   if (e.key==='ArrowUp')    keys.aimU=false;
@@ -12581,11 +12583,9 @@ world2d.addEventListener('touchmove',e=>{ const t=e.touches[0]; aim.x=t.clientX;
 addEventListener('touchend',()=>{ aim.active=false; mine=null; attackTgt=null; });
 
 // ---------- player physics ----------
-/* Drill AIM is the arrow keys first, then the movement keys (so the on-screen drill compass + WASD
-   still aims), then the way you face. Drilling is ON while the mine button (compass / x) is held,
-   Space is held, or any arrow is pressed — arrows both aim AND drive the drill. */
-function aimDX(){ return keys.aimR?1:keys.aimL?-1:(keys.right?1:keys.left?-1:0); }
-function aimDY(){ return keys.aimD?1:keys.aimU?-1:(keys.down?1:keys.jump?-1:0); }
+/* Drilling is ON whenever the mine button is held (⛏ compass / x / mouse), SPACE is held, or any
+   ARROW is pressed. Aim is the held direction keys — UNCHANGED — so the compass + a direction mines
+   through terrain exactly as it always did; arrows just add "hold an arrow to drill that way". */
 function drillActive(){ return !!(keys.dig||keys.drill||keys.aimL||keys.aimR||keys.aimU||keys.aimD); }
 function autoMine(tx,ty){
   if (ty<0||ty>=WH) return;
@@ -12598,7 +12598,7 @@ function autoMine(tx,ty){
   // vector. The vector flips sign as the player sinks past the tile centre (which mirrored the
   // crumble); the intent is stable per direction, so a downward dig always eats from the top, AND it
   // re-faces the instant the player digs the same block from a new side ("register from the character").
-  const dirX=aimDX(), dirY=aimDY();
+  const dirX=keys.right?1:keys.left?-1:0, dirY=keys.down?1:keys.jump?-1:0;
   let bx=dirX||(dirY?0:player.face), by=dirY; const l=Math.hypot(bx,by)||1; bx/=l; by/=l;
   if (!mine||mine.tx!==tx||mine.ty!==ty){
     const need=(16+TILE_INFO[t].resist*20)/spd;
@@ -12612,8 +12612,8 @@ function autoMine(tx,ty){
 // no direction held the drill bites the tile you face.
 function digAim(){
   if (!drillActive()) return null;
-  const dirX = aimDX();
-  const dirY = aimDY();
+  const dirX = keys.right?1:keys.left?-1:0;
+  const dirY = keys.down?1:keys.jump?-1:0;
   const col=Math.floor(player.x);
   // Erosion is traversable, so the player advances INTO the half-drilled block — its own cell now
   // holds the remaining rock. So prefer FINISHING the cell the player occupies (feet/head/body) when
@@ -12646,8 +12646,7 @@ function stepPlayer(dt){
   if (drillActive()){
     const a=digAim();
     if (a){
-      const adx=aimDX(), ady=aimDY();
-      const dir=(adx>0?'R':adx<0?'L':'')+(ady>0?'D':ady<0?'U':'');
+      const dir=(keys.right?'R':keys.left?'L':'')+(keys.down?'D':keys.jump?'U':'');
       const curValid = mine && getTile(mine.tx,mine.ty)!==T_AIR && !gateReqTier(mine.tx,mine.ty)
         && Math.hypot(mine.tx+0.5-player.x, mine.ty+0.5-(player.y-0.5))<=REACH+0.3;
       if (!curValid || dir!==lastDigDir) autoMine(a.tx,a.ty);   // retarget only on a real change
