@@ -18050,7 +18050,13 @@ function handlePointerMove(evt){
   if(heldCore){heldCore.x=p.x-5;heldCore.y=p.y+3;heldCore.rot=clamp(pointer.vx*.00025,-.35,.35);}
 }
   function hitZone(x,y){ for(const z of hitZones){ if(pointInRect(x,y,z)) return z.id; } return null; }
-  return { draw:drawScene, hitZone, W, H };
+  // A dropped core marks its machine loaded: the draw functions read machineCores[zone] to run their
+  // animation (spin/spray/index/etc) and stationActivity keeps it live. clearStations stops them all.
+  function setStation(zone,on){ if(on){ machineCores[zone]={}; stationActivity[zone]=performance.now()+1e9; }
+    else { delete machineCores[zone]; delete stationActivity[zone]; } }
+  function clearStations(){ machineCores={}; stationActivity={}; }
+  function stationPreview(zone){ const m=stationMeta[zone]; return m?[m.preview.x,m.preview.y]:null; }
+  return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview };
 })();
 
 // Cores in the lab (never the seated ones) split into the three stores. Kept for count badges.
@@ -18152,6 +18158,8 @@ function renderLapidary(){
    The picker's own actions then load the core and enter the matching 3D bench. The drag-a-core
    flow that replaces this comes in Phase 2; the locked bays just explain themselves. */
 function lapZoneAction(id){
+  // A core is docked and running in this machine → clicking the machine enters its bench.
+  if (lapCore && lapCore.docked && lapCore.dockZone===id){ enterDockedBench(); return; }
   if (id==='raw'||id==='cleaning') openCorePicker('raw');
   else if (id==='cleaned') openCorePicker('clean');
   else if (id==='vault') openCorePicker('wrought');
@@ -18170,7 +18178,8 @@ function lapZoneAction(id){
 { const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
 { const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
 { const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
-addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene(); if (lapCore&&!lapCore.grabbed) placeLapCoreLogical(lapCore.restLX,lapCore.restLY); } });
+addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene();
+  if (lapCore&&!lapCore.grabbed){ if (lapCore.docked) placeLapCoreLogical(lapCore.dockLX,lapCore.dockLY); else placeLapCoreLogical(lapCore.restLX,lapCore.restLY); } } });
 
 /* ---------- Physical core handling on the lapidary line (Phase 2) ----------
    One core at a time rides the line as a ROTATING 3D image — a position:fixed thumbnail
@@ -18196,15 +18205,43 @@ function placeLapCoreScreen(sx,sy){ if (!lapCore) return; const r=lapSceneRect()
   el.style.width=el.style.height=s+'px'; el.style.left=(sx-s/2)+'px'; el.style.top=(sy-s/2)+'px'; }
 function placeLapCoreLogical(lx,ly){ const r=lapSceneRect(); if (!r) return;
   placeLapCoreScreen(r.left+(lx/LapLine.W)*r.width, r.top+(ly/LapLine.H)*r.height); }
-function cancelLapCore(){ if (lapCore){ lapCore.el.remove(); lapCore=null; } }
+function cancelLapCore(){ if (lapCore){ if (lapCore.docked&&typeof LapLine!=='undefined') LapLine.setStation(lapCore.dockZone,false); lapCore.el.remove(); lapCore=null; } }
 function makeLapCore(core){
   if (core.cells===null) generateCells(core);
   const mesh=coreThumbMesh(core); if (!mesh) return null;
   const el=document.createElement('canvas'); el.width=el.height=150; el.className='cleanDragCore';
   document.body.appendChild(el); registerThumb(el, mesh);
+  // Press then move = pick it up (pulling it out of a machine if docked); press then release without
+  // moving = a click (enters the bench when the core is docked in a running machine).
   el.addEventListener('pointerdown',e=>{ e.preventDefault(); if (!lapCore) return;
-    lapCore.grabbed=true; try{ el.setPointerCapture&&el.setPointerCapture(e.pointerId); }catch(_){} placeLapCoreScreen(e.clientX,e.clientY); });
+    lapCore.pressing=true; lapCore.moved=false; lapCore.pressX=e.clientX; lapCore.pressY=e.clientY;
+    try{ el.setPointerCapture&&el.setPointerCapture(e.pointerId); }catch(_){}
+    if (!lapCore.docked){ lapCore.grabbed=true; placeLapCoreScreen(e.clientX,e.clientY); } });
   return el;
+}
+// Dock the held core INTO a machine: park it at the machine's holder and start that machine running.
+// The player then clicks it (or the machine) to enter the 3D bench.
+function dockLapCore(zone, viewName){
+  if (!lapCore) return;
+  const pv=LapLine.stationPreview(zone)||[372,341];
+  lapCore.docked=true; lapCore.grabbed=false; lapCore.dockZone=zone; lapCore.dockView=viewName;
+  lapCore.dockLX=pv[0]; lapCore.dockLY=pv[1];
+  LapLine.setStation(zone,true);                        // machine animates
+  placeLapCoreLogical(pv[0],pv[1]);
+  lapCore.el.style.cursor='pointer';
+  say('Machine running — click it to work the core.','good');
+}
+// Pull a docked core back out (stops the machine); it becomes free to drag again.
+function undockLapCore(){
+  if (!lapCore||!lapCore.docked) return;
+  LapLine.setStation(lapCore.dockZone,false); lapCore.docked=false; lapCore.dockZone=null;
+  lapCore.el.style.cursor='grab';
+}
+function enterDockedBench(){
+  if (!lapCore||!lapCore.docked) return;
+  const core=lapCore.core, v=lapCore.dockView, z=lapCore.dockZone;
+  cancelLapCore(); LapLine.setStation(z,false);
+  loadCore(core); showView(v);
 }
 function animLapCore(fromLX,fromLY,toLX,toLY,clang){
   const t0=performance.now(), dur=clang?640:460;
@@ -18238,11 +18275,22 @@ function lapDropTarget(zone, core){
     return coreIsClean(core)?{view:'cleave'}:{reject:'Clean the matrix off it first.'};
   return null;   // bins / locked bays / empty floor — just settle back
 }
-addEventListener('pointermove',e=>{ if (lapCore&&lapCore.grabbed) placeLapCoreScreen(e.clientX,e.clientY); });
-addEventListener('pointerup',e=>{ if (!lapCore||!lapCore.grabbed) return; lapCore.grabbed=false;
+addEventListener('pointermove',e=>{
+  if (!lapCore||!lapCore.pressing) return;
+  if (!lapCore.moved && Math.hypot(e.clientX-lapCore.pressX, e.clientY-lapCore.pressY)>6){
+    lapCore.moved=true; if (lapCore.docked) undockLapCore(); lapCore.grabbed=true;   // dragging pulls it out
+  }
+  if (lapCore.grabbed) placeLapCoreScreen(e.clientX,e.clientY);
+});
+addEventListener('pointerup',e=>{
+  if (!lapCore||!lapCore.pressing) return; lapCore.pressing=false;
+  // A click on the docked core (no drag) enters its running machine's bench.
+  if (lapCore.docked && !lapCore.moved){ enterDockedBench(); return; }
+  if (!lapCore.grabbed) return;
+  lapCore.grabbed=false;
   const lg=lapLogicalFromScreen(e.clientX,e.clientY), zone=lg?LapLine.hitZone(lg.x,lg.y):null;
   const t=lapDropTarget(zone, lapCore.core);
-  if (t&&t.view){ const core=lapCore.core; cancelLapCore(); loadCore(core); showView(t.view); }
+  if (t&&t.view) dockLapCore(zone, t.view);                 // drop INTO a machine: load + animate, don't enter yet
   else { if (t&&t.reject) say(t.reject,'warn'); placeLapCoreLogical(lapCore.restLX,lapCore.restLY); }
 });
 document.getElementById('adminBtn').onclick=()=>{
@@ -18522,7 +18570,8 @@ function showView(name){
   // The core picker lives only inside the Lapidary hub; close it whenever we navigate elsewhere.
   if (name!=='lapidary'){ const cp=document.getElementById('corePicker');
     if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); }
-    if (typeof cancelLapCore==='function') cancelLapCore(); }   // a core mid-drag shouldn't float over the next screen
+    if (typeof cancelLapCore==='function') cancelLapCore();
+    if (typeof LapLine!=='undefined') LapLine.clearStations(); }   // stop any running machine and drop a mid-drag core
   syncCloseX();   // exits are root-level now — show the one for the overlay on top
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
@@ -19313,6 +19362,7 @@ let t=0, lastNow=0;
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
   if (view==='brewb') brewTick(dt);      // the brewing line: the active station's minigame
+  if (view==='lapidary' && typeof LapLine!=='undefined') LapLine.draw(performance.now());  // run the line's machines while on the hub
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   frameStats(now);
