@@ -18081,7 +18081,7 @@ function coreStoreList(kind){
   return inLab.filter(c=>coreIsClean(c)&&c.wrought);
 }
 function openCorePicker(kind){
-  if (typeof cancelCleanDrag==='function') cancelCleanDrag();   // drop any core mid-drag before a new pick
+  if (typeof cancelLapCore==='function') cancelLapCore();   // drop any core mid-drag before a new pick
   cpKind=kind; const st=cpState[kind];
   document.getElementById('cpTitle').textContent=CP_TITLES[kind];
   document.getElementById('cpSearch').value=st.q;
@@ -18165,46 +18165,80 @@ function lapZoneAction(id){
 { const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
 { const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
 { const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
-addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene(); if (cleanDrag) placeCleanDragLogical(cleanDrag.restLX,cleanDrag.restLY); } });
+addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene(); if (lapCore&&!lapCore.grabbed) placeLapCoreLogical(lapCore.restLX,lapCore.restLY); } });
 
-/* ---------- Clean flow: drag the picked rough out of the hatch (Phase 2 slice) ----------
-   Choosing "Clean →" drops the real core out of the ore hatch as a ROTATING 3D image
-   (a position:fixed thumbnail canvas — thumbTick spins it every frame). Drag it onto the
-   Cleaning Station to enter the excavation bench with that core; drop it anywhere else and it
-   snaps back to the output tray. It exists only on the lapidary hub. The other machines still
-   go through the picker for now; extending the drag to them is the next slice. */
-let cleanDrag=null;
+/* ---------- Physical core handling on the lapidary line (Phase 2) ----------
+   One core at a time rides the line as a ROTATING 3D image — a position:fixed thumbnail
+   canvas that thumbTick spins every frame. It arrives two ways: "Clean →" drops it out of the
+   ore hatch onto the tray; leaving any station pops it back out and it CLANGS onto the floor.
+   Drag it onto a machine to enter that bench (cleaning takes a dirty core to the excavation
+   bench, the shaping machines take a clean core to the wroughting bench); drop it anywhere
+   else and it settles back at its rest spot. It lives only on the lapidary hub. */
+let lapCore=null;
+const LAP_CORE_PX=90;                                  // logical size of a handled core (was 150 — too big)
+const LAP_STATION_VIEWS=['dig','cleave','brute','facet','polish','seatbench'];
+// where on the line each station sits, so a returning core pops out of the right machine
+const LAP_STATION_POS={ dig:[372,341], cleave:[664,385], brute:[664,385], facet:[826,406], polish:[1011,414], seatbench:[1190,414] };
+const LAP_FLOOR_Y=690;                                 // cores clang down to the shelf/floor in front of the lower bays
+function easeOutBounce(x){ const n=7.5625,d=2.75;
+  if(x<1/d) return n*x*x; if(x<2/d){ x-=1.5/d; return n*x*x+.75; }
+  if(x<2.5/d){ x-=2.25/d; return n*x*x+.9375; } x-=2.625/d; return n*x*x+.984375; }
 function lapSceneRect(){ const cv=document.getElementById('lapScene'); return cv?cv.getBoundingClientRect():null; }
 function lapLogicalFromScreen(sx,sy){ const r=lapSceneRect(); if (!r||!r.width) return null;
   return {x:(sx-r.left)*LapLine.W/r.width, y:(sy-r.top)*LapLine.H/r.height}; }
-function placeCleanDragScreen(sx,sy){ if (!cleanDrag) return; const r=lapSceneRect(); if (!r) return;
-  const s=Math.max(58, 150*(r.width/LapLine.W)); const el=cleanDrag.el;
+function placeLapCoreScreen(sx,sy){ if (!lapCore) return; const r=lapSceneRect(); if (!r) return;
+  const s=Math.max(46, LAP_CORE_PX*(r.width/LapLine.W)); const el=lapCore.el;
   el.style.width=el.style.height=s+'px'; el.style.left=(sx-s/2)+'px'; el.style.top=(sy-s/2)+'px'; }
-function placeCleanDragLogical(lx,ly){ const r=lapSceneRect(); if (!r) return;
-  placeCleanDragScreen(r.left+(lx/LapLine.W)*r.width, r.top+(ly/LapLine.H)*r.height); }
-function cancelCleanDrag(){ if (cleanDrag){ cleanDrag.el.remove(); cleanDrag=null; } }
-function spawnCleanDrag(core){
-  cancelCleanDrag();
+function placeLapCoreLogical(lx,ly){ const r=lapSceneRect(); if (!r) return;
+  placeLapCoreScreen(r.left+(lx/LapLine.W)*r.width, r.top+(ly/LapLine.H)*r.height); }
+function cancelLapCore(){ if (lapCore){ lapCore.el.remove(); lapCore=null; } }
+function makeLapCore(core){
   if (core.cells===null) generateCells(core);
-  const mesh=coreThumbMesh(core);
-  if (!mesh){ loadCore(core); showView('dig'); return; }             // no geometry — fall back to the old jump
-  const el=document.createElement('canvas'); el.width=el.height=160; el.className='cleanDragCore';
+  const mesh=coreThumbMesh(core); if (!mesh) return null;
+  const el=document.createElement('canvas'); el.width=el.height=150; el.className='cleanDragCore';
   document.body.appendChild(el); registerThumb(el, mesh);
-  cleanDrag={core, el, grabbed:false, restLX:102, restLY:468};       // 102,468 ≈ the OUTPUT tray in scene coords
-  placeCleanDragLogical(102,318);                                    // start up at the hatch
-  el.addEventListener('pointerdown',e=>{ e.preventDefault(); if (!cleanDrag) return;
-    cleanDrag.grabbed=true; try{ el.setPointerCapture&&el.setPointerCapture(e.pointerId); }catch(_){} placeCleanDragScreen(e.clientX,e.clientY); });
-  const t0=performance.now(), fromY=318, toY=cleanDrag.restLY;       // drop out of the hatch onto the tray
-  (function fall(now){ if (!cleanDrag||cleanDrag.grabbed) return; const k=Math.min(1,(now-t0)/460);
-    placeCleanDragLogical(102, fromY+(toY-fromY)*(k*(2-k)));         // ease-out fall
-    if (k<1) requestAnimationFrame(fall); })(t0);
+  el.addEventListener('pointerdown',e=>{ e.preventDefault(); if (!lapCore) return;
+    lapCore.grabbed=true; try{ el.setPointerCapture&&el.setPointerCapture(e.pointerId); }catch(_){} placeLapCoreScreen(e.clientX,e.clientY); });
+  return el;
+}
+function animLapCore(fromLX,fromLY,toLX,toLY,clang){
+  const t0=performance.now(), dur=clang?640:460;
+  (function step(now){ if (!lapCore||lapCore.grabbed) return; const k=Math.min(1,(now-t0)/dur);
+    const e=clang?easeOutBounce(k):(k*(2-k));                        // bounce = clang; ease-out = soft tray landing
+    placeLapCoreLogical(fromLX+(toLX-fromLX)*k, fromLY+(toLY-fromLY)*e);
+    if (k<1) requestAnimationFrame(step); })(t0);
+}
+// "Clean →": the rough falls out of the hatch onto the output tray.
+function spawnCleanDrag(core){
+  cancelLapCore();
+  const el=makeLapCore(core); if (!el){ loadCore(core); showView('dig'); return; }
+  lapCore={core, el, grabbed:false, restLX:102, restLY:468};
+  placeLapCoreLogical(102,318); animLapCore(102,318,102,468,false);
   say('Core dropped on the tray — drag it into the Cleaning Station to clean it.','good');
 }
-addEventListener('pointermove',e=>{ if (cleanDrag&&cleanDrag.grabbed) placeCleanDragScreen(e.clientX,e.clientY); });
-addEventListener('pointerup',e=>{ if (!cleanDrag||!cleanDrag.grabbed) return; cleanDrag.grabbed=false;
+// Leaving a station: the worked core pops out of that machine and clangs onto the floor.
+function spawnGroundDrop(core, fromView){
+  cancelLapCore();
+  const el=makeLapCore(core); if (!el) return;
+  const [mx,my]=LAP_STATION_POS[fromView]||[372,341];
+  const restX=Math.max(120,Math.min(1290,mx));
+  lapCore={core, el, grabbed:false, restLX:restX, restLY:LAP_FLOOR_Y};
+  placeLapCoreLogical(mx,my); animLapCore(mx,my,restX,LAP_FLOOR_Y,true);
+  say(coreIsClean(core)?'Cleaned core is on the floor — drag it to a shaping machine.':'Core is on the floor — drag it back to a machine.','good');
+}
+// Where does dropping this core over `zone` lead? A rejection message, a bench view, or nothing.
+function lapDropTarget(zone, core){
+  if (zone==='cleaning') return coreIsClean(core)?{reject:'That core is already clean.'}:{view:'dig'};
+  if (['bruting','faceting','polishing','seating'].includes(zone))
+    return coreIsClean(core)?{view:'cleave'}:{reject:'Clean the matrix off it first.'};
+  return null;   // bins / locked bays / empty floor — just settle back
+}
+addEventListener('pointermove',e=>{ if (lapCore&&lapCore.grabbed) placeLapCoreScreen(e.clientX,e.clientY); });
+addEventListener('pointerup',e=>{ if (!lapCore||!lapCore.grabbed) return; lapCore.grabbed=false;
   const lg=lapLogicalFromScreen(e.clientX,e.clientY), zone=lg?LapLine.hitZone(lg.x,lg.y):null;
-  if (zone==='cleaning'){ const core=cleanDrag.core; cancelCleanDrag(); loadCore(core); showView('dig'); }
-  else placeCleanDragLogical(cleanDrag.restLX,cleanDrag.restLY);     // missed — snap back to the tray
+  const t=lapDropTarget(zone, lapCore.core);
+  if (t&&t.view){ const core=lapCore.core; cancelLapCore(); loadCore(core); showView(t.view); }
+  else { if (t&&t.reject) say(t.reject,'warn'); placeLapCoreLogical(lapCore.restLX,lapCore.restLY); }
 });
 document.getElementById('adminBtn').onclick=()=>{
   adminOn=!adminOn;
@@ -18460,6 +18494,7 @@ function syncCloseX(){
   }
 }
 function showView(name){
+  const prevView=view;   // remembered so a core can pop out of the station we're leaving
   // A shaping station will not accept a dirty core — clean it at the excavation
   // bench first. Bounce back to the lapidary rather than opening a broken bench.
   if (SHAPING_STATIONS.includes(name) && activeCore && !coreIsClean(activeCore)){
@@ -18482,7 +18517,7 @@ function showView(name){
   // The core picker lives only inside the Lapidary hub; close it whenever we navigate elsewhere.
   if (name!=='lapidary'){ const cp=document.getElementById('corePicker');
     if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); }
-    if (typeof cancelCleanDrag==='function') cancelCleanDrag(); }   // a core mid-drag shouldn't float over the next screen
+    if (typeof cancelLapCore==='function') cancelLapCore(); }   // a core mid-drag shouldn't float over the next screen
   syncCloseX();   // exits are root-level now — show the one for the overlay on top
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
@@ -18574,7 +18609,10 @@ function showView(name){
   else if (name==='forge'){ renderForge(); say('The forge glows. Metal in, drill parts out.'); }
   else if (name==='brew'){ renderBrew(); say('Set up the line — fit your vessels and cores, then enter to brew.'); }
   else if (name==='brewb'){ say('The brewing line. Pick a potion, then work each apparatus in turn.'); }
-  else if (name==='lapidary'){ renderLapidary(); say('The lapidary. Clean roughs, then shape the crystal.'); }
+  else if (name==='lapidary'){ renderLapidary();
+    // Coming back from a station? The worked core pops out of that machine and clangs onto the floor.
+    if (LAP_STATION_VIEWS.includes(prevView) && activeCore && !seatWhere(activeCore)) spawnGroundDrop(activeCore, prevView);
+    else say('The lapidary. Clean roughs, then shape the crystal.'); }
   else if (isExped) say('Topsoil first — copper and shallow cores build the drill that opens the stone.');
   if (inForge||inBrew) resize();               // re-aim the camera at the equipment centre
   if (tut.on) tutDock();
