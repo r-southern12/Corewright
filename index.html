@@ -18056,7 +18056,18 @@ function handlePointerMove(evt){
     else { delete machineCores[zone]; delete stationActivity[zone]; } }
   function clearStations(){ machineCores={}; stationActivity={}; }
   function stationPreview(zone){ const m=stationMeta[zone]; return m?[m.preview.x,m.preview.y]:null; }
-  return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview };
+  // Where the core RIDES in a running machine at time `time` — the same motion the machines animate to,
+  // so a docked core moves WITH the mechanism (carriage travel, faceting index, polish/seat travel, bob).
+  function corePos(zone,time){
+    if(zone==='bruting'){ const p=brutingCarriagePos(time); return {x:p.x,y:p.y,rot:Math.sin(time*.002+p.x)*.06}; }
+    if(zone==='faceting'){ const m=facetingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.indexAngle}; }
+    if(zone==='polishing'){ const m=polishingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.coreRot}; }
+    if(zone==='seating'){ const m=seatingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.coreRot}; }
+    const m=stationMeta[zone]; if(!m) return null;
+    const bob=Math.sin(time*.007+(m.preview.x*.01))*2.2;
+    return {x:m.preview.x, y:m.preview.y+bob, rot:Math.sin(time*.002+m.preview.x)*.08};
+  }
+  return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview, corePos };
 })();
 
 // Cores in the lab (never the seated ones) split into the three stores. Kept for count badges.
@@ -18189,7 +18200,8 @@ addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene();
    bench, the shaping machines take a clean core to the wroughting bench); drop it anywhere
    else and it settles back at its rest spot. It lives only on the lapidary hub. */
 let lapCore=null;
-const LAP_CORE_PX=90;                                  // logical size of a handled core (was 150 — too big)
+const LAP_CORE_PX=90;                                  // logical size of a handled core in the hand / on the floor
+const LAP_CORE_DOCK=54;                                 // smaller while nested in a machine's holder
 const LAP_STATION_VIEWS=['dig','cleave','brute','facet','polish','seatbench'];
 // where on the line each station sits, so a returning core pops out of the right machine
 const LAP_STATION_POS={ dig:[372,341], cleave:[664,385], brute:[664,385], facet:[826,406], polish:[1011,414], seatbench:[1190,414] };
@@ -18201,7 +18213,8 @@ function lapSceneRect(){ const cv=document.getElementById('lapScene'); return cv
 function lapLogicalFromScreen(sx,sy){ const r=lapSceneRect(); if (!r||!r.width) return null;
   return {x:(sx-r.left)*LapLine.W/r.width, y:(sy-r.top)*LapLine.H/r.height}; }
 function placeLapCoreScreen(sx,sy){ if (!lapCore) return; const r=lapSceneRect(); if (!r) return;
-  const s=Math.max(46, LAP_CORE_PX*(r.width/LapLine.W)); const el=lapCore.el;
+  const px=(lapCore.docked&&!lapCore.grabbed)?LAP_CORE_DOCK:LAP_CORE_PX;      // nestled cores are smaller
+  const s=Math.max(28, px*(r.width/LapLine.W)); const el=lapCore.el;
   el.style.width=el.style.height=s+'px'; el.style.left=(sx-s/2)+'px'; el.style.top=(sy-s/2)+'px'; }
 function placeLapCoreLogical(lx,ly){ const r=lapSceneRect(); if (!r) return;
   placeLapCoreScreen(r.left+(lx/LapLine.W)*r.width, r.top+(ly/LapLine.H)*r.height); }
@@ -18235,7 +18248,7 @@ function dockLapCore(zone, viewName){
 function undockLapCore(){
   if (!lapCore||!lapCore.docked) return;
   LapLine.setStation(lapCore.dockZone,false); lapCore.docked=false; lapCore.dockZone=null;
-  lapCore.el.style.cursor='grab';
+  lapCore.el.style.cursor='grab'; lapCore.el.style.transform='';   // back to the free hand size/orientation
 }
 function enterDockedBench(){
   if (!lapCore||!lapCore.docked) return;
@@ -19362,7 +19375,11 @@ let t=0, lastNow=0;
   syncBatches();          // refresh the instanced shards if anything moved or changed colour
   if (view==='forgeb') forgeSimTick();   // the flux press: heat, flow, cool, one step per frame
   if (view==='brewb') brewTick(dt);      // the brewing line: the active station's minigame
-  if (view==='lapidary' && typeof LapLine!=='undefined') LapLine.draw(performance.now());  // run the line's machines while on the hub
+  if (view==='lapidary' && typeof LapLine!=='undefined'){ const _t=performance.now();
+    LapLine.draw(_t);                                                                        // run the line's machines while on the hub
+    if (lapCore && lapCore.docked && !lapCore.grabbed){ const p=LapLine.corePos(lapCore.dockZone,_t);   // ride the core with the mechanism
+      if (p){ lapCore.dockLX=p.x; lapCore.dockLY=p.y; placeLapCoreLogical(p.x,p.y);
+        lapCore.el.style.transform=(typeof p.rot==='number')?('rotate('+p.rot+'rad)'):''; } } }
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   frameStats(now);
