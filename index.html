@@ -1422,20 +1422,25 @@ function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[na
 // The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
 function sfx(name,opt){
   if(!sndOn) return; sndStart(); if(!AC) return; opt=opt||{};
+  const j=()=>1+(Math.random()-0.5)*0.06;         // ±3% pitch jitter so repeated percussive cues never sound looped
   try{ switch(name){
     case 'tap':   if(!_throttle('tap',40))return; tone(700,{type:'sine',peak:0.03,attack:0.003,dur:0.05,lp:2600}); break;
     case 'close': tone(360,{type:'sine',peak:0.045,dur:0.13,glide:270,lp:1400}); break;
     case 'dig':   if(!_throttle('dig',95))return;   // sandy scrape + a warm low thud, pitch-jittered so a hold never rings
                   noise({peak:0.045,dur:0.09,lp:500+Math.random()*260,hp:90}); tone(56+Math.random()*10,{type:'sine',peak:0.05,dur:0.09,lp:380}); break;
-    case 'break': noise({peak:0.085,dur:0.2,lp:900,hp:120}); tone(122,{type:'sine',peak:0.075,dur:0.22,glide:58,lp:700}); break;
-    case 'clang': tone(300,{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452,{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
-    case 'seat':  tone(178,{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
-    case 'cleave':noise({peak:0.07,dur:0.14,lp:1400,hp:300}); tone(240,{type:'sine',peak:0.05,dur:0.14,glide:150,lp:1000}); break;
+    case 'break': noise({peak:0.085,dur:0.2,lp:900,hp:120}); tone(122*j(),{type:'sine',peak:0.075,dur:0.22,glide:58,lp:700}); break;
+    case 'clang': tone(300*j(),{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452*j(),{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
+    case 'seat':  tone(178*j(),{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
+    case 'cleave':noise({peak:0.07,dur:0.14,lp:1400,hp:300}); tone(240*j(),{type:'sine',peak:0.05,dur:0.14,glide:150,lp:1000}); break;
     case 'brute': if(!_throttle('brute',140))return; noise({peak:0.05,dur:0.3,lp:700,hp:150,attack:0.03}); break;
     case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200,hp:1600,attack:0.02}); break;
     case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600,hp:300,attack:0.12}); break;
-    case 'brine': noise({peak:0.045,dur:0.5,lp:900,hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
-    case 'sand':  noise({peak:0.04,dur:0.35,lp:5000,hp:2500,attack:0.05}); break;
+    case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900,hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
+    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.04,dur:0.35,lp:5000,hp:2500,attack:0.05}); break;
+    case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100,hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
+    case 'burn':  noise({peak:0.04,dur:0.6,lp:1400,hp:400,attack:0.18}); tone(150,{type:'sine',peak:0.045,dur:0.5,glide:90,lp:900}); break;
+    case 'discard':tone(300,{type:'sine',peak:0.045,dur:0.14,glide:180,lp:1200}); noise({peak:0.025,dur:0.06,lp:1600,hp:300}); break;
+    case 'warn':  if(!_throttle('warn',500))return; tone(196,{type:'sine',peak:0.05,dur:0.16,glide:150,lp:900}); tone(147,{type:'sine',peak:0.045,dur:0.2,delay:0.08,lp:800}); break;
     case 'unlock':{ const notes=[392,523.25,659.25]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.055,dur:0.32,delay:i*0.1,lp:2400})); break; }
     case 'repair':tone(196,{type:'sine',peak:0.055,dur:0.5,glide:262,lp:1400}); noise({peak:0.03,dur:0.3,lp:1200,hp:200,attack:0.1}); break;
     case 'notify':tone(523.25,{type:'sine',peak:0.05,dur:0.12,lp:2200}); tone(659.25,{type:'sine',peak:0.045,dur:0.16,delay:0.09,lp:2400}); break;
@@ -1463,6 +1468,10 @@ function setAmbience(on){ ambOn=on; try{ localStorage.setItem('corewright.amb',o
 addEventListener('pointerdown', sndStart, {once:false});
 addEventListener('keydown', sndStart, {once:false});
 addEventListener('pointerdown', e=>{ if(sndOn && e.target && e.target.closest && e.target.closest('button,.chip,.wingTile')) sfx('tap'); }, true);
+// Backgrounding the tab pauses the RAF loop, but the ambience bed loops in the audio graph regardless —
+// so suspend the whole context when hidden (silence + battery) and resume it on return.
+document.addEventListener('visibilitychange', ()=>{ if(!AC) return;
+  try{ if(document.hidden) AC.suspend(); else if(sndOn||sndAmb) AC.resume(); }catch(_){} });
 
 const renderer=new THREE.WebGLRenderer({canvas,antialias:gfx().msaa,alpha:true,
   powerPreference:'high-performance'});
@@ -4320,6 +4329,7 @@ function sawTick(dt,now){
       for (const o of splittable.slice(0,SAW_SPLIT_MAX)) made+=splitOneCube(o.v);
       drawPower(SAW_POWER);
       lastSawCut=now;                             // start the cooldown
+      sfx('facet');                               // fine saw shimmer (throttled)
       // splitting only refines the grain — nothing is lost, so no shake
       for (const o of splittable.slice(0,3)){
         if (!o.v.mesh.parent) continue;
@@ -4363,6 +4373,7 @@ function sawTick(dt,now){
     if (!worn){ sawClosing=false; return; }
     drawPower(SAW_POWER);                        // charged: material was worn off
     lastSawCut=now;                             // start the cooldown
+    sfx('facet');                               // fine saw shimmer (throttled)
     if (cutKeeper) addShake(0.05);               // you cut into the piece itself
     for (const o of workable.slice(0,3)){
       if (!o.v.mesh.parent) continue;
@@ -4648,6 +4659,7 @@ function jetAt(x,y,now){
   if (!inReach.length) return;
   if (protectOn()){ const ok=tutAllow(new Set(inReach.map(v=>v.mesh))); inReach=inReach.filter(v=>ok.has(v.mesh)); if (!inReach.length) return; }   // rinse the matrix, spare the guarded crystal, keep the hose flowing
   lastJet=now;
+  sfx('brine');                                  // watery rinse/blast (throttled)
   // PASS 1 — tough-but-brittle stone shatters rather than shifting. It survives
   // this hit as fragments; the charge buys the break, not the removal.
   const toSplit=inReach.filter(v=>matSplits(v.cell));
@@ -4781,6 +4793,7 @@ function sandAt(cx,cy,now){
     if (protectOn()){ const ok=tutAllow(new Set(scoop.map(s=>s.mesh))); scoop=scoop.filter(s=>ok.has(s.mesh)); }
     if (!scoop.length) return;
     lastSand=now;
+    sfx('sand');                                  // airy abrasive hiss (throttled)
     const gf=grainFloor();
     const fine=scoop.filter(s=>s.cell.size<=gf);      // at the floor → worn away, exactly as a single hit would
     const coarse=scoop.filter(s=>s.cell.size>gf);     // above the floor → SPLIT a step finer, not removed
@@ -4806,6 +4819,7 @@ function sandAt(cx,cy,now){
     return;
   }
   lastSand=now;
+  sfx('sand');                                    // airy abrasive hiss (throttled)
   if (!infinite) tank.sand=Math.max(0,tank.sand-grit);
   // Sandblast REFINES rather than bores. A coarse cube struck by the jet breaks
   // into eight finer ones, exactly as the saw's first pass does — the abrasive
@@ -4881,6 +4895,7 @@ function grindAt(x,y,now){
   lastGrind=now;
   const shed=dissolve(out);
   if (shed>0){
+    sfx('brute');                               // rolling wheel grind (throttled)
     addShake(0.04+0.14*brutePower);
     for (let i=0;i<Math.min(3,shed);i++) spark(hit.x,hit.y,hit.z,1,0.06+0.12*brutePower);
     refreshTint(); liveOutput();
@@ -4941,6 +4956,7 @@ function polishAt(x,y,now){
   }
   if (!polished) return;
   lastPolish=now;
+  sfx('polish');                                  // soft lapping whoosh (throttled)
   if (!infinite){ dust-=POLISH_DUST_PER; drawPower(POLISH_POWER_PER); }
   activeCore.polish=polishFraction();
   applyPolishLook();
@@ -17316,6 +17332,7 @@ function grindToPowder(core, rate){
     powderGradeMass[key]=old+g;
   }
   if (!removeCore(core)) return;
+  sfx('grind');                                   // core milled to powder
   const parts=Object.entries(got).map(([k,v])=>`+${Math.round(v)} ${k}`);
   const total=Object.values(got).reduce((a,b)=>a+b,0);
   floatText('+'+Math.round(total)+' powder','var(--crystal)');
@@ -17338,13 +17355,14 @@ function coreBurnPower(core, rate){ return Math.max(1, Math.round(coreCrystalMas
 function burnCoreForPower(core, rate){
   const gain=coreBurnPower(core, rate);
   if (!removeCore(core)) return;
+  sfx('burn');                                    // warm crackle as the rough goes on the fire
   powerBank+=gain;
   floatText('+'+gain+'⚡','var(--violet)');
   say(`${core.name} burnt for lab power — +${gain}⚡.`,'good');
   updateMeters(); renderLapidary();
 }
 function deleteCore(core){
-  removeCore(core);
+  if (removeCore(core)) sfx('discard');           // soft drop-away, only when it actually leaves storage
   say(`${core.name} discarded.`);
   renderLapidary();
 }
@@ -19125,7 +19143,7 @@ function mat(label, tier, qty, silent, tx, ty){
 }
 // The retired say(): route by mood into the new surfaces.
 function say(t,mood){
-  if (mood==='warn'||mood==='bad'){ flash(t); return; }
+  if (mood==='warn'||mood==='bad'){ sfx('warn'); flash(t); return; }   // soft low denied note (self-throttled against held-stall spam)
   if (mood==='good'){ notify(t,{kick:'Notable'}); return; }
   logTake(t);                       // plain chatter -> ledger only, never the screen
 }
@@ -19192,7 +19210,9 @@ document.getElementById('cleaveBtn').onclick=()=>{
   const p=POTIONS[potion];
   // graded solvents refine the boundary cubes before the cut is taken
   if (p&&p.kind==='plane'&&p.grind>0) planeSplitBoundary(p.axis,planePos(),p.grind);
-  setPreview(planeVictims());
+  const vic=planeVictims();
+  setPreview(vic);
+  if (vic&&vic.size) sfx('cleave');               // a soft split when the plane actually takes cubes
   spendPotion('Cleaved');
 };
 document.getElementById('compChip').onclick=()=>{
