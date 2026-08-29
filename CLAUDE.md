@@ -339,6 +339,62 @@ Three.js ships.
 `tools/perf.js` measures all of this. Read its header before trusting the
 frame times.
 
+## Sound
+
+**Entirely procedural — there are no audio files and there must not be.** Every
+cue is synthesised from oscillators plus one second of pre-rendered pink-ish
+noise (`sndNoiseBuf`), reused for every scrape, thud and blast. The brief was
+"very ASMR, not in your face, no ringing in the ears" and, explicitly, **no
+background music**. Ambience exists (a low hull-wind bed) but defaults **off**.
+
+The whole subsystem sits above `renderer` in the file, before anything that
+might want to make a noise.
+
+`sfx(name)` is the only call site the game uses. It is wrapped in try/catch and
+no-ops when there's no `AudioContext`, so a cue can never break a frame.
+
+Rules that are load-bearing:
+
+- **The context is created lazily, on the first gesture** (`sndStart`, bound to
+  `pointerdown`/`keydown`). Browsers block audio before a user gesture, so
+  building it at load produces a dead context. Every cue calls `sndStart` again
+  defensively.
+- **Cues declare a bus, not a volume**, via `CUE_BUS` → `SND_MIX`
+  (`ui`/`tool`/`event`/`alert`). Per-cue `peak` is for *relative* balance inside
+  a bus; the four bus gains are the mix. Retuning "everything is too loud" is
+  four numbers, not thirty. `sfx` stamps `_curBus` and `tone`/`noise` read it —
+  that beats threading a bus field through every option object, and stops a
+  cue's layered voices from being routed inconsistently.
+- **Held tools are throttled** (`_throttle`) and jittered. Percussive cues get
+  ±3% pitch (`j()`); the held noise textures also get ±12% on the filter corner
+  (`jn()`) — a fixed corner on a looped buffer is exactly what reads as a tape
+  loop instead of a working machine.
+- **Hook a cue where the work actually happens**, not at the input. The bench
+  tools fire at their `lastX=now` markers (past every early-return), so a tool
+  that's held but not biting anything stays silent.
+- **`notify()` stands down for 250ms after a specific cue** (`sfxLastAt`).
+  Rewarding actions also `say(...,'good')`, which routes through `notify` — so
+  without this a grind plays *grind + blip* as one doubled sound.
+- **Voices unhook themselves** — `onended` disconnects the chain head from its
+  bus. The spec would collect them anyway, but a dig session fires thousands and
+  leaving it to GC is a slow leak we can just not have. Verified: 900 voices
+  attach, 900 detach, 0 left wired.
+- **`visibilitychange` suspends the whole context.** Backgrounding the tab pauses
+  the RAF loop, but the ambience bed loops in the audio graph regardless.
+
+Prefs are their own `localStorage` keys — `corewright.sound`, `corewright.vol`,
+`corewright.amb` — deliberately **not** part of `saveGame()`, so changing them
+never costs a `SAVE_VERSION` bump and a save wipe.
+
+**Options → Audition cues** walks every cue in order, grouped by bus, announcing
+each name as it plays. Use it to judge the mix: triggering ~35 cues in-game
+otherwise means reaching a cache unlock and dying on purpose. It clears each
+cue's throttle gate first, or the fast walkthrough would silently drop the
+throttled ones.
+
+Still untuned by ear at time of writing: the absolute levels. The wiring and
+coverage are verified headlessly (see `scratchpad/pw/`), but nobody has listened.
+
 ## Saves
 
 `localStorage`, key `corewright.save.v2`, `SAVE_VERSION = 11` (v11 added core
