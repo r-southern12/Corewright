@@ -17787,7 +17787,39 @@ function facetingMotion(time){
   return {coreX:826-approach*15,coreY:406,wheelX:776,wheelY,indexAngle,engaged,set,shift,block};
 }
 
+// A full-height shaping-line station rendered cold and out of commission (used for a locked Faceting Saw).
+// Unlike the wide bottom bays (drawRewardLockedBay) this matches the tall station column geometry so the
+// line still reads left-to-right; a hazard stripe + lock badge say "recover the replacement parts".
+function drawLockedStationCol(num,title,time){
+  const px=720,py=236,pw=172,ph=310, bx=734,by=270,bw=144,bh=242;
+  const zone=zoneById('faceting'), hover=!!zone && pointer.inside && pointInRect(pointer.x,pointer.y,zone);
+  smallLabel(724,176,170,num+'. '+title);
+  panel(px,py,pw,ph,C.steel2,C.brass2,9,3);
+  const body=chamferPath(bx,by,bw,bh,12);
+  fillStroke(body,metalGrad(bx,by,bw,bh,'#3d4443','#222827','#0d1111'),C.brass3,3);   // cold, unlit
+  // Diagonal hazard stripes across a dark inner recess.
+  ctx.save();const rec=chamferPath(bx+16,by+18,bw-32,bh-64,8);fillStroke(rec,'#0a0e0f',C.brass4,1.6);
+  ctx.clip(rec);ctx.lineWidth=9;ctx.strokeStyle='rgba(214,164,66,.30)';
+  for(let d=-bh;d<bw+bh;d+=26){ctx.beginPath();ctx.moveTo(bx+d,by+18);ctx.lineTo(bx+d-bh,by+18+bh);ctx.stroke();}
+  ctx.restore();
+  // Lock badge — a bolted shackle plate centred on the recess.
+  const lx=bx+bw/2, ly=by+bh*0.42;
+  ctx.save();ctx.strokeStyle=hover?C.amber1:C.brass1;ctx.lineWidth=5;ctx.beginPath();ctx.arc(lx,ly-11,11,Math.PI,0);ctx.stroke();
+  const kp=chamferPath(lx-15,ly-2,30,26,4);fillStroke(kp,metalGrad(lx-15,ly-2,30,26,'#7a6e52','#3a3222','#14110a'),hover?C.amber1:C.brass2,2.2);
+  ctx.fillStyle='#0c0f10';ctx.beginPath();ctx.arc(lx,ly+9,3.4,0,Math.PI*2);ctx.fill();ctx.fillRect(lx-1.6,ly+9,3.2,8);ctx.restore();
+  bolt(bx+14,by+14,2.4);bolt(bx+bw-14,by+14,2.4);bolt(bx+14,by+bh-14,2.4);bolt(bx+bw-14,by+bh-14,2.4);
+  // Amber status tab + call to action.
+  ctx.fillStyle=hover?'rgba(255,196,96,.95)':C.amber2;ctx.fillRect(bx+6,by+16,6,20);
+  labelPlate(px+16,py+ph-70,pw-32,'OUT OF COMMISSION',hover?C.amber1:C.brass2,13);
+  panel(px+22,py+ph-46,pw-44,26,C.steel3,hover?C.teal2:C.brass3,5,1.3);
+  ctx.fillStyle=hover?'#dffef7':'#b4a98e';ctx.font='11px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('REPLACEMENT PARTS — CACHE',px+pw/2,py+ph-33);
+}
 function drawFacetingInteractive(time){
+  if(!isRewardUnlocked('faceting')){ drawLockedStationCol(2,'FACETING / SHAPING',time); return; }
+  if(repairActive('faceting')){ smallLabel(724,176,170,'2. FACETING / SHAPING');panel(720,236,172,310,C.steel2,C.brass2,9,3);
+    const b=chamferPath(734,270,144,242,12);fillStroke(b,metalGrad(734,270,144,242,'#666e69','#293132','#101516'),C.brass2,3);
+    drawRepairHammers('faceting',806,391,time); return; }
   smallLabel(724,176,170,'2. FACETING / SHAPING');panel(720,236,172,310,C.steel2,C.brass2,9,3);
   const loaded=!!machineCores.faceting,hot=(hoveredChute==='faceting'&&!!heldCore)||loaded,m=facetingMotion(time);
   const body=chamferPath(734,270,144,242,12);fillStroke(body,metalGrad(734,270,144,242,'#666e69','#293132','#101516'),C.brass2,3);ctx.fillStyle='#0a0f10';ctx.fillRect(746,286,120,154);
@@ -17893,6 +17925,7 @@ function drawSandblastInteractive(time){
   pipe([[600,748],[566,748],[566,820]],8,C.brass2,C.brass0); pipe([[800,748],[835,748],[835,820]],8,C.brass2,C.brass0); gauge(818,737,14,.65);
   drawChute('sandblast',stationMeta.sandblast,hoveredChute==='sandblast'&&!!heldCore||isStationActive('sandblast'));
   panel(614,806,190,24,C.steel3,C.brass3,5,1.4);
+  if(repairActive('sandblast'))drawRepairHammers('sandblast',701,749,time);
 }
 
 function drawDeepBrineInteractive(time){
@@ -17906,6 +17939,7 @@ function drawDeepBrineInteractive(time){
   ctx.restore();for(const sx of [329,427]){panel(sx,top+53,17,71,C.steel3,C.brass3,4,1.5);const tube=rrPath(sx+5,top+62,7,49,3);fillStroke(tube,'rgba(5,29,31,.9)',C.brass1,1.2);ctx.save();ctx.clip(tube);ctx.fillStyle='rgba(61,218,225,.52)';ctx.fillRect(sx+5,loaded?top+75:top+88,7,36);ctx.restore();}
   panel(cx-49,top+126,98,18,C.brass2,C.brass4,5,2);ctx.strokeStyle=C.brass1;ctx.lineWidth=3;ctx.beginPath();ctx.arc(427,817,14,0,Math.PI*2);ctx.stroke();for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){ctx.beginPath();ctx.moveTo(427,817);ctx.lineTo(427+Math.cos(a)*14,817+Math.sin(a)*14);ctx.stroke();}bolt(427,817,3);pipe([[329,713],[312,713],[312,801],[329,801]],6,C.brass2,C.brass0);pipe([[444,713],[462,713],[462,785]],6,C.brass2,C.brass0);
   if(loaded){const g=ctx.createRadialGradient(cx,top+79,2,cx,top+79,53);g.addColorStop(0,'rgba(70,231,226,.15)');g.addColorStop(1,'rgba(70,231,226,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,top+79,53,0,Math.PI*2);ctx.fill();}
+  if(repairActive('deepbrine'))drawRepairHammers('deepbrine',cx,top+79,time);
 }
 
 function drawCoreVaultInteractive(time){
@@ -17960,6 +17994,54 @@ function chuteForPoint(x,y){
   return null;
 }
 
+// Repair pageant — the one-time "hammered back into service" flourish when a broken bay's replacement
+// parts are recovered mid-session (deepbrine / sandblast / faceting). Two peening hammers strike the
+// station and throw sparks. Purely cosmetic: the bay is already operational underneath (owned() flipped
+// when the cache cracked) — this just marks the moment the parts are fitted. Persisted in a small
+// localStorage key so it never replays and never touches SAVE_VERSION; a first-visit baseline adopts
+// whatever the loaded save already owns, so only a live in-session recovery earns the animation.
+const REPAIR_MS=2600;
+const repairAnim={};                 // id -> performance.now() end time
+let repairSeen=null, repairBaselined=false;
+function loadRepairSeen(){ if(repairSeen)return repairSeen;
+  try{ repairSeen=new Set(JSON.parse(localStorage.getItem('corewright.repairSeen.v1')||'[]')); }catch(_){ repairSeen=new Set(); }
+  return repairSeen; }
+function saveRepairSeen(){ try{ localStorage.setItem('corewright.repairSeen.v1',JSON.stringify([...loadRepairSeen()])); }catch(_){ } }
+function repairActive(id){ return repairAnim[id]>performance.now(); }
+function repairTick(){
+  const ids=['deepbrine','sandblast','faceting'], seen=loadRepairSeen();
+  if(!repairBaselined){                       // first lapidary frame this session: adopt current unlocks silently
+    for(const id of ids) if(isRewardUnlocked(id)) seen.add(id);
+    saveRepairSeen(); repairBaselined=true; return;
+  }
+  for(const id of ids){                        // a bay that came online this session earns the pageant once
+    if(isRewardUnlocked(id) && !seen.has(id) && repairAnim[id]===undefined){
+      repairAnim[id]=performance.now()+REPAIR_MS; seen.add(id); saveRepairSeen();
+    }
+  }
+}
+function drawRepairHammers(id,cx,cy,time){
+  const rem=repairAnim[id]-performance.now(); if(rem<=0)return;
+  const k=1-rem/REPAIR_MS;                      // 0..1 progress through the pageant
+  let a=1; if(k<0.12)a=k/0.12; else if(k>0.82)a=(1-k)/0.18; a=Math.max(0,Math.min(1,a));
+  ctx.save();ctx.globalAlpha*=a;
+  for(let i=0;i<2;i++){
+    const dir=i?1:-1, ph=time*0.02+i*Math.PI, swing=Math.abs(Math.sin(ph));   // opposed strokes, 0 raised .. 1 struck
+    const hx=cx+dir*22, hy=cy-2, ang=dir*(-0.85+swing*1.1);
+    ctx.save();ctx.translate(hx,hy);ctx.rotate(ang);
+    ctx.strokeStyle='#7c5a34';ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(-dir*4,-25);ctx.stroke();
+    ctx.translate(-dir*4,-27);ctx.rotate(-ang);const hd=chamferPath(-9,-6,18,12,3);fillStroke(hd,metalGrad(-9,-6,18,12,'#c9cdcf','#7c8184','#3a3e40'),'#2a2d2e',1.5);
+    ctx.restore();
+    if(swing>0.86){                             // sparks fly off the strike point
+      const sx=cx+dir*7, sy=cy+6;
+      for(let s=0;s<5;s++){const aa=(-0.6-s*0.28)*dir+(Math.random()-.5)*.3, ln=6+Math.random()*8;
+        ctx.strokeStyle='rgba(255,'+(180+((s*30)%60))+',90,'+(0.5+Math.random()*0.4).toFixed(2)+')';ctx.lineWidth=1.4;
+        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+Math.cos(aa)*ln,sy+Math.sin(aa)*ln);ctx.stroke();}
+    }
+  }
+  ctx.restore();
+}
+
 function drawChute(id,m,active){
   const r=m.chute; const p=chamferPath(r.x,r.y,r.w,r.h,8);
   ctx.save(); if(active){ctx.shadowColor='rgba(245,167,52,.55)';ctx.shadowBlur=18;}
@@ -17975,11 +18057,16 @@ function drawChute(id,m,active){
 function isRewardUnlocked(id){
   if(id==='deepbrine') return typeof owned==='function' && owned('brine');
   if(id==='sandblast') return typeof owned==='function' && owned('sand');
+  // The Faceting Saw is itself the tier-I cache reward (owned('facet') already gates the real bench via
+  // MACHINES.facet.unlocked) — so the shaping-line station reads out-of-commission until it's recovered.
+  // Chosen over inventing a new key because the tutorial narrates a rig going down that returns from a cache.
+  if(id==='faceting')  return typeof owned==='function' && owned('facet');
   return rewardUnlocks[id]!==false;
 }
 function canAcceptCore(id){
   if(id==='deepbrine')return false;
   if(id==='sandblast')return isRewardUnlocked('sandblast');
+  if(id==='faceting')return isRewardUnlocked('faceting');
   return !!stationMeta[id];
 }
 function zoneById(id){return hitZones.find(z=>z.id===id);}
@@ -18110,6 +18197,7 @@ function drawInteractionOverlay(time){
 
 function drawScene(time=0){
   ctx.clearRect(0,0,W,H);
+  repairTick();
   drawBackWall();drawRawOreBin();drawCleaningStation(time);
   labelPlate(565,115,640,'LAPIDARY PROCESSING & CORE WROUGHTING LINE',C.brass2,23);
   drawBruiting(time);drawFaceting(time);drawPolishing(time);drawSeating(time);drawAssemblyFlow();
@@ -18377,6 +18465,9 @@ function spawnGroundDrop(core, fromView){
 // Where does dropping this core over `zone` lead? A rejection message, a bench view, or nothing.
 function lapDropTarget(zone, core){
   if (zone==='cleaning') return coreIsClean(core)?{reject:'That core is already clean.'}:{view:'dig'};
+  // Faceting Saw is the tier-I cache reward — down until its replacement parts are recovered (owned('facet')).
+  if (zone==='faceting' && !(typeof owned==='function'&&owned('facet')))
+    return {reject:'The Faceting Saw is down — its replacement parts are in a cache below.'};
   if (['bruting','faceting','polishing','seating'].includes(zone))
     return coreIsClean(core)?{view:'cleave'}:{reject:'Clean the matrix off it first.'};
   return null;   // bins / locked bays / empty floor — just settle back
