@@ -17970,7 +17970,13 @@ function drawChute(id,m,active){
   ctx.restore();
 }
 
-function isRewardUnlocked(id){return rewardUnlocks[id]!==false;}
+// The Deepbrine and Sandblast bays are the tutorial rigs that broke — they come back online once the
+// player finds their "replacement parts" underground, i.e. owns the Brine Jet / Sandblast cache unlock.
+function isRewardUnlocked(id){
+  if(id==='deepbrine') return typeof owned==='function' && owned('brine');
+  if(id==='sandblast') return typeof owned==='function' && owned('sand');
+  return rewardUnlocks[id]!==false;
+}
 function canAcceptCore(id){
   if(id==='deepbrine')return false;
   if(id==='sandblast')return isRewardUnlocked('sandblast');
@@ -19042,39 +19048,39 @@ document.getElementById('seatChip').onclick=seatCore;
 // a click didn't land. Now it cannot advance until the work is actually done.
 const TUT_STEPS=[
  {sel:null, view:'lab', manual:true, expr:'happy',
-  body:`Hi! I'm <b>Shard</b> — a chip of core that woke up. Welcome to the lab, corewright. The drill outside is a factory shim; it won't bite anything harder than topsoil. To go deeper you shape your own <b>cores</b> from the roughs you haul back.<br><br>I've put a <i>Tier I rough</i> in your crate. Let's make a <b>Power Cell</b>.`},
+  body:`Hi! I'm <b>Shard</b> — a chip of core that woke up. Let's make your first <b>Drill Core</b>: shape it right and the drill bites deeper rock.<br><br>I've dropped an <i>amber Tier I rough</i> in your crate — amber suits the drill best.`},
  {sel:null, view:'exped', manual:true,
-  body:`The lab stands outside. <b>Click the Lapidary wing</b> — the leftmost one — to go in. That's where roughs are cleaned and cores are shaped.`,
+  body:`The lab's just outside. <b>Head into the Lapidary</b> — the leftmost wing — where we clean and shape cores.`,
   done:()=>view==='lapidary'},
  {sel:'#lapScene', view:'lapidary',
-  body:`Your rough sits in the <b>Raw Ore Bin</b> (far left of the line). <b>Click it</b>, pick the rough and choose <b>Clean →</b>. It drops out of the hatch — then <b>drag it into the Cleaning Station</b> to load it. The machine runs; click it to step inside.`,
+  body:`Your rough is in the <b>Raw Ore Bin</b> (far left). <b>Click it</b>, pick the rough and choose <b>Clean →</b>. It drops out of the hatch — then <b>drag it into the Cleaning Station</b> and click the running machine to step in.`,
   done:()=>view==='dig'&&!!activeCore},
  {sel:'#tools_dig', view:'dig',
-  body:`The <b>scribe</b> is free and fast — but in the lab I won't let it bite the crystal (it can't tell rock from prize, and outside the tutorial it would <b style="color:#E0523D">crack the grain</b>). <b>Rub the dull rock</b> to chip the matrix off, or use <b>Jet Rinse</b> to blast it. Clear it all.`,
+  body:`Host rock's still on it. <b>Rub it off</b> with the hammer — or blast it with the <b>Brine Jet</b>, our deep-strata hose: it clears a whole pocket at once and the crystal stays safe. Clear it all.`,
   done:()=>coreIsClean(activeCore)},
- {sel:'#finishChip', view:'dig', expr:'happy',
-  body:`Clean! Press <b>✓ finished</b> — the core pops back out onto the lapidary floor, host rock gone, ready to shape.`,
+ {sel:'#finishChip', view:'dig', expr:'alarm',
+  body:`Clean! …and — <i>ffzzt</i> — there goes the <b>Brine Jet</b>. The deepbrine rig's shot; it'll need <b>replacement parts</b>. Eh, tomorrow's problem. Press <b>✓ finished</b> and the core pops out onto the floor.`,
   done:()=>view==='lapidary'},
  {sel:'#lapScene', view:'lapidary',
-  body:`There it is on the floor. <b>Drag the clean core into a shaping machine</b> — the <b>Bruting</b> or <b>Faceting</b> stand — to open the wroughting bench. This takes you to the <b>Cleaving Block</b>.`,
+  body:`There it is on the floor. <b>Drag the clean core into a shaping machine</b> to open the wroughting bench.`,
   done:()=>view==='cleave'&&!!activeCore},
  {sel:null, view:'cleave',
-  body:`That violet sphere is the <b>template</b> — the socket your core must fit. A <i>Power Cell</i> wants the glow <b>dead centre</b>.<br><br><b>Drag the crystal</b> to turn it. Find the gold shards.`,
+  body:`The box is your <b>template</b> — a drill core wants a solid cube with its glow on a <i>face</i>. <b>Drag the crystal</b> to turn it and bring that amber glow round to a face.`,
   done:()=>tutTurned>1.2},
  {sel:'#alignChip', view:'cleave',
-  body:`The template can move. Tap <b>align</b>, then use the arrows to slide it over the glow — <i>red X, green Y, blue Z</i>. The arrows sit on the template and turn with your core.`,
+  body:`The template can slide. Tap <b>align</b>, then nudge it over the glow — <i>red X, green Y, blue Z</i>.`,
   done:()=>Math.hypot(gx,gy,gz)>0.15},
  {sel:'#tools_cleave', view:'cleave', expr:'alarm',
-  body:`Everything <b style="color:#E0523D">red</b> sits outside the template and has to go. Pick <b>Level</b> or <b>Standing</b>, set the plane, <b>Cleave</b>.<br><br>Potions are free while you learn, and I won't let you cut into the template itself.`,
+  body:`Everything <b style="color:#E0523D">red</b> sits outside the template and has to go. Rough it off — <b>Cleave</b> it, or grind it back on the <b>Bruting Wheel</b>.<br><br>Careful, though — a bad cut there would chew the core's hot face. Good thing I clamped on our <b>last Template Ward</b>: it refuses any cut into the core itself while you learn.`,
   done:()=>tutCuts>0},
  {sel:'#tools_cleave', view:'cleave',
-  body:`Keep going until <b>nothing is red</b>. Turn the crystal and cleave from every side — the readout below tells you how many shards are still outside.`,
+  body:`Keep going until <b>nothing is red</b>. Turn it and cut from every side — the readout below counts the cubes still outside.`,
   done:()=>{const s=coreStats(); return s&&s.fits;}},
  {sel:'#seatChip', view:'cleave', expr:'happy',
-  body:`It <b style="color:var(--crystal)">fits</b>. Your <i>density</i> score is how much crystal you packed into the socket — the <b>Faceting Saw</b> and <b>Polishing Lamp</b> would raise it further, but that's a lesson for a richer day.<br><br>Press <b>seat core</b>.`,
-  done:()=>!!pendingCell},
- {sel:'#routeRow', view:'cleave',
-  body:`Last step. <b>Burn it for lab power</b> — that's the one route that spends the core, and the charge runs every powered machine you own.<br><br>Other routes keep the core in storage. You will shape many.`,
+  body:`It <b style="color:var(--crystal)">fits</b>! Smooth the grain with the <b>Sandblaster</b> — go on, hit the <b>Super Sandblast</b> for a fast, frantic pass…<br><br>…<b>sizzle — BOOM!</b> Ha! It couldn't take that much Super. That's our <i>second</i> rig down today.<br><br>Both want <b>replacement parts</b> — a cache underground might hold them. For now, press <b>seat core</b> to fit it in the drill.`,
+  done:()=>!!(drill.core&&activeCore&&drill.core.id===activeCore.id)||coreIsInstalled(activeCore)},
+ {sel:null, manual:true, expr:'happy',
+  body:`There it is — your first <b>Drill Core</b>, seated. The drill bites harder now, so deeper rock opens up.<br><br>Go dig, corewright — and keep an eye out below. Those <b>replacement parts</b> would put the <b>Brine Jet</b> and <b>Sandblaster</b> back online.`,
   done:()=>false}
 ];
 let tutTurned=0, tutCuts=0;
@@ -19119,15 +19125,17 @@ function tutAdvance(to){
 function tutStart(){
   tut.on=true; tut.step=0; tut.protect=true;
   tutTurned=0; tutCuts=0;
-  // a hand-picked first rough: centred glow, generous body
+  // The first rough is always a DRILL CORE in amber — the drill's favoured hue (MACHINE_AFFINITY.drill),
+  // so the very first core the player shapes suits the tool it's for. Generous body, glow biased to the
+  // TOP FACE (a drill wants "glow on a face", not dead-centre), so a careful shape reads as a good core.
   const seed=(Math.random()*2**31)|0;
   const core=makeCore(seed,1);
   generateCells(core);
-  // force a centred hotspot so the lesson is learnable
+  core.hueIdx=1;                                  // amber
   let hotMass=0;
   for (const c of core.cells){
-    const d=Math.hypot(c.px,c.py,c.pz);
-    c.conc=Math.exp(-Math.pow(d/0.8,2));
+    const d=Math.hypot(c.px, c.py-1.0, c.pz);     // hotspot on the +y face
+    c.conc=Math.exp(-Math.pow(d/0.9,2));
     hotMass+=c.conc*c.size*c.size*c.size;
   }
   core.hotTotal=core.cells.reduce((a,c)=>a+c.conc,0);
@@ -19135,8 +19143,8 @@ function tutStart(){
   core.hots=1;
   core.name='Tutorial rough';
   inventory.push(core);
-  comp='cell';
-  document.querySelector('#compChip b').textContent=COMPONENTS.cell.label;
+  comp='drill';
+  document.querySelector('#compChip b').textContent=COMPONENTS.drill.label;
   showView('lab');
   tutShow();
 }
