@@ -18137,7 +18137,7 @@ function handlePointerMove(evt){
     if(zone==='bruting'){ const p=brutingCarriagePos(time); return {x:p.x,y:p.y,rot:Math.sin(time*.002+p.x)*.06}; }
     if(zone==='faceting'){ const m=facetingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.indexAngle}; }
     if(zone==='polishing'){ const m=polishingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.coreRot}; }
-    if(zone==='seating'){ const m=seatingMotion(time); return {x:m.coreX,y:m.coreY,rot:m.coreRot}; }
+    if(zone==='seating'){ const m=seatingMotion(time), p=stationMeta.seating.preview; return {x:p.x,y:p.y,rot:m.coreRot}; }  // stay dead-centre in the chuck; jaws clamp AROUND it
     const m=stationMeta[zone]; if(!m) return null;
     const bob=Math.sin(time*.007+(m.preview.x*.01))*2.2;
     return {x:m.preview.x, y:m.preview.y+bob, rot:Math.sin(time*.002+m.preview.x)*.08};
