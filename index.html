@@ -1419,10 +1419,17 @@ function noise(o){ o=o||{}; if(!sndNoiseBuf) return; const t0=AC.currentTime+(o.
   src.start(t0+(o.startAt||0)); src.stop(t0+atk+dur+0.05);
 }
 function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[name]<ms) return false; sndT[name]=t; return true; }
+let sfxLastAt=0;                                   // when a SPECIFIC (non-notify) cue last played — see sfx()
 // The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
 function sfx(name,opt){
   if(!sndOn) return; sndStart(); if(!AC) return; opt=opt||{};
+  // Most rewarding actions ALSO say(...,'good'), which routes through notify() — so the specific cue and
+  // the generic blip would fire together and read as one doubled sound. Stamp every specific cue here and
+  // let notify() stand down if one just played. (A throttled-out call still stamps: it means an action cue
+  // is already sounding, which is exactly when the blip is redundant.)
+  if(name!=='notify') sfxLastAt=performance.now();
   const j=()=>1+(Math.random()-0.5)*0.06;         // ±3% pitch jitter so repeated percussive cues never sound looped
+  const jn=()=>1+(Math.random()-0.5)*0.24;        // ±12% filter-corner jitter for the held noise textures
   try{ switch(name){
     case 'tap':   if(!_throttle('tap',40))return; tone(700,{type:'sine',peak:0.03,attack:0.003,dur:0.05,lp:2600}); break;
     case 'close': tone(360,{type:'sine',peak:0.045,dur:0.13,glide:270,lp:1400}); break;
@@ -1432,15 +1439,29 @@ function sfx(name,opt){
     case 'clang': tone(300*j(),{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452*j(),{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
     case 'seat':  tone(178*j(),{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
     case 'cleave':noise({peak:0.07,dur:0.14,lp:1400,hp:300}); tone(240*j(),{type:'sine',peak:0.05,dur:0.14,glide:150,lp:1000}); break;
-    case 'brute': if(!_throttle('brute',140))return; noise({peak:0.05,dur:0.3,lp:700,hp:150,attack:0.03}); break;
-    case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200,hp:1600,attack:0.02}); break;
-    case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600,hp:300,attack:0.12}); break;
-    case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900,hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
-    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.04,dur:0.35,lp:5000,hp:2500,attack:0.05}); break;
-    case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100,hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
+    // Held tools repeat while the button is down, so their filter corner is jittered too (jn) — a fixed
+    // corner on a looped buffer is exactly what reads as a tape loop rather than a working machine.
+    case 'brute': if(!_throttle('brute',140))return; noise({peak:0.05,dur:0.3,lp:700*jn(),hp:150,attack:0.03}); break;
+    case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200*jn(),hp:1600,attack:0.02}); break;
+    case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600*jn(),hp:300,attack:0.12}); break;
+    case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900*jn(),hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
+    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.04,dur:0.35,lp:5000*jn(),hp:2500,attack:0.05}); break;
+    case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100*jn(),hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
     case 'burn':  noise({peak:0.04,dur:0.6,lp:1400,hp:400,attack:0.18}); tone(150,{type:'sine',peak:0.045,dur:0.5,glide:90,lp:900}); break;
     case 'discard':tone(300,{type:'sine',peak:0.045,dur:0.14,glide:180,lp:1200}); noise({peak:0.025,dur:0.06,lp:1600,hp:300}); break;
     case 'warn':  if(!_throttle('warn',500))return; tone(196,{type:'sine',peak:0.05,dur:0.16,glide:150,lp:900}); tone(147,{type:'sine',peak:0.045,dur:0.2,delay:0.08,lp:800}); break;
+    // A part latching into equipment — firmer and more mechanical than 'seat' (which is the core meeting
+    // its housing); this is the collar closing on it.
+    case 'fit':   tone(140*j(),{type:'triangle',peak:0.07,dur:0.13,lp:1100}); tone(280*j(),{type:'sine',peak:0.05,dur:0.18,delay:0.05,lp:1600}); noise({peak:0.028,dur:0.05,lp:2000,hp:700}); break;
+    case 'mortar':if(!_throttle('mortar',150))return; noise({peak:0.038,dur:0.3,lp:800*jn(),hp:120,attack:0.06}); break;   // stone pestle on stone, held
+    case 'scribe':if(!_throttle('scribe',110))return; noise({peak:0.036,dur:0.12,lp:1300*jn(),hp:260}); break;             // hand rub chipping matrix, held
+    case 'crack': tone(210*j(),{type:'triangle',peak:0.07,dur:0.1,glide:96,lp:1600}); noise({peak:0.055,dur:0.26,lp:2200,hp:400}); break;   // crystal shatters — the one cue with a bite to it
+    case 'torch': if(!_throttle('torch',170))return; noise({peak:0.036,dur:0.34,lp:1500*jn(),hp:500,attack:0.09}); break;  // gas flame hiss, held
+    case 'stage': tone(392*j(),{type:'sine',peak:0.05,dur:0.26,lp:2200}); tone(587.33,{type:'sine',peak:0.035,dur:0.3,delay:0.1,lp:2400}); break;   // brew stage advanced
+    case 'brewdone':{ const notes=[349.23,440,523.25,698.46]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.05,dur:0.42,delay:i*0.11,lp:2200})); break; }
+    case 'travel':{ // planetfall: a long descending settle under a soft rumble — the lab coming down
+      tone(320,{type:'sine',peak:0.055,dur:1.1,glide:110,glideT:1.0,lp:1200});
+      noise({peak:0.045,dur:1.2,lp:420,hp:60,attack:0.3}); break; }
     case 'unlock':{ const notes=[392,523.25,659.25]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.055,dur:0.32,delay:i*0.1,lp:2400})); break; }
     case 'repair':tone(196,{type:'sine',peak:0.055,dur:0.5,glide:262,lp:1400}); noise({peak:0.03,dur:0.3,lp:1200,hp:200,attack:0.1}); break;
     case 'notify':tone(523.25,{type:'sine',peak:0.05,dur:0.12,lp:2200}); tone(659.25,{type:'sine',peak:0.045,dur:0.16,delay:0.09,lp:2400}); break;
@@ -1467,7 +1488,11 @@ function setAmbience(on){ ambOn=on; try{ localStorage.setItem('corewright.amb',o
 // Prime the context on the first real gesture; a delegated tap covers every button/chip in one place.
 addEventListener('pointerdown', sndStart, {once:false});
 addEventListener('keydown', sndStart, {once:false});
-addEventListener('pointerdown', e=>{ if(sndOn && e.target && e.target.closest && e.target.closest('button,.chip,.wingTile')) sfx('tap'); }, true);
+addEventListener('pointerdown', e=>{ if(!sndOn||!e.target||!e.target.closest) return;
+  // Closing gets its own softer falling note rather than the same tap as every other control, so
+  // "I left this screen" and "I pressed a thing" don't sound identical.
+  if(e.target.closest('.closeX')) sfx('close');
+  else if(e.target.closest('button,.chip,.wingTile')) sfx('tap'); }, true);
 // Backgrounding the tab pauses the RAF loop, but the ambience bed loops in the audio graph regardless —
 // so suspend the whole context when hidden (silence + battery) and resume it on return.
 document.addEventListener('visibilitychange', ()=>{ if(!AC) return;
@@ -4420,6 +4445,7 @@ function scribeAt(x,y,now){
     if (matrix.length){                            // still clear any matrix in reach
       lastScribe=now;
       dissolve(new Set(matrix.map(v=>v.mesh)));
+      sfx('scribe');                               // guarded strike still chips rock, so it still sounds
       addShake(0.03+0.08*scribePower);
       const left=countMatrix();
       if (!left) markCleanIfDone(activeCore);
@@ -4438,6 +4464,7 @@ function scribeAt(x,y,now){
     const yield_=Math.max(1,Math.round(matrix.length/hard));
     const doomed=new Set(matrix.slice(0,yield_).map(v=>v.mesh));
     dissolve(doomed);
+    sfx('scribe');                                // dry chip of matrix coming away (throttled)
     addShake(0.03+0.08*scribePower);
     for (let i=0;i<2;i++) spark(hit.x,hit.y,hit.z,1,0.05+0.08*scribePower);
   }
@@ -4447,6 +4474,7 @@ function scribeAt(x,y,now){
     const victim=crystal[0];
     const scarred=crackAlongGrain(victim.cell);
     dissolve(new Set([victim.mesh]));
+    sfx('crack');                                 // permanent damage — the one cue allowed a bite
     addShake(0.3);
     spark(hit.x,hit.y,hit.z,8,0.2);
     floatText('CRACK','var(--danger)');
@@ -5835,11 +5863,13 @@ function routeCell(where){
       // the thumbnail, the picker highlights it as fitted, and pulling it just clears the link (the
       // core is still in storage). Without the id the seated core had no home and was lost on unseat.
       drill.power={id:core&&core.id, tier:c.tier, output:c.output};
+      sfx('fit');                                 // the collar closes on the power core
       say('Power core seated in the drill. The core stays in storage — pull it any time.','good');
     } else say('Weaker than the drill\'s current power core; kept in storage.','warn');
     // core kept: a power cell is a permanent part, never consumed by fitting it
   } else {   // suit: SPEND the cell for a permanent air boost — a one-time sacrifice, so it IS consumed
     const gain=Math.round(35*c.tier*c.output);
+    sfx('fit');                                   // the cell is spent into life support — same mechanical latch
     maxAir+=gain; air=maxAir;
     if (core){ inventory=inventory.filter(x=>x!==core); if (activeCore===core) activeCore=null; }
     say(`Life support extended — +${gain}s max air. That cell is spent.`,'good');
@@ -12151,6 +12181,7 @@ function travelTo(id){
   columns.clear();               // drop the old world; columns regen on demand
   corpse=null; enemies.length=0; mine=null; attackTgt=null; spawnTimer=4;
   spawn();
+  sfx('travel');                                  // the long descending settle of planetfall
   say(`Made planetfall on ${dest.name}.`,'good');
 }
 const keys={left:false,right:false,jump:false,down:false,dig:false};
@@ -15910,7 +15941,8 @@ function forgeSimTick(){
   forgeAccum+=dt;
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
-    if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
+    if (fluxOn){ fluxHeat(); sfx('torch'); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
+                                                 // the hiss rides the FIXED step, not the frame, so it can't speed up on a fast panel
     if (forgeLevelHold && forgeLevelDir && forgeSpin%2===0) forgeLevelSlide(forgeLevelDir[0],forgeLevelDir[1]);   // leveller ONLY moves metal — the torch does the melting; drag slides whatever is already molten
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
@@ -16669,7 +16701,8 @@ function brewScoreAndAdvance(score){
   Object.assign(brew,{grinding:false,angDelta:0,lastAng:null,curAng:0,curDist:0,pacer:0,fill:0,inband:0,offband:0,angVel:0,
     held:false,temp:0,band:0.7,calc:0,scorch:0,ignite:0,collecting:false,heads:0,hearts:0,tails:0,prog:0,cut:0,level:0,coolant:0,purity:0,loopA:0});
   if (brew.stage>=4) brewFinish();
-  else { const hue=(CORE_HUES.find(h=>h.key===brew.potion.color)||CORE_HUES[0]).glow;   // sweep the matter on to the next apparatus
+  else { sfx('stage');                            // matter passes to the next apparatus
+    const hue=(CORE_HUES.find(h=>h.key===brew.potion.color)||CORE_HUES[0]).glow;   // sweep the matter on to the next apparatus
     _brewTrans={from, to:brew.stage, t:0}; brewArcTransfer(from, brew.stage, hue); renderBrewHud(); }
 }
 function brewFinish(){
@@ -16684,6 +16717,7 @@ function brewFinish(){
   potionStr[pt.id]=Math.max(potionStr[pt.id]||0, potency);
   if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(tankCap(pt.tank), tank[pt.tank]+Math.round(T.per*(0.5+0.7*skill))); }
   else { potions[pt.id]=(potions[pt.id]||0)+1; }
+  sfx('brewdone');                                // the solvent is drawn off — a warm four-note settle
   updateMeters(); updateStock();
   say(`${pt.label} brewed — potency ${potency.toFixed(1)} (grade T${Math.round(grade)} · ${Math.round(skill*100)}% craft · ${Math.round(gear*100)}% gear).`,'good');
   floatText(pt.label+' ×'+potency.toFixed(1),'var(--crystal)');
@@ -16749,6 +16783,7 @@ function brewTick(dt){
       const onEdge=brew.grinding && brew.curDist>R0*0.45;           // work the material against the wall
       const goodTech=brew.armed && brew.grinding && onPace && onEdge;
       brew._onEdge=onEdge; brew._onPace=onPace;
+      if (brew.grinding && brew.armed) sfx('mortar');   // pestle working the bowl (throttled; silent the moment you lift off)
       if (G.userData.pacer) G.userData.pacer.visible=false;
       if (G.userData.fill) G.userData.fill.geometry.setDrawRange(0,0);
       G.userData.pestle.position.set(px, my*1.02, pz);
@@ -19107,7 +19142,9 @@ function _pushNote(html, cls, ttl){
 function notify(title, opt){ opt=opt||{};
   const col=opt.color || (opt.tier?TIER_COL[opt.tier]:'var(--brass)');
   const icon=opt.icon || (opt.tier?['','I','II','III','IV','V'][opt.tier]:'✦');
-  if (opt.ledger!=='unlock') sfx('notify');   // the cache-unlock caller plays its own richer arpeggio
+  // The cache-unlock caller plays its own richer arpeggio, and any action cue in the last 250ms already
+  // spoke for this event — blip only when nothing else did.
+  if (opt.ledger!=='unlock' && performance.now()-sfxLastAt>250) sfx('notify');
   logTake(title, opt.ledger||'');
   _pushNote(`<div class="ni" style="--tc:${col}">${icon}</div>`+
     `<div class="nt"><div class="nk" style="color:${col}">${opt.kick||'Notable'}</div>`+
