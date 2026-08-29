@@ -397,15 +397,55 @@ coverage are verified headlessly (see `scratchpad/pw/`), but nobody has listened
 
 ## Saves
 
-`localStorage`, key `corewright.save.v2`, `SAVE_VERSION = 11` (v11 added core
-hues and machine affinity). **A version
-mismatch deletes the save** rather than migrating it.
+`localStorage`, key `corewright.save.v2`. The world itself isn't serialised:
+only the seed plus tiles that differ from virgin generation, which is why saves
+stay small on an infinite map.
 
-That's fine while you're the only player and it isn't fine after that. Any
-change to the shape of what `saveGame()` writes needs a `SAVE_VERSION` bump —
-and once real players exist, a migration path instead of a wipe. The world
-itself isn't serialised: only the seed plus tiles that differ from virgin
-generation, which is why saves stay small on an infinite map.
+**Nothing here deletes a save.** A version mismatch used to `removeItem` the
+save outright — fine while you're the only player, indefensible the moment
+anyone else has a run going. A save is now either migrated forward or set aside
+under another key:
+
+| key | what it holds |
+|---|---|
+| `corewright.save.v2` | the live save |
+| `corewright.save.backup` | the save exactly as it was *before* a migration, and any save from a newer build |
+| `corewright.save.broken` | a save that couldn't be read, kept for recovery |
+
+Any change to the shape of what `saveGame()` writes still needs a
+`SAVE_VERSION` bump. What that bump *costs* depends on the kind of change, and
+this is the distinction the migration turns on:
+
+- **Additive** (a new field on the blob) — free. `loadGame` defaults every
+  field it reads, so an older save just starts that field empty. `migrateSave`
+  stamps the new version and nothing else happens.
+- **World-generation** — expensive, and listed in `WORLDGEN_BREAKS`. Because
+  the world is a seed plus *diffs from virgin*, changing virgin generation makes
+  every stored diff a diff against different rock. The map cannot come across.
+  Migration keeps the seed (same planet, shifted strata — not a stranger's map),
+  drops `alt`/`seenBits`, and respawns the player, the lab and any corpse,
+  because their coordinates only made sense inside the old terrain. Everything
+  the player *earned* — cores, gear, unlocks, dust, forged parts — crosses over
+  untouched. Verified: identical inventory/dust/metals/power/unlocks either side.
+
+`WORLDGEN_BREAKS` is `[18, 22]` today (v18 deepened the world to 150; v22 added
+ore tiles). **Add to it whenever you change `genColumn` or a planet
+descriptor** — that is the whole maintenance burden of this system, and
+forgetting leaves players with a corrupt map rather than an explained reset.
+Note that because v22 is itself a break, *every* pre-v22 save re-rolls its world
+today; the cheap additive path only becomes reachable at the next bump.
+
+`SAVE_MIN = 7` is the oldest layout worth reasoning about; older saves are set
+aside rather than guessed at. A save from a **newer** build is never touched —
+it's backed up and a fresh run starts, because the fix is for the player to
+update the game, not for us to downgrade their run.
+
+One trap worth knowing: `settleLab()` pays out the terrain it scours, so the lab
+being set back down by a migration must use `landLabAtStart(false)` /
+`settleLab(false)`. Salvaging there hands a migrating player free cores and ore
+scaled to whatever rock happened to be under the lab. It was caught by diffing
+inventory across a migration and is exactly the kind of thing to re-check if the
+landing code changes.
 
 ## Conventions
 

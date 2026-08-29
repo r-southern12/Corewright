@@ -11768,10 +11768,13 @@ function settleLab(salvage=true){
 // Land the lab already settled at the start of a run (no arrival flight) and stand the player at its
 // entry hatch, so a new game never opens with the lab embedded or the player away from it. Uses the
 // same placement + scour as a normal landing; the player emerges at the round airlock (art x185).
-function landLabAtStart(){
+// salvage=false is for a lab set back down by a SAVE MIGRATION: settleLab pays out the terrain it
+// scours, which is a fair little boost on a new run but an unearned windfall for an existing one
+// (it scales with whatever rock happens to be there). Matches the restored-lab path in loadGame.
+function landLabAtStart(salvage=true){
   const x0=labLandingX();
   lab.x=x0; lab.y=labGroundY(x0)-LAB_H; lab.drop=0; lab.placed=true;
-  settleLab();
+  settleLab(salvage);
   // Stand the player on the lab's OWN ground line at its left/airlock end (the footprint is packed to
   // ground there, so this is always solid — using the virgin surfaceY left them floating over the pit
   // settleLab had just scoured). This is the hatch they pop out of.
@@ -19717,6 +19720,54 @@ function unpackCore(o){
       return cell;
     }):null};
 }
+/* ============================================================
+   SAVE MIGRATION — never delete a run.
+   A version mismatch used to `removeItem` the save outright. That is fine while
+   you are the only player and indefensible the moment anyone else has a run
+   going: an update would silently eat their game. Nothing here deletes. A save
+   is either migrated forward, or set aside under another key so it can still be
+   recovered.
+
+   Most SAVE_VERSION bumps were purely ADDITIVE — a new field on the blob — and
+   the loader already defaults every field it reads, so an older save simply
+   starts that field empty and needs no reshaping at all. What genuinely cannot
+   survive is a change to VIRGIN WORLD GENERATION: the world is stored as a seed
+   plus DIFFS FROM VIRGIN, so if virgin generation changes, every stored diff is
+   a diff against different rock and the map is meaningless. Those versions are
+   listed below, and crossing one re-rolls the terrain while keeping everything
+   the player actually earned.
+   ============================================================ */
+const SAVE_BACKUP_KEY='corewright.save.backup';   // the save exactly as it was before a migration
+const SAVE_BROKEN_KEY='corewright.save.broken';   // a save we could not read, kept for recovery
+const SAVE_MIN=7;                                 // older than this and the shape has diverged too far to migrate honestly
+// v18 deepened the world to 150; v22 added ore tiles. Both change what virgin generation produces.
+const WORLDGEN_BREAKS=[18,22];
+let _loadNote='';                                 // what happened on load, for the boot message
+
+// Upgrade an older save IN PLACE. Returns false when it can't be done honestly.
+function migrateSave(d){
+  const from=d.v|0;
+  if (from<SAVE_MIN || from>SAVE_VERSION) return false;
+  if (WORLDGEN_BREAKS.some(v=>from<v && SAVE_VERSION>=v)){
+    // The SEED is kept: it still generates a coherent world under the new rules, so this reads as
+    // the same planet with shifted strata rather than a stranger's map. What cannot come across is
+    // the dug geometry and anything whose position only made sense inside it.
+    d.alt=[]; d.seenBits=[];
+    d.player=null;      // their coordinates may now be solid rock — respawn on the new surface
+    d.lab=null;         // its footing was scoured into terrain that no longer exists; it re-lands
+    d.corpse=null;      // a corpse at coordinates in a world that no longer exists
+    _loadNote='world';
+  }
+  d.v=SAVE_VERSION;
+  return true;
+}
+// Set a save aside instead of destroying it. A save we cannot read today may well be readable after
+// a fix, and deletion is the single failure a player can never recover from.
+function quarantineSave(raw,why){
+  try{ localStorage.setItem(SAVE_BROKEN_KEY,raw); localStorage.removeItem(SAVE_KEY); }catch(_){}
+  console.warn('save set aside ('+why+') under '+SAVE_BROKEN_KEY);
+  _loadNote='broken';
+}
 function saveGame(){
   if (WIPING) return false;
   try{
@@ -19758,36 +19809,51 @@ function saveGame(){
   }catch(e){ console.warn('save failed',e); return false; }
 }
 function loadGame(){
+  _loadNote='';
+  let raw=null;
+  try{ raw=localStorage.getItem(SAVE_KEY); }catch(_){ return false; }
+  if (!raw) return false;
+  let d=null;
+  try{ d=JSON.parse(raw); }catch(_){ quarantineSave(raw,'unreadable'); return false; }
+  if (!d||typeof d!=='object'){ quarantineSave(raw,'unreadable'); return false; }
+  if (d.v!==SAVE_VERSION){
+    // A save from a NEWER build must never be touched — the player just needs the newer build. Keep a
+    // copy, because starting a fresh run here will overwrite the live key on the next autosave.
+    if ((d.v|0)>SAVE_VERSION){ try{ localStorage.setItem(SAVE_BACKUP_KEY,raw); }catch(_){} _loadNote='future'; return false; }
+    try{ localStorage.setItem(SAVE_BACKUP_KEY,raw); }catch(_){}      // preserve the original before reshaping it
+    if (!migrateSave(d)){ quarantineSave(raw,'too old'); return false; }
+    if (!_loadNote) _loadNote='migrated';
+  }
   try{
-    const raw=localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    const d=JSON.parse(raw);
-    if (d.v!==SAVE_VERSION){ localStorage.removeItem(SAVE_KEY); return false; }
     WORLD_SEED=d.seed;
     planet=PLANETS[d.planetId]||PLANET_TERRA;
     columns.clear();                     // columns regen from seed on first touch
     // replay tile edits: column(x) generates the virgin column, we overwrite cells
-    for (let k=0;k<d.alt.length;k+=3){
-      const x=d.alt[k], y=d.alt[k+1], t=d.alt[k+2];
+    const _alt=d.alt||[], _seen=d.seenBits||[];
+    for (let k=0;k<_alt.length;k+=3){
+      const x=_alt[k], y=_alt[k+1], t=_alt[k+2];
       column(x).tiles[y]=t;
       if (t===T_AIR) column(x).gate[y]=0;   // a mined-out gate is open now
     }
-    for (let k=0;k<d.seenBits.length;k+=2) setSeen(d.seenBits[k],d.seenBits[k+1],1);
+    for (let k=0;k<_seen.length;k+=2) setSeen(_seen[k],_seen[k+1],1);
     nextId=d.nextId||1;
-    player.x=d.player.x; player.y=d.player.y;
-    dust=d.dust; hp=d.hp; air=d.air; maxAir=d.maxAir;
+    // A migration that re-rolled the world drops the stored position (see migrateSave); respawn below.
+    let _needSpawn=false;
+    if (d.player){ player.x=d.player.x; player.y=d.player.y; } else _needSpawn=true;
+    dust=d.dust||0; hp=d.hp||100; air=d.air||0; maxAir=d.maxAir||air||60;
     hardcore=d.hardcore;
-    Object.assign(metals,d.metals); Object.assign(reagents,d.reagents);
+    if (d.metals) Object.assign(metals,d.metals);
+    if (d.reagents) Object.assign(reagents,d.reagents);
     if (d.powder) Object.assign(powder,d.powder);            // graceful: pre-powder saves start with an empty larder
-    Object.assign(potions,d.potions);
+    if (d.potions) Object.assign(potions,d.potions);
     if (d.potionStr) Object.assign(potionStr,d.potionStr);   // best-brewed potency per potion
     if (d.powderGrade) Object.assign(powderGrade,d.powderGrade);
     if (d.powderGradeMass) Object.assign(powderGradeMass,d.powderGradeMass);
     if (d.brewEquip) Object.assign(brewEquip,d.brewEquip);   // the fitted brewing vessels + cores
     if (d.brewCore) Object.assign(brewCore,d.brewCore);
-    drill.frame=d.drill.frame; drill.bit=d.drill.bit;
-    drill.core=d.drill.core; drill.power=d.drill.power;
-    equip.coil=d.equip.coil; equip.forgePrism=d.equip.forgePrism; equip.alembic=d.equip.alembic;
+    if (d.drill){ drill.frame=d.drill.frame; drill.bit=d.drill.bit;
+      drill.core=d.drill.core; drill.power=d.drill.power; }
+    if (d.equip){ equip.coil=d.equip.coil; equip.forgePrism=d.equip.forgePrism; equip.alembic=d.equip.alembic; }
     powerBank=d.powerBank||0;
     forgeAnvil=d.forgeAnvil||null;
     if (d.tank){ tank.jet=d.tank.jet||0; tank.brine=d.tank.brine||0; tank.sand=d.tank.sand||0; }
@@ -19803,23 +19869,25 @@ function loadGame(){
       for (const k in suitFrames){ if (suitFrames[k]&&suitFrames[k].id!=null){ const f=byId(suitFrames[k].id); if (f) suitFrames[k]=f; } } }
     seenTiles.clear();
     if (d.seenTiles) for (const t of d.seenTiles) seenTiles.add(t);
-    for (const k in d.machines) if (MACHINES[k]) MACHINES[k].unlocked=d.machines[k];
+    if (d.machines) for (const k in d.machines) if (MACHINES[k]) MACHINES[k].unlocked=d.machines[k];
     unlocks.clear(); if (d.unlocks) for (const k of d.unlocks) grantUnlock(k);
     for (const k in consumables) delete consumables[k];
     if (d.consumables) Object.assign(consumables, d.consumables);
     boreTiles=d.boreTiles||0; renderOres=d.renderOres||0; protectCubes=d.protectCubes||0;
     protUntil=superUntil=0; protCharged.clear(); lodeX=lodeY=null; lodeT=0; renderPack();
-    inventory=d.inv.map(unpackCore);
+    inventory=(d.inv||[]).map(unpackCore);
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
-      cores:d.corpse.cores.map(unpackCore),
+      cores:(d.corpse.cores||[]).map(unpackCore),
       reagents:d.corpse.reagents,metals:d.corpse.metals}:null;
     built=d.built||0; builtNames=d.builtNames||[];
     comp=d.comp||'cell'; gx=d.gx||0; gy=d.gy||0; gz=d.gz||0;
     tut.on=false; tut.protect=false;
     adminOn=!!d.adminOn; adminGlow=!!d.adminGlow;
+    // World was re-rolled under this save: put them on the new surface and set the lab back down.
+    if (_needSpawn){ spawn(); if (!lab.placed && typeof landLabAtStart==='function') landLabAtStart(false); }
     return true;
-  }catch(e){ console.warn('load failed',e); localStorage.removeItem(SAVE_KEY); return false; }
+  }catch(e){ console.warn('load failed',e); quarantineSave(raw,'load error'); return false; }
 }
 // WIPING is a hard kill switch. Without it, wipeSave() cleared storage and
 // then beforeunload/autoSave immediately wrote the whole run back — the wipe
@@ -19891,11 +19959,17 @@ if (loadGame()){
   updateMeters(); updateStock();
   showView('exped');
   if (activeCore) loadCore(activeCore);
-  say('Run restored. The dig continues.','good');
+  // Say plainly what came across. A silently-changed world is far more alarming than an explained one.
+  if (_loadNote==='world') say('Run restored — this build regenerates the world, so the strata have shifted and the map is fresh. Your cores, gear, unlocks and dust all came across.','good');
+  else if (_loadNote==='migrated') say('Run restored and brought up to this build.','good');
+  else say('Run restored. The dig continues.','good');
 } else {
   columns.clear(); spawn();
   landLabAtStart();                    // lab is already down beside the player, at its hatch, from turn one
   updateMeters(); updateStock();
+  // Only warn when there WAS a save we declined to use — a first-ever run should say nothing.
+  if (_loadNote==='future') say('That save comes from a newer build of the game, so it was left alone rather than downgraded. A copy is kept — update the game to continue that run.','warn');
+  else if (_loadNote==='broken') say('That save could not be read. It has been set aside rather than deleted, so nothing is lost. Starting a fresh run.','warn');
   tutStart();
 }
 
