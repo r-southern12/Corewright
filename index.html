@@ -1087,6 +1087,10 @@
       <button id="modeBtn">hardcore</button></div>
     <div class="card"><div class="info">Graphics<div class="sub" id="gfxSub">lower this first if the bench stutters</div></div>
       <button id="gfxBtn">low</button></div>
+    <div class="card"><div class="info">Sound<div class="sub">soft, close cues for digging, seating and rewards — no music</div></div>
+      <button id="soundBtn">on</button></div>
+    <div class="card"><div class="info">Ambience<div class="sub">a faint low hull-wind bed under everything</div></div>
+      <button id="ambBtn">off</button></div>
     <div class="card"><div class="info">Frame readout<div class="sub">fps, draw calls and shard count, top-left</div></div>
       <button id="fpsBtn">off</button></div>
     <div class="card"><div class="info">Developer readout<div class="sub">live tuning values, top-left</div></div>
@@ -1355,6 +1359,110 @@ const GFX={
   high:  {ratio:1.75, msaa:true,  clearcoat:true,  shadowFog:true}
 };
 function gfx(){ return GFX[gfxTier]||GFX.high; }
+
+/* ============================================================
+   AUDIO — procedural, chill / ASMR
+   No audio files: every cue is synthesised on the fly from oscillators and one
+   pre-rendered noise buffer, routed through a soft compressor + low master gain.
+   The whole bus is deliberately quiet, low-passed and slow of attack so the game
+   stays calm — no music, no ringing, just gentle taps and thuds. Ambience is a
+   separate, subtle wind bed defaulting OFF (the player asked to be unsure about it).
+   Prefs live in their own localStorage keys, so toggling never churns SAVE_VERSION.
+   Browsers block audio until a user gesture, so the context is created lazily on
+   the first pointer/key press (sndStart), which every cue also calls defensively.
+   ============================================================ */
+let sndOn = (function(){ try{ return localStorage.getItem('corewright.sound')!=='off'; }catch(_){ return true; } })();
+let ambOn = (function(){ try{ return localStorage.getItem('corewright.amb')==='on'; }catch(_){ return false; } })();
+let AC=null, sndMaster=null, sndComp=null, sndNoiseBuf=null, sndAmb=null; const sndT={};
+function sndStart(){
+  try{
+    if(AC){ if(AC.state==='suspended') AC.resume(); return; }
+    const ACtor=window.AudioContext||window.webkitAudioContext; if(!ACtor) return;
+    AC=new ACtor();
+    sndComp=AC.createDynamicsCompressor();               // keep any pile-up of cues from ever getting harsh
+    sndComp.threshold.value=-22; sndComp.knee.value=28; sndComp.ratio.value=6; sndComp.attack.value=0.004; sndComp.release.value=0.28;
+    sndMaster=AC.createGain(); sndMaster.gain.value=sndOn?0.5:0.0;
+    sndComp.connect(sndMaster); sndMaster.connect(AC.destination);
+    // One second of soft pink-ish noise, reused (looped) for every scrape/thud/blast.
+    const n=AC.sampleRate; sndNoiseBuf=AC.createBuffer(1,n,n); const d=sndNoiseBuf.getChannelData(0);
+    let b0=0,b1=0,b2=0; for(let i=0;i<n;i++){ const w=Math.random()*2-1; b0=0.99*b0+0.05*w; b1=0.96*b1+0.08*w; b2=0.9*b2+0.1*w; d[i]=(b0+b1+b2+w*0.2)*0.2; }
+    if(ambOn) ambStart();
+  }catch(_){ AC=null; }
+}
+function _lp(freq,q){ const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=freq; f.Q.value=q||0.7; return f; }
+// A single filtered oscillator voice with a soft exponential attack/decay envelope.
+function tone(freq,o){ o=o||{}; const t0=AC.currentTime+(o.delay||0), atk=o.attack||0.01, dur=o.dur||0.14;
+  const osc=AC.createOscillator(); osc.type=o.type||'sine'; osc.frequency.setValueAtTime(freq,t0);
+  if(o.glide) osc.frequency.exponentialRampToValueAtTime(Math.max(1,o.glide),t0+(o.glideT||dur));
+  const g=AC.createGain(); const peak=(o.peak==null?0.12:o.peak);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(peak,t0+atk);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+atk+dur);
+  osc.connect(g); let node=g;
+  if(o.lp){ const f=_lp(o.lp,o.q); g.connect(f); node=f; }
+  if(o.pan&&AC.createStereoPanner){ const p=AC.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,o.pan)); node.connect(p); node=p; }
+  node.connect(sndComp);
+  osc.start(t0); osc.stop(t0+atk+dur+0.05);
+}
+// A band-limited burst of the shared noise buffer — the body of scrapes, crumbles and blasts.
+function noise(o){ o=o||{}; if(!sndNoiseBuf) return; const t0=AC.currentTime+(o.delay||0), atk=o.attack||0.006, dur=o.dur||0.2;
+  const src=AC.createBufferSource(); src.buffer=sndNoiseBuf; src.loop=true;
+  const f=_lp(o.lp||1200,o.q||0.8); src.connect(f); let node=f;
+  if(o.hp){ const h=AC.createBiquadFilter(); h.type='highpass'; h.frequency.value=o.hp; node.connect(h); node=h; }
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(o.peak==null?0.08:o.peak,t0+atk);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+atk+dur);
+  node.connect(g); node=g;
+  if(o.pan&&AC.createStereoPanner){ const p=AC.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,o.pan)); node.connect(p); node=p; }
+  node.connect(sndComp);
+  src.start(t0+(o.startAt||0)); src.stop(t0+atk+dur+0.05);
+}
+function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[name]<ms) return false; sndT[name]=t; return true; }
+// The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
+function sfx(name,opt){
+  if(!sndOn) return; sndStart(); if(!AC) return; opt=opt||{};
+  try{ switch(name){
+    case 'tap':   if(!_throttle('tap',40))return; tone(700,{type:'sine',peak:0.03,attack:0.003,dur:0.05,lp:2600}); break;
+    case 'close': tone(360,{type:'sine',peak:0.045,dur:0.13,glide:270,lp:1400}); break;
+    case 'dig':   if(!_throttle('dig',95))return;   // sandy scrape + a warm low thud, pitch-jittered so a hold never rings
+                  noise({peak:0.045,dur:0.09,lp:500+Math.random()*260,hp:90}); tone(56+Math.random()*10,{type:'sine',peak:0.05,dur:0.09,lp:380}); break;
+    case 'break': noise({peak:0.085,dur:0.2,lp:900,hp:120}); tone(122,{type:'sine',peak:0.075,dur:0.22,glide:58,lp:700}); break;
+    case 'clang': tone(300,{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452,{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
+    case 'seat':  tone(178,{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
+    case 'cleave':noise({peak:0.07,dur:0.14,lp:1400,hp:300}); tone(240,{type:'sine',peak:0.05,dur:0.14,glide:150,lp:1000}); break;
+    case 'brute': if(!_throttle('brute',140))return; noise({peak:0.05,dur:0.3,lp:700,hp:150,attack:0.03}); break;
+    case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200,hp:1600,attack:0.02}); break;
+    case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600,hp:300,attack:0.12}); break;
+    case 'brine': noise({peak:0.045,dur:0.5,lp:900,hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
+    case 'sand':  noise({peak:0.04,dur:0.35,lp:5000,hp:2500,attack:0.05}); break;
+    case 'unlock':{ const notes=[392,523.25,659.25]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.055,dur:0.32,delay:i*0.1,lp:2400})); break; }
+    case 'repair':tone(196,{type:'sine',peak:0.055,dur:0.5,glide:262,lp:1400}); noise({peak:0.03,dur:0.3,lp:1200,hp:200,attack:0.1}); break;
+    case 'notify':tone(523.25,{type:'sine',peak:0.05,dur:0.12,lp:2200}); tone(659.25,{type:'sine',peak:0.045,dur:0.16,delay:0.09,lp:2400}); break;
+  }}catch(_){}
+}
+// Ambience — a barely-there low wind bed (looped noise through a slowly wandering low-pass). Off by default.
+function ambStart(){ if(!AC||sndAmb) return; try{
+    if(!sndNoiseBuf) return;
+    const src=AC.createBufferSource(); src.buffer=sndNoiseBuf; src.loop=true;
+    const lp=_lp(320,0.6), g=AC.createGain(); g.gain.value=0.0001;
+    g.gain.exponentialRampToValueAtTime(0.03,AC.currentTime+3);        // fade in slowly, never a sudden hiss
+    const lfo=AC.createOscillator(); lfo.type='sine'; lfo.frequency.value=0.05;
+    const lfoG=AC.createGain(); lfoG.gain.value=120; lfo.connect(lfoG); lfoG.connect(lp.frequency);
+    src.connect(lp); lp.connect(g); g.connect(sndComp); src.start(); lfo.start();
+    sndAmb={src,g,lfo};
+  }catch(_){ sndAmb=null; } }
+function ambStop(){ if(!sndAmb) return; try{ const {src,g,lfo}=sndAmb; g.gain.cancelScheduledValues(AC.currentTime);
+    g.gain.setValueAtTime(g.gain.value,AC.currentTime); g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+1.2);
+    src.stop(AC.currentTime+1.4); lfo.stop(AC.currentTime+1.4); }catch(_){} sndAmb=null; }
+function setSound(on){ sndOn=on; try{ localStorage.setItem('corewright.sound',on?'on':'off'); }catch(_){}
+  if(on){ sndStart(); if(sndMaster) sndMaster.gain.value=0.5; } else if(sndMaster) sndMaster.gain.value=0.0; }
+function setAmbience(on){ ambOn=on; try{ localStorage.setItem('corewright.amb',on?'on':'off'); }catch(_){}
+  if(on){ sndStart(); ambStart(); } else ambStop(); }
+// Prime the context on the first real gesture; a delegated tap covers every button/chip in one place.
+addEventListener('pointerdown', sndStart, {once:false});
+addEventListener('keydown', sndStart, {once:false});
+addEventListener('pointerdown', e=>{ if(sndOn && e.target && e.target.closest && e.target.closest('button,.chip,.wingTile')) sfx('tap'); }, true);
 
 const renderer=new THREE.WebGLRenderer({canvas,antialias:gfx().msaa,alpha:true,
   powerPreference:'high-performance'});
@@ -5610,6 +5718,7 @@ function seatCore(){
   // finished/seated with so clamping it back restores THAT template, not the Power Cell default.
   activeCore.wrought=true;
   activeCore.comp=comp;
+  sfx('seat');                               // warm click-thunk — the core seats home
   const pct=Math.round(s.output*100), tier=activeCore.tier;
   const el=t=>document.getElementById(t);
   el('seatPct').textContent=pct+'%';
@@ -12438,6 +12547,7 @@ function mineTick(){
     const fx=mine.tx+0.5+ux*(frac-0.5)*0.7, fy=mine.ty+0.5+uy*(frac-0.5)*0.7;
     particles.push({x:fx,y:fy,vx:(Math.random()-0.5)*0.08,vy:-Math.random()*0.06,life:14,col:'#8b90a8'});
   }
+  sfx('dig');                        // soft scrape while drilling (self-throttled so a hold never machine-guns)
   if (mine.progress>=mine.need){
     const bx=mine.tx, by=mine.ty, horiz=Math.abs(ux)>=Math.abs(uy);   // locked bite dir picks the bonus neighbours
     breakTile(bx,by,t,false);
@@ -12478,6 +12588,7 @@ function applySetAreaBonus(tx,ty,t,horiz){
 function breakTile(tx,ty,t,silent){
   if (t===T_BEDROCK) return;                 // world floor never yields
   if (t===T_WALL){ breakVault(tx,ty); return; }   // caches are 2x2: drilling any cell removes all four
+  if (!silent) sfx('break');                 // only the player's own break — cascade/bonus breaks pass silent, so they don't stack
   if (boreTiles>0 && TILE_TIER[t] && drillPower()<TIER_GATE[TILE_TIER[t]]){ boreTiles--; }   // spent a Bore tile only when it actually breached the wall
   tileDmg.delete(dmgKey(tx,ty));             // damage clears with the tile
   setTile(tx,ty,T_AIR);
@@ -12516,8 +12627,10 @@ function breakVault(tx,ty){
     setTile(cx,cy,T_AIR); setSeen(cx,cy,1); setGate(cx,cy,0);
     for (let i=0;i<6;i++) particles.push({x:cx+0.5,y:cy+0.5,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.16,life:28,col:'#8598b8'});
   }
+  sfx('break');                              // the vault shell gives way
   const rw=nextCacheReward(tier);
   if (rw.type==='unlock'){
+    sfx('unlock');                           // a warm little arpeggio for recovering a tool
     grantUnlock(rw.key); const info=UNLOCK_INFO[rw.key];
     notify(info.label, {kick:'Recovered', tier, desc:info.note+' — recovered from a tier-'+['','I','II','III','IV','V'][tier]+' cache.', ledger:'unlock'});
     if (view==='lapidary') renderLapidary();
@@ -18017,6 +18130,7 @@ function repairTick(){
   for(const id of ids){                        // a bay that came online this session earns the pageant once
     if(isRewardUnlocked(id) && !seen.has(id) && repairAnim[id]===undefined){
       repairAnim[id]=performance.now()+REPAIR_MS; seen.add(id); saveRepairSeen();
+      if(typeof sfx==='function') sfx('repair');   // soft "back online" swell when the bay is fitted
     }
   }
 }
@@ -18438,9 +18552,10 @@ function enterDockedBench(){
   loadCore(core); showView(v);
 }
 function animLapCore(fromLX,fromLY,toLX,toLY,clang){
-  const t0=performance.now(), dur=clang?640:460;
+  const t0=performance.now(), dur=clang?640:460; let struck=false;
   (function step(now){ if (!lapCore||lapCore.grabbed) return; const k=Math.min(1,(now-t0)/dur);
     const e=clang?easeOutBounce(k):(k*(2-k));                        // bounce = clang; ease-out = soft tray landing
+    if (clang && !struck && k>=0.364){ struck=true; sfx('clang'); }  // soft metallic tunk at the first floor contact
     placeLapCoreLogical(fromLX+(toLX-fromLX)*k, fromLY+(toLY-fromLY)*e);
     if (k<1) requestAnimationFrame(step); })(t0);
 }
@@ -18642,6 +18757,12 @@ document.getElementById('gfxBtn').onclick=()=>{
   applyGfx();
   say('Graphics: '+gfxTier+(gfxTier==='high'?' — reload for antialiasing':''));
 };
+function syncSoundBtns(){ const s=document.getElementById('soundBtn'), a=document.getElementById('ambBtn');
+  if (s) s.textContent=sndOn?'on':'off'; if (a) a.textContent=ambOn?'on':'off'; }
+document.getElementById('soundBtn').onclick=()=>{ setSound(!sndOn); syncSoundBtns();
+  if (sndOn) sfx('seat'); say('Sound: '+(sndOn?'on':'off')); };   // a soft confirm chirp when turning it on
+document.getElementById('ambBtn').onclick=()=>{ setAmbience(!ambOn); syncSoundBtns(); say('Ambience: '+(ambOn?'on':'off')); };
+syncSoundBtns();
 document.getElementById('fpsBtn').onclick=()=>{
   const on=!document.body.classList.contains('fpsOn');
   document.body.classList.toggle('fpsOn',on);
@@ -18968,6 +19089,7 @@ function _pushNote(html, cls, ttl){
 function notify(title, opt){ opt=opt||{};
   const col=opt.color || (opt.tier?TIER_COL[opt.tier]:'var(--brass)');
   const icon=opt.icon || (opt.tier?['','I','II','III','IV','V'][opt.tier]:'✦');
+  if (opt.ledger!=='unlock') sfx('notify');   // the cache-unlock caller plays its own richer arpeggio
   logTake(title, opt.ledger||'');
   _pushNote(`<div class="ni" style="--tc:${col}">${icon}</div>`+
     `<div class="nt"><div class="nk" style="color:${col}">${opt.kick||'Notable'}</div>`+
