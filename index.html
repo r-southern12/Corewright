@@ -1467,11 +1467,15 @@ const CUE_BUS={
   grind:'tool', mortar:'tool', scribe:'tool', torch:'tool', burn:'tool', discard:'ui',
   sandrefine:'tool', sandcut:'tool', sandbed:'tool',
   break:'event', clang:'event', seat:'event', fit:'event', unlock:'event', repair:'event',
-  stage:'event', brewdone:'event', travel:'event', notify:'event', yield:'event', land:'event', ping:'event',
+  stage:'event', brewdone:'event', travel:'event', notify:'event', yield:'event', core:'event', land:'event', ping:'event',
   warn:'alert', crack:'alert', damage:'alert', hurt:'alert', lowair:'alert', death:'alert', empty:'alert'
 };
 let _curBus=null;
 let sfxLastAt=0;                                   // when a SPECIFIC (non-notify) cue last played — see sfx()
+/* Yields that land within a breath of each other are ONE event to the player (a multi-tile clear), so they
+   share a rising run instead of stacking. Anything after a gap starts the run again. */
+let _yieldN=0, _yieldAt=0;
+function yieldIndex(){ const t=performance.now(); if (t-_yieldAt>140) _yieldN=0; _yieldAt=t; return _yieldN++; }
 let _sandBedOn=false;                              // edge-tracking for the blaster's held loop (see the tick)
 // The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
 function sfx(name,opt){
@@ -1549,7 +1553,23 @@ function sfx(name,opt){
                   tone(233.08,{type:'sine',peak:0.05,dur:0.5,attack:0.12,lp:900}); tone(174.61,{type:'sine',peak:0.04,dur:0.6,delay:0.3,attack:0.14,lp:800}); break;
     case 'death': { const notes=[220,174.61,146.83,110]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.06,dur:0.7,delay:i*0.16,attack:0.05,lp:1100})); noise({peak:0.035,dur:1.1,lp:400,hp:60,attack:0.35}); break; }
     case 'empty': if(!_throttle('empty',700))return; noise({peak:0.03,dur:0.18,lp:1800,hp:600,attack:0.02}); tone(262,{type:'sine',peak:0.04,dur:0.14,glide:196,lp:1400}); break;  // tank dry: a hollow puff
-    case 'yield': if(!_throttle('yield',70))return; tone(659.25*j(),{type:'sine',peak:0.035,attack:0.004,dur:0.09,lp:2600}); break;   // ore into the crate — tiny and bright
+    /* Ore into the crate. A higher-tier drill clears several tiles at once, and those bonus yields arrive
+       in the SAME frame — one throttled cue would swallow all but the first, which is why the extra blocks
+       registered nothing. Each takes an index instead: it delays and pitches up a step, so a 3- or 9-block
+       clear reads as a little ascending run rather than one blurred tick. Only the first is throttled; the
+       rest ride its stagger. */
+    case 'yield': { const i=Math.min(opt.i||0,5);
+                  if(i===0 && !_throttle('yield',60)) return;
+                  tone(659.25*Math.pow(1.06,i)*j(),{type:'sine',peak:0.035,attack:0.004,dur:0.09,delay:i*0.055,lp:2600}); break; }
+    /* A recovered CORE is the thing the whole loop exists for, so it must not sound like another pebble
+       landing in the crate, nor like a re-skinned version of it. Where a material gets a dry tick, this
+       BLOOMS: a slow crystalline swell, fundamental + fifth + octave + twelfth entering in turn, long
+       tailed, nothing percussive anywhere in it. */
+    case 'core':  { const f=329.63;
+                  tone(f,     {type:'sine',peak:0.055,attack:0.05,dur:0.90,lp:2600});
+                  tone(f*1.5, {type:'sine',peak:0.038,attack:0.07,dur:0.95,delay:0.05,lp:3000});
+                  tone(f*2,   {type:'sine',peak:0.026,attack:0.09,dur:1.00,delay:0.11,lp:3400});
+                  tone(f*3,   {type:'sine',peak:0.013,attack:0.12,dur:0.80,delay:0.18,lp:4000}); break; }
     case 'land':  tone(90,{type:'sine',peak:0.08,dur:0.8,glide:52,lp:600,attack:0.02}); noise({peak:0.06,dur:0.9,lp:340,hp:50,attack:0.02}); break;   // the lab settling into dirt
     case 'ping':  tone(880,{type:'sine',peak:0.04,dur:0.5,attack:0.005,lp:3000}); tone(1318.5,{type:'sine',peak:0.022,dur:0.6,delay:0.06,lp:3200}); break;   // scanner sweep
   }}catch(_){}
@@ -11451,6 +11471,18 @@ const TILE_TIER={
   [T_S4]:4,[T_NODE4]:4,[T_ADT]:4,[T_CHRO]:4,
   [T_S5]:5,[T_NODE5]:5,[T_AETH]:5,[T_QUIN]:5
 };
+/* What the scanner will still ping as a faint speck. It used to be every RESOURCE tile, and since reagents
+   and the shallow metals are everywhere, that buried the two signals that actually matter — a core at your
+   tier, and the next rung up — under a field of grey dots. Reagents never ping: they are common by design
+   and you find them by digging. Ore pings only from SCAN_ORE_MIN_TIER up, and off-tier cores don't, since
+   they are either too deep to mine or already behind you (the bright boxes cover current + next). */
+const SCAN_ORE_MIN_TIER=4;
+const SCAN_NEVER=new Set([T_MOSS,T_CLAY,T_SALT,T_MICA,T_BRINE,T_CINDER,T_RIME]);   // reagents: never pinged
+function scanWorthPinging(t){
+  if (NODE_TILE[t]) return false;                 // cores are handled by the bright boxes above
+  if (SCAN_NEVER.has(t)) return false;            // reagents
+  return (TILE_TIER[t]||0)>=SCAN_ORE_MIN_TIER;    // deep metals only
+}
 const SELF_LIT=new Set([T_NODE1,T_NODE2,T_NODE3,T_NODE4,T_NODE5,T_CINDER,T_RIME,T_MOSS,T_BRINE]);
 // The crystal CORES the player mines and carves, keyed to their tier. The scanner grades its ping by
 // these: it calls out the core tier you're set up for and the one rung up, so you can steer toward the
@@ -12905,6 +12937,7 @@ function tileYield(t,silent,coreSeed,tx,ty){
   else if (NODE_TILE[t]){
     const tier=NODE_TILE[t];
     inventory.push(makeCore(coreSeed!==undefined?coreSeed:(Math.random()*2**31)|0,tier));
+    sfx('core');   // its own bloom, not the material tick — notify() then stands down (see sfxLastAt)
     // a core is always a real find — a seated plate, never silent
     notify(`${TIERS[tier].name} core`, {kick:'Core recovered', tier, desc:'A raw core — it hums in the pack.', ledger:'core'});
   }
@@ -14102,8 +14135,8 @@ function drawWorld(now){
         ctx.strokeRect(px2+TS*0.25,py2+TS*0.25,TS*0.5,TS*0.5);
         ctx.fillStyle = nodeTier===curT ? `rgba(79,227,193,${ping*0.5})` : `rgba(181,139,246,${ping*0.5})`;
         ctx.fillRect(px2+TS*0.42,py2+TS*0.42,TS*0.16,TS*0.16);
-      } else {
-        // everything else: a faint, steady speck — present, but not shouting
+      } else if (scanWorthPinging(t)){
+        // the few seams worth DIVERTING for: a faint, steady speck — present, but not shouting
         ctx.fillStyle='rgba(150,160,190,0.18)';
         ctx.fillRect(px2+TS*0.44,py2+TS*0.44,TS*0.12,TS*0.12);
       }
@@ -19022,7 +19055,7 @@ document.getElementById('volRange').onchange=()=>{ if (sndOn) sfx('seat'); };
 const AUDITION=[
   ['ui',      ['tap','close']],
   ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sandbed','sandrefine','sandcut','mortar','torch','grind','burn','discard']],
-  ['events',  ['yield','break','clang','seat','fit','stage','brewdone','repair','unlock','land','ping','travel','notify']],
+  ['events',  ['yield','core','break','clang','seat','fit','stage','brewdone','repair','unlock','land','ping','travel','notify']],
   ['alerts',  ['warn','empty','damage','crack','hurt','lowair','death']]
 ];
 let auditionT=null;
@@ -19408,9 +19441,11 @@ function firstTake(key){ if (_seenTake.has(key)) return false; _seenTake.add(key
 function mat(label, tier, qty, silent, tx, ty){
   logTake(label + (qty>1?' ×'+qty:''));
   if (firstTake(label)){ notify(label, {kick:'First find', tier, ledger:'first find'}); return; }
-  // A tiny bright tick as material lands in the crate. It rides the same gate as the floating number, so
-  // bonus/cascade yields (silent) stay quiet and one dig never chimes several times.
-  if (!silent && tx!=null){ sfx('yield'); floatGain('+'+qty, tx, ty, TIER_COL[tier]); }
+  // EVERY yield is heard, including the bonus tiles a higher-tier drill clears alongside the one you aimed
+  // at — those pass silent:true and so were registering nothing at all. `silent` still suppresses the
+  // floating NUMBER (that would be visual clutter); the run of ticks is how a multi-block clear reads.
+  sfx('yield',{i:yieldIndex()});
+  if (!silent && tx!=null) floatGain('+'+qty, tx, ty, TIER_COL[tier]);
 }
 // The retired say(): route by mood into the new surfaces.
 function say(t,mood){
