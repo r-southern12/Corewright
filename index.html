@@ -1508,7 +1508,10 @@ function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[na
      brute — GRIND BED. Dark and heavy, slow wander: a wheel under load.
      jet   — AIR JET. Mid, breathy, quick wander: pressure held open.
      torch — BELLOWS. Lowest and softest, barely moving: a flame being fed rather than a hiss. */
-const SAND_BED ={lp:3400,hp:1500,peak:0.016,lfoHz:2.2,lfoDepth:700,bus:'tool'};
+const SAND_BED ={lp:3400,hp:1500,peak:0.009,lfoHz:2.2,lfoDepth:700,bus:'tool'};
+// LAP WHIRR, very reduced — the faceting saw while its blade is closing. Quietest of the beds by some
+// way: the saw's own cutting ticks are the event, this is only the machine turning behind them.
+const FACET_BED={lp:1500,hp:300, peak:0.008,lfoHz:1.6,lfoDepth:320,hum:168,humPeak:0.22,bus:'tool'};
 const BRUTE_BED={lp:700, hp:150, peak:0.020,lfoHz:0.8,lfoDepth:180,bus:'tool'};
 const JET_BED  ={lp:2600,hp:600, peak:0.015,lfoHz:1.1,lfoDepth:600,bus:'tool'};
 const TORCH_BED={lp:1000,hp:150, peak:0.017,lfoHz:0.35,lfoDepth:220,bus:'tool'};
@@ -1550,8 +1553,8 @@ function sfx(name,opt){
     case 'dig':   if(!_throttle('dig',95))return;   // sandy scrape + a warm low thud, pitch-jittered so a hold never rings
                   noise({peak:0.045,dur:0.09,lp:500+Math.random()*260,hp:90}); tone(56+Math.random()*10,{type:'sine',peak:0.05,dur:0.09,lp:380}); break;
     // GRAVEL CRUMBLE — a handful of rock giving way, not one thud
-    case 'break': crackle({n:8,nVar:6,peak:0.05,lp:1900,hp:260,spread:0.26,bias:1.1});
-                  tone(112*j(),{type:'sine',peak:0.06,dur:0.24,glide:56,lp:600,attack:0.006}); break;
+    // GRAVEL CRUMBLE, and nothing under it — the low body was reading as a drum hit
+    case 'break': crackle({n:8,nVar:6,peak:0.055,lp:1900,hp:260,spread:0.26,bias:1.1}); break;
     case 'clang': tone(300*j(),{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452*j(),{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
     case 'seat':  tone(178*j(),{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
     // TWIG SNAP — one clean break, then a little debris
@@ -1574,16 +1577,15 @@ function sfx(name,opt){
                   rises, the sound of material getting smaller.
          cut    — grain already at the floor WORN AWAY. This is a real loss, so it carries a low body
                   under it: that weight is the "depth" the bare hiss was missing. */
-    /* GLASS BREAK, scaled down — the grain shattering a step finer. The scribe's 'crack' is the SEVERE
-       version of this same sound, so routine work has to read as its little brother rather than its
-       equal: fewer shards, tighter spread, lower peak. No low body anywhere — the weight is the shards. */
+    /* GLASS PING — the grain letting go. Kept SHORT on purpose: this fires several times a second under
+       a held blaster, so the long singing version (the scanner's, 0.9s) would pile into a mush. */
     case 'sandrefine': if(!_throttle('sandrefine',70))return;
-                  noise({peak:0.05,dur:0.035,lp:7000,hp:2200,attack:0.001});
-                  crackle({n:3,nVar:2,peak:0.022,lp:6000,hp:1600,spread:0.16,bias:1.2}); break;
-    /* GLASS PING — the cube coming away clean. Kept SHORT on purpose: this fires several times a second
-       under a held blaster, so the long singing version (the scanner's, 0.9s) would pile into a mush. */
-    case 'sandcut':    if(!_throttle('sandcut',80))return;
                   bandPing(2400*j(),{q:26,dur:0.20,peak:0.16}); break;
+    /* The FACETING wheel's removal sound, shared: a cube coming away is the same act whichever tool did
+       it, so it should be the same sound. Deliberately identical to 'facet' rather than a near-copy —
+       if that one is retuned, this follows it. */
+    case 'sandcut':    if(!_throttle('sandcut',80))return;
+                  noise({peak:0.03,dur:0.18,lp:3200*jn(),hp:1600,attack:0.02}); break;
     // Audition only: run the held bed briefly so the continuous layer can be judged without holding the tool.
     case 'sandbed': loopStart('sandDemo',SAND_BED); setTimeout(()=>loopStop('sandDemo'),1300); break;
     case 'brutebed':loopStart('bruteDemo',BRUTE_BED); setTimeout(()=>loopStop('bruteDemo'),1300); break;
@@ -1640,7 +1642,9 @@ function sfx(name,opt){
        rest ride its stagger. */
     case 'yield': { const i=Math.min(opt.i||0,5);
                   if(i===0 && !_throttle('yield',60)) return;
-                  tone(659.25*Math.pow(1.06,i)*j(),{type:'sine',peak:0.035,attack:0.004,dur:0.09,delay:i*0.055,lp:2600}); break; }
+                  // Was ringing on too long for something that fires on every tile. Halved, and the run
+                  // tightened with it, so a multi-block clear is a quick flurry rather than a melody.
+                  tone(659.25*Math.pow(1.06,i)*j(),{type:'sine',peak:0.035,attack:0.003,dur:0.045,delay:i*0.034,lp:2600}); break; }
     /* A recovered CORE is the thing the whole loop exists for, so it must not sound like another pebble
        landing in the crate, nor like a re-skinned version of it. Where a material gets a dry tick, this
        BLOOMS: a slow crystalline swell, fundamental + fifth + octave + twelfth entering in turn, long
@@ -1684,12 +1688,19 @@ function loopStart(id,cfg){
     if(cfg.hp){ const h=AC.createBiquadFilter(); h.type='highpass'; h.frequency.value=cfg.hp; node.connect(h); node=h; }
     const g=AC.createGain(); g.gain.value=0.0001; node.connect(g); g.connect(_out(cfg.bus||'tool'));
     g.gain.exponentialRampToValueAtTime(cfg.peak||0.05, AC.currentTime+(cfg.fade||0.10));
+    // An optional faint tonal layer through the SAME gain, so it fades with the bed. A spinning tool has
+    // a pitch as well as a rush; noise alone reads as air, never as something turning.
+    const hums=[];
+    if(cfg.hum){ for(const [hf,hg] of [[cfg.hum,1],[cfg.hum*2,0.45]]){
+      const o2=AC.createOscillator(); o2.type='sine'; o2.frequency.value=hf*(1+(Math.random()-0.5)*0.004);
+      const hv=AC.createGain(); hv.gain.value=(cfg.humPeak||0.3)*hg;
+      o2.connect(hv); hv.connect(g); o2.start(); hums.push(o2); } }
     // A slow wander on the cutoff so a held tool BREATHES. A fixed corner on a looped buffer is the
     // single thing that makes a sustained noise read as a tape loop rather than a working machine.
     const lfo=AC.createOscillator(); lfo.type='sine'; lfo.frequency.value=cfg.lfoHz||0.6;
     const lg=AC.createGain(); lg.gain.value=cfg.lfoDepth||220;
     lfo.connect(lg); lg.connect(lp.frequency); lfo.start(); src.start();
-    sndLoops[id]={src,g,lfo};
+    sndLoops[id]={src,g,lfo,hums};
   }catch(_){}
 }
 function loopStop(id){
@@ -1699,6 +1710,7 @@ function loopStop(id){
     L.g.gain.setValueAtTime(Math.max(0.0001,L.g.gain.value),t);
     L.g.gain.exponentialRampToValueAtTime(0.0001,t+f);
     L.src.stop(t+f+0.02); L.lfo.stop(t+f+0.02);
+    if(L.hums) L.hums.forEach(o=>{ try{ o.stop(t+f+0.02); }catch(_){} });
     L.src.onended=()=>{ try{ L.g.disconnect(); }catch(_){} };
   }catch(_){}
 }
@@ -20307,6 +20319,7 @@ let t=0, lastNow=0;
     holdBed('sand', carving && typeof sanding !=='undefined' && sanding,  SAND_BED);
     holdBed('brute',carving && typeof grinding!=='undefined' && grinding, BRUTE_BED);
     holdBed('jet',  carving && typeof jetting !=='undefined' && jetting,  JET_BED);
+    holdBed('facet',carving && typeof sawClosing!=='undefined' && sawClosing, FACET_BED);
     holdBed('torch',view==='forgeb' && typeof fluxOn!=='undefined' && fluxOn, TORCH_BED); }
   frameStats(now);
   }catch(err){
