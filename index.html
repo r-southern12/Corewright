@@ -1464,7 +1464,7 @@ const CUE_BUS={
   grind:'tool', mortar:'tool', scribe:'tool', torch:'tool', burn:'tool', discard:'ui',
   break:'event', clang:'event', seat:'event', fit:'event', unlock:'event', repair:'event',
   stage:'event', brewdone:'event', travel:'event', notify:'event', yield:'event', land:'event', ping:'event',
-  warn:'alert', crack:'alert', hurt:'alert', lowair:'alert', death:'alert', empty:'alert'
+  warn:'alert', crack:'alert', damage:'alert', hurt:'alert', lowair:'alert', death:'alert', empty:'alert'
 };
 let _curBus=null;
 let sfxLastAt=0;                                   // when a SPECIFIC (non-notify) cue last played — see sfx()
@@ -1494,7 +1494,11 @@ function sfx(name,opt){
     case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200*jn(),hp:1600,attack:0.02}); break;
     case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600*jn(),hp:300,attack:0.12}); break;
     case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900*jn(),hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
-    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.04,dur:0.35,lp:5000*jn(),hp:2500,attack:0.05}); break;
+    // Sandblast was a narrow 2.5k-5k band with a fast attack, which is exactly the recipe for a sparking
+    // electrical arc — an arc is a bright, instant crackle. Grit on stone is broadband AIR with a swell:
+    // drop the high-pass so the body of the rush comes through, take the fizz off the top, and let it
+    // build rather than snap. "Pssshh", not "bzzt".
+    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.045,dur:0.42,lp:2600*jn(),hp:380,attack:0.14}); break;
     case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100*jn(),hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
     case 'burn':  noise({peak:0.04,dur:0.6,lp:1400,hp:400,attack:0.18}); tone(150,{type:'sine',peak:0.045,dur:0.5,glide:90,lp:900}); break;
     case 'discard':tone(300,{type:'sine',peak:0.045,dur:0.14,glide:180,lp:1200}); noise({peak:0.025,dur:0.06,lp:1600,hp:300}); break;
@@ -1505,6 +1509,14 @@ function sfx(name,opt){
     case 'mortar':if(!_throttle('mortar',150))return; noise({peak:0.038,dur:0.3,lp:800*jn(),hp:120,attack:0.06}); break;   // stone pestle on stone, held
     case 'scribe':if(!_throttle('scribe',110))return; noise({peak:0.036,dur:0.12,lp:1300*jn(),hp:260}); break;             // hand rub chipping matrix, held
     case 'crack': tone(210*j(),{type:'triangle',peak:0.07,dur:0.1,glide:96,lp:1600}); noise({peak:0.055,dur:0.26,lp:2200,hp:400}); break;   // crystal shatters — the one cue with a bite to it
+    /* Played UNDERNEATH the tool's own cue whenever a cut eats crystal from inside the template, so the
+       work still sounds like the tool you're holding but a bad bite is unmistakable. Two low tones a few
+       Hz apart BEAT against each other; that unsettled wobble is what reads as "wrong" without needing
+       volume or brightness, which would break the calm. */
+    case 'damage':if(!_throttle('damage',150))return;
+                  tone(118*j(),{type:'triangle',peak:0.075,dur:0.28,glide:82,lp:700});
+                  tone(126*j(),{type:'sine',peak:0.05,dur:0.26,glide:88,lp:600});
+                  noise({peak:0.03,dur:0.12,lp:600,hp:90}); break;
     case 'torch': if(!_throttle('torch',170))return; noise({peak:0.036,dur:0.34,lp:1500*jn(),hp:500,attack:0.09}); break;  // gas flame hiss, held
     case 'stage': tone(392*j(),{type:'sine',peak:0.05,dur:0.26,lp:2200}); tone(587.33,{type:'sine',peak:0.035,dur:0.3,delay:0.1,lp:2400}); break;   // brew stage advanced
     case 'brewdone':{ const notes=[349.23,440,523.25,698.46]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.05,dur:0.42,delay:i*0.11,lp:2200})); break; }
@@ -3366,6 +3378,16 @@ function sparkleContact(touching){
 let shake=0;
 const cameraHome=new THREE.Vector3().copy(camera.position);
 function addShake(a){ shake=Math.min(0.5,shake+a); }
+/* The game's ONE definition of damage: crystal lost from INSIDE the template. It is what the bench shake
+   already means ("shake means DAMAGE, nothing else"), so every tool asks the same question the same way
+   and sounds the same warning. Must be called BEFORE the cut — the cells are gone by the time we could
+   ask afterwards. */
+function cutDamages(meshSet){
+  if (!meshSet||!meshSet.size) return false;
+  for (const v of voxels){ if (!meshSet.has(v.mesh)) continue;
+    if (isCrystal(v.cell)&&inTemplate(v.cell)) return true; }
+  return false;
+}
 function applyShake(){
   camera.position.copy(cameraHome);
   if (shake<=0.001) return;
@@ -4145,11 +4167,13 @@ function tutAllow(set){
 }
 function spendPotion(verb){
   if (tutBlocks(preview)) return;
+  const hurt=cutDamages(preview);        // ask BEFORE the cut; these cells are about to stop existing
   const shed=dissolve(preview);
   if (shed===0){ say('The potion finds nothing to dissolve there.','warn'); return; }
   if (!tut.on&&!adminOn) potions[potion]--;
   updateStock();
   addShake(potion==='cata'?0.42:potion==='blast'?0.2:0.09);
+  if (hurt) sfx('damage');               // the solvent ate template crystal, not just waste
   floatText('−'+shed+' shards','var(--danger)');
   refreshTint(); liveOutput();
   say(`${verb} — ${shed} shard${shed>1?'s':''} away, ${voxels.length} remain.`);
@@ -4460,7 +4484,7 @@ function sawTick(dt,now){
     drawPower(SAW_POWER);                        // charged: material was worn off
     lastSawCut=now;                             // start the cooldown
     sfx('facet');                               // fine saw shimmer (throttled)
-    if (cutKeeper) addShake(0.05);               // you cut into the piece itself
+    if (cutKeeper){ addShake(0.05); sfx('damage'); }   // you cut into the piece itself — say so, don't just shake
     for (const o of workable.slice(0,3)){
       if (!o.v.mesh.parent) continue;
       o.v.mesh.getWorldPosition(swp); spark(swp.x,swp.y,swp.z,2,0.1);
@@ -4479,6 +4503,9 @@ function sawTick(dt,now){
 // the grain, permanently.
 let scribePower=0;
 const SCRIBE_LIGHT=0.55, SCRIBE_HARD=1.0;
+// How often a crystal strike also CRACKS along the grain (see the strike handler). Most strikes should
+// just cost you the shard — the lost template volume is punishment enough on its own.
+const SCAR_CHANCE=0.25;
 function scribeRadius(){
   const base=activeCore?TIERS[activeCore.tier].vox:0.55;
   return base*(SCRIBE_LIGHT+(SCRIBE_HARD-SCRIBE_LIGHT)*scribePower);
@@ -4530,16 +4557,28 @@ function scribeAt(x,y,now){
     for (let i=0;i<2;i++) spark(hit.x,hit.y,hit.z,1,0.05+0.08*scribePower);
   }
   if (crystal.length){
-    // THE PUNISHMENT: the struck cell shatters and a crack runs along the
-    // grain, scarring what it passes through. Permanent unless cut out.
+    /* THE PUNISHMENT. Losing the struck cell is ALWAYS the cost — and inside the template that is
+       already a real loss, since it's volume you can't get back and packing you'll never score. The
+       running CRACK on top of that was too much: it fired on every single strike, so one slip could
+       scar a core past saving. It is now the unlucky outcome rather than the normal one, which also
+       makes it mean something when it does happen. Tune SCAR_CHANCE, not the crack's reach — how far
+       a crack runs when the lattice does let go is right; how often it let go was not. */
     const victim=crystal[0];
-    const scarred=crackAlongGrain(victim.cell);
+    const scarred=(Math.random()<SCAR_CHANCE)?crackAlongGrain(victim.cell):0;
     dissolve(new Set([victim.mesh]));
-    sfx('crack');                                 // permanent damage — the one cue allowed a bite
-    addShake(0.3);
-    spark(hit.x,hit.y,hit.z,8,0.2);
-    floatText('CRACK','var(--danger)');
-    say(`The scribe bites crystal — it shatters, and the crack runs ${scarred} cells along the grain. That damage is permanent.`,'bad');
+    if (scarred){
+      sfx('crack');                               // the lattice gave — permanent, and the one cue with a bite
+      addShake(0.3);
+      spark(hit.x,hit.y,hit.z,8,0.2);
+      floatText('CRACK','var(--danger)');
+      say(`The scribe bites crystal — it shatters, and the crack runs ${scarred} cells along the grain. That damage is permanent.`,'bad');
+    } else {
+      sfx('damage');                              // the standard "that was crystal" marker, not the severe one
+      addShake(0.12);
+      spark(hit.x,hit.y,hit.z,4,0.12);
+      floatText('−1 shard','var(--danger)');
+      say('The scribe bites crystal — the cell shatters, but the grain holds and no crack runs. That shard is gone.','bad');
+    }
   } else if (matrix.length){
     const left=countMatrix();
     const clean=coreIsClean(activeCore);
@@ -4928,7 +4967,7 @@ function sandAt(cx,cy,now){
   } else {
     const shed=dissolve(one);
     if (shed>0){
-      if (wasKeeper) addShake(0.05);           // you just cut into the piece
+      if (wasKeeper){ addShake(0.05); sfx('damage'); }   // you just cut into the piece
       targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,1,0.07);
       refreshTint(); liveOutput(); updateGrainHud();
     }
@@ -4983,9 +5022,13 @@ function grindAt(x,y,now){
   if (protectOn()){ out=tutAllow(out); if (out.size===0) return; }   // grind the waste around the guarded core; never abort the hold
   if (!tut.on&&!drawPower(0.12+0.3*brutePower)){ say('The wheel spins down. No power.','warn'); grinding=false; return; }
   lastGrind=now;
+  // The wheel shakes on EVERY bite (that's its heft, not damage), so unlike the saw and the blaster it
+  // had no notion of a bad cut. Ask before dissolving so it can sound one.
+  const hurt=cutDamages(out);
   const shed=dissolve(out);
   if (shed>0){
     sfx('brute');                               // rolling wheel grind (throttled)
+    if (hurt) sfx('damage');                    // ...and it took template crystal with it
     addShake(0.04+0.14*brutePower);
     for (let i=0;i<Math.min(3,shed);i++) spark(hit.x,hit.y,hit.z,1,0.06+0.12*brutePower);
     refreshTint(); liveOutput();
@@ -18899,7 +18942,7 @@ const AUDITION=[
   ['ui',      ['tap','close']],
   ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sand','mortar','torch','grind','burn','discard']],
   ['events',  ['yield','break','clang','seat','fit','stage','brewdone','repair','unlock','land','ping','travel','notify']],
-  ['alerts',  ['warn','empty','crack','hurt','lowair','death']]
+  ['alerts',  ['warn','empty','damage','crack','hurt','lowair','death']]
 ];
 let auditionT=null;
 function stopAudition(){ if (auditionT){ clearTimeout(auditionT); auditionT=null; }
