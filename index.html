@@ -1454,13 +1454,38 @@ function noise(o){ o=o||{}; if(!sndNoiseBuf) return; const t0=AC.currentTime+(o.
   src.onended=()=>{ try{ head.disconnect(); }catch(_){} };     // see tone(): don't leave the graph to GC
   src.start(t0+(o.startAt||0)); src.stop(t0+atk+dur+0.05);
 }
+/* STONE CRACKING. A fracture is not one click: it is a run of tiny irregular impulses as the lattice
+   lets go, which is why a single pitched pop never reads as stone however it is tuned. Scatter a handful
+   of very short, dark ticks across a few tens of milliseconds, and let the COUNT, TIMING, level and
+   filter of each vary per firing. The variation is STRUCTURAL — no two firings share a shape — so it
+   never sounds like one sample transposed, which is the trap the pitched version fell into.
+   Kept dry, low and close for the ASMR read: no ring, no brightness, nothing sustained. */
+function crackle(o){ o=o||{};
+  const n=(o.n||3)+((Math.random()*(o.nVar||3))|0);
+  for(let i=0;i<n;i++){
+    // The FIRST impulse is the fracture itself: it lands at once and hardest. The rest are debris
+    // settling, so they bias EARLY (pow>1 pulls the draw toward zero) and fall away in level — that
+    // decay is the difference between a crack and a rattle.
+    const at = i===0 ? 0 : Math.pow(Math.random(),1.8)*(o.spread||0.075);
+    const fall = i===0 ? 1 : 0.30+0.45*Math.random();
+    noise({peak:(o.peak||0.03)*fall,
+           dur:(i===0?0.020:0.010)+Math.random()*0.018,
+           lp:(o.lp||1600)*(i===0?1:0.55+Math.random()*0.6), hp:o.hp||220,
+           attack:0.0012, delay:at});
+  }
+  // a short woody/stony body under the ticks so it has a material, not just a spray of clicks
+  if(o.body) tone(o.body*(0.94+Math.random()*0.12),
+    {type:'sine',peak:o.bodyPeak||0.028,dur:0.17,glide:o.body*0.62,lp:520,attack:0.004});
+}
 function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[name]<ms) return false; sndT[name]=t; return true; }
 /* Which bus each cue plays on (see SND_MIX). Set once by sfx() and read by tone()/noise(), rather than
    threading a bus field through every option object in the table below — the cue table stays readable
    and a cue can never be routed inconsistently across its own layered voices. */
-// The blaster's held rush. Airy and mid-weighted (not the thin high band that read as an electrical
-// arc), with a slow wander on the cutoff so it breathes instead of sitting flat.
-const SAND_BED={lp:2400,hp:320,peak:0.05,lfoHz:0.55,lfoDepth:280,bus:'tool'};
+/* The blaster's held rush. A SUSTAINED sound is perceptually far louder and more fatiguing than a
+   transient at the same peak — at 0.05 this sat on top of everything and read as aggressive rather than
+   as a tool running in the background. It is a bed: it should sit UNDER the events, felt more than heard.
+   Hence a hard cut to the level and a darker corner (less hiss up top, which is most of the aggression). */
+const SAND_BED={lp:1600,hp:260,peak:0.015,lfoHz:0.5,lfoDepth:200,bus:'tool'};
 const CUE_BUS={
   tap:'ui', close:'ui',
   dig:'tool', cleave:'tool', brute:'tool', facet:'tool', polish:'tool', brine:'tool',
@@ -1512,8 +1537,8 @@ function sfx(name,opt){
          cut    — grain already at the floor WORN AWAY. This is a real loss, so it carries a low body
                   under it: that weight is the "depth" the bare hiss was missing. */
     case 'sandrefine': if(!_throttle('sandrefine',70))return;
-                  noise({peak:0.028,dur:0.09,lp:4200*jn(),hp:1500,attack:0.004});
-                  tone(760*j(),{type:'sine',peak:0.02,dur:0.08,glide:1150,lp:5200}); break;
+                  // the grain letting go — a small dry stone crack, different in shape every time
+                  crackle({n:3,nVar:3,peak:0.026,lp:1500,hp:240,spread:0.07,body:190,bodyPeak:0.022}); break;
     case 'sandcut':    if(!_throttle('sandcut',80))return;
                   noise({peak:0.042,dur:0.2,lp:1500*jn(),hp:200,attack:0.008});
                   tone(148*j(),{type:'sine',peak:0.05,dur:0.24,glide:94,lp:620}); break;
