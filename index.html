@@ -12077,6 +12077,7 @@ function enterWing(wing){
   if (wing.key==='brewing' && !owned('brewing')){        // the brewing kit is a cache unlock
     say('The brewing station is sealed — its kit is recovered from an ancient cache.','warn'); return;
   }
+  bankHaul();          // the haul is home: from here nothing already held is at stake (see THE RUN HAUL)
   keys.jump=false;
   showView(wing.view);
   renderWingNav();
@@ -12481,7 +12482,7 @@ function labTick(dt){
   if (depth0<=1 && Math.abs(player.x-(lab.x+LAB_W/2))>LAB_RECALL_DIST) startLabDescent();
 }
 function spawn(){ player.x=SPAWN_X+0.5; player.y=surfaceY[SPAWN_X]-1.2;
-  player.vx=0; player.vy=0; hp=100; air=maxAir; updateMeters(); }
+  player.vx=0; player.vy=0; hp=100; air=maxAir; bankHaul(); updateMeters(); }
 // Switch to another planet mid-run: keeps the player's gear, cores and dust, but
 // rolls a fresh world for the destination and drops them on its surface. World-
 // bound state (a left-behind corpse, live enemies, an in-progress dig) belongs to
@@ -12712,16 +12713,54 @@ function stepEnemies(dt){
   }
 }
 
+/* ============================================================
+   THE RUN HAUL — what a death actually costs.
+   Dying used to drop EVERYTHING: the whole core inventory and every material,
+   including cores that had been sitting safe in the lab for hours. That is not a
+   risk, it is a punishment for having played. Only what you are CARRYING — what
+   you have picked up since you last took a haul into the lab — is at stake.
+
+   Tracked by SNAPSHOT rather than by tagging each gain. When the run starts we
+   record what you already had; the haul is simply the difference. That is
+   automatically right for every way of acquiring something — a dug tile, a cache
+   payout, a recovered corpse, anything added later — with no per-gain
+   bookkeeping to forget to update.
+   ============================================================ */
+let runStart={coreIds:new Set(), metals:{}, reagents:{}, powder:{}};
+function bankHaul(){
+  // Called when the haul comes home. From here on, everything currently held is SAFE.
+  runStart={ coreIds:new Set(inventory.map(c=>c.id)),
+             metals:{...metals}, reagents:{...reagents}, powder:{...powder} };
+}
+// How much of `live` was gained since the run began — and take it off the books.
+function _stripGained(live, base){
+  const out={};
+  for (const k in live){
+    const d=Math.max(0,(live[k]||0)-(base[k]||0));
+    if (d>0){ out[k]=d; live[k]-=d; }
+  }
+  return out;
+}
+
 // ---------- death & corpse ----------
 function die(){
   sfx('death');                 // a slow falling four-note settle, whichever rule is in play
   if (hardcore){
-    corpse={x:player.x,y:player.y,cores:inventory.slice(),
-      reagents:{...reagents},metals:{...metals}};
-    inventory=[];
-    for (const k in reagents) reagents[k]=0; for (const k in powder) powder[k]=0;
-    metals.copper=0; metals.iron=0; metals.vst=0;
-    say('You black out. The haul stays with the body — go back for it.','bad');
+    // Only cores picked up THIS run, and never one already fitted to equipment.
+    const carried=inventory.filter(c=>!runStart.coreIds.has(c.id) && !coreIsInstalled(c));
+    const lostMetals=_stripGained(metals,runStart.metals);
+    const lostReagents=_stripGained(reagents,runStart.reagents);
+    const lostPowder=_stripGained(powder,runStart.powder);   // powder used to be DESTROYED, not dropped
+    inventory=inventory.filter(c=>!carried.includes(c));
+    if (activeCore && carried.includes(activeCore)) activeCore=null;
+    corpse={x:player.x,y:player.y,cores:carried,
+      reagents:lostReagents,metals:lostMetals,powder:lostPowder};
+    const n=carried.length, mats=Object.keys(lostMetals).length+Object.keys(lostReagents).length+Object.keys(lostPowder).length;
+    say(n||mats
+      ? `You black out. This run's haul${n?` — ${n} core${n>1?'s':''}`:''}${mats?` and what you dug`:''} stays with the body. Everything already banked at the lab is safe.`
+      : 'You black out. You were carrying nothing — the lab still has it all.','bad');
+    // Nothing is left on the books to lose twice: the corpse holds it now.
+    bankHaul();
     saveGame();                       // atomic: corpse exists before anything else can run
   } else {
     say('You black out and wake at the lab, gear intact.','warn');
@@ -12732,10 +12771,13 @@ function checkCorpse(){
   if (!corpse) return;
   if (Math.hypot(corpse.x-player.x,corpse.y-player.y)<1.3){
     inventory.push(...corpse.cores);
-    for (const k in corpse.reagents) reagents[k]+=corpse.reagents[k];
-    for (const k in corpse.metals) metals[k]+=corpse.metals[k];
+    for (const k in corpse.reagents||{}) reagents[k]=(reagents[k]||0)+corpse.reagents[k];
+    for (const k in corpse.metals||{})   metals[k]  =(metals[k]||0)  +corpse.metals[k];
+    for (const k in corpse.powder||{})   powder[k]  =(powder[k]||0)  +corpse.powder[k];
+    const n=corpse.cores.length;
     corpse=null;
-    say('Haul recovered from the body.','good');
+    // Deliberately NOT banked: you are carrying it again, so it is at stake again until you get home.
+    say(`Haul recovered from the body${n?` — ${n} core${n>1?'s':''}`:''}. Get it home.`,'good');
   }
 }
 
@@ -13622,6 +13664,73 @@ const METAL_PAL={
   [T_QUIN]  :['#fff7d0','#e8dc9a','#b0a060','#5f5828']    // quintessence — pale luminous gold
 };
 
+/* The body has to be FINDABLE — a haul you cannot walk back to is just a deletion with extra steps.
+   On screen it gets a pulsing ring; off screen a brass pointer rides the edge of the viewport aimed at
+   it, carrying the distance. Drawn in the workshop's own language (chamfered plate, engraved figure,
+   one light source) so it reads as an instrument on the visor rather than a game HUD sticker. */
+function drawCorpseMarker(ctx,sx,sy,now){
+  if (!corpse) return;
+  // the 2D world canvas, NOT the 3D viewport (VW/VH) - clamping to the wrong pair
+  // puts the arrow off-canvas entirely, which is exactly what it did.
+  const pad=42, W=world2d.width, H=world2d.height;
+  const pulse=0.55+0.45*Math.abs(Math.sin(now*0.0035));
+  const dist=Math.round(Math.hypot(corpse.x-player.x, corpse.y-(player.y-0.5)));
+  const onScreen = sx>pad && sx<W-pad && sy>pad && sy<H-pad;
+
+  ctx.save();
+  if (onScreen){
+    // it's in view: ring it so the body itself is unmistakable among the rubble
+    ctx.strokeStyle=`rgba(224,82,61,${0.35+0.45*pulse})`; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(sx,sy-TS*0.2,TS*(0.75+0.12*pulse),0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle=`rgba(232,163,61,${0.5*pulse})`; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(sx,sy-TS*0.2,TS*(0.95+0.15*pulse),0,Math.PI*2); ctx.stroke();
+    ctx.restore(); return;
+  }
+  /* Off screen: ORBIT the player rather than clamping to the viewport edge. Every edge of this screen is
+     furniture — the instrument rail down the left, the condition readout and field actions right, the
+     drill cluster bottom-right, the consumable pack and the guide along the bottom — so an edge-clamped
+     arrow spends most of its time hidden behind the HUD (it sat inside the drill dial at the first
+     attempt). An ellipse well inside the frame is always in clear space, and reads as a compass besides. */
+  // The orbit sits slightly ABOVE centre and is flatter than it is wide, because the bottom of the
+  // screen carries more furniture than the top (consumable pack, guide, drill cluster).
+  const ccx=W/2, ccy=H*0.45, rx=W*0.30, ry=H*0.20;
+  const dx=sx-ccx, dy=sy-ccy, ang=Math.atan2(dy,dx);
+  const ax=ccx+Math.cos(ang)*rx, ay=ccy+Math.sin(ang)*ry;
+
+  ctx.translate(ax,ay); ctx.rotate(ang);
+  // a chamfered brass chevron with a hard dark edge under it — machined, not a triangle
+  const L=22, Wd=16;
+  ctx.beginPath();
+  ctx.moveTo(L,0); ctx.lineTo(-3,-Wd); ctx.lineTo(-9,-Wd*0.42);
+  ctx.lineTo(-9,Wd*0.42); ctx.lineTo(-3,Wd);
+  ctx.closePath();
+  const g=ctx.createLinearGradient(-9,-Wd,L,Wd);
+  g.addColorStop(0,'#6E5628'); g.addColorStop(0.45,'#E8C77E'); g.addColorStop(1,'#8A6E33');
+  ctx.fillStyle=g; ctx.fill();
+  ctx.strokeStyle='rgba(10,12,10,.85)'; ctx.lineWidth=1.6; ctx.stroke();
+  ctx.strokeStyle=`rgba(224,82,61,${0.45+0.4*pulse})`; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(L-5,0); ctx.stroke();
+  // a short tail, fading back the way you came
+  const t=ctx.createLinearGradient(-11,0,-30,0);
+  t.addColorStop(0,`rgba(232,199,126,${0.5*pulse})`); t.addColorStop(1,'rgba(232,199,126,0)');
+  ctx.strokeStyle=t; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-11,0); ctx.lineTo(-30,0); ctx.stroke();
+  ctx.rotate(-ang);                                    // the plate stays level however the arrow points
+
+  // distance plate, on the inboard side so it never sits off the edge
+  // the plate hangs off the BACK of the arrow, so it never covers the direction it is pointing
+  const lbl=dist+'m';
+  const px=-Math.cos(ang)*26, py=-Math.sin(ang)*26+13;
+  ctx.font='600 12px Georgia, serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  const w=Math.max(30,ctx.measureText(lbl).width+14);
+  ctx.beginPath();
+  ctx.moveTo(px-w/2+4,py-9); ctx.lineTo(px+w/2,py-9);
+  ctx.lineTo(px+w/2-4,py+9); ctx.lineTo(px-w/2,py+9); ctx.closePath();
+  ctx.fillStyle='rgba(12,15,18,.88)'; ctx.fill();
+  ctx.strokeStyle='rgba(200,160,82,.5)'; ctx.lineWidth=1; ctx.stroke();
+  ctx.fillStyle='#E8C77E'; ctx.fillText(lbl,px,py+0.5);
+  ctx.restore();
+}
+
 // ---------- overworld tile bake cache ----------
 // The frozen base of every dug tile — flat fill, milled noise, carved bevel, the
 // lit exposed edge and topsoil crust — is deterministic from the cell's type and
@@ -14283,6 +14392,7 @@ function drawWorld(now){
     ctx.fillStyle='#E0523D';
     ctx.fillRect(cx2-TS*0.1,cy2-TS*0.5,TS*0.2,TS*0.5);
     ctx.fillRect(cx2-TS*0.28,cy2-TS*0.38,TS*0.56,TS*0.14);
+    drawCorpseMarker(ctx,cx2,cy2,now);
   }
 
   for (const e of enemies){
@@ -19956,7 +20066,7 @@ guideRecall=()=>{
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=23;  // v23: Template Ward metered in crystal VOLUME (wardVol) instead of a cube count   // v22: per-tier alloy agents (manganese/umbrite/chromite/quintessence) — new ore tiles change virgin gen   // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=24;  // v24: a corpse carries dropped POWDER too (death now drops only the run's haul)   // v23: Template Ward metered in crystal VOLUME (wardVol) instead of a cube count   // v22: per-tier alloy agents (manganese/umbrite/chromite/quintessence) — new ore tiles change virgin gen   // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -20065,7 +20175,7 @@ function saveGame(){
       active:activeCore?activeCore.id:null,
       corpse:corpse?{x:q3(corpse.x),y:q3(corpse.y),
         cores:corpse.cores.map(packCore),
-        reagents:{...corpse.reagents},metals:{...corpse.metals}}:null,
+        reagents:{...corpse.reagents},metals:{...corpse.metals},powder:{...(corpse.powder||{})}}:null,
       built, builtNames:builtNames.slice(-8),
       tutDone:!tut.on, adminOn, adminGlow,
       comp, gx:q3(gx), gy:q3(gy), gz:q3(gz)
@@ -20148,13 +20258,16 @@ function loadGame(){
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
       cores:(d.corpse.cores||[]).map(unpackCore),
-      reagents:d.corpse.reagents,metals:d.corpse.metals}:null;
+      reagents:d.corpse.reagents||{},metals:d.corpse.metals||{},powder:d.corpse.powder||{}}:null;
     built=d.built||0; builtNames=d.builtNames||[];
     comp=d.comp||'cell'; gx=d.gx||0; gy=d.gy||0; gz=d.gz||0;
     tut.on=false; tut.protect=false;
     adminOn=!!d.adminOn; adminGlow=!!d.adminGlow;
     // World was re-rolled under this save: put them on the new surface and set the lab back down.
     if (_needSpawn){ spawn(); if (!lab.placed && typeof landLabAtStart==='function') landLabAtStart(false); }
+    // A loaded run is treated as banked: you shouldn't lose a shelf full of cores to a death on the
+    // first tile after reloading, and we can't know what was carried when the save was written.
+    bankHaul();
     return true;
   }catch(e){ console.warn('load failed',e); quarantineSave(raw,'load error'); return false; }
 }
