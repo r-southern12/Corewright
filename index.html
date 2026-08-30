@@ -1443,6 +1443,8 @@ function tone(freq,o){ o=o||{}; const t0=AC.currentTime+(o.delay||0), atk=o.atta
 function noise(o){ o=o||{}; if(!sndNoiseBuf) return; const t0=AC.currentTime+(o.delay||0), atk=o.attack||0.006, dur=o.dur||0.2;
   const src=AC.createBufferSource(); src.buffer=sndNoiseBuf; src.loop=true;
   const f=_lp(o.lp||1200,o.q||0.8); src.connect(f); let node=f;
+  // a corner that travels is what separates escaping pressure from a flat hiss
+  if(o.sweepTo) f.frequency.exponentialRampToValueAtTime(Math.max(60,o.sweepTo), t0+atk+dur);
   if(o.hp){ const h=AC.createBiquadFilter(); h.type='highpass'; h.frequency.value=o.hp; node.connect(h); node=h; }
   const g=AC.createGain();
   g.gain.setValueAtTime(0.0001,t0);
@@ -1461,12 +1463,13 @@ function noise(o){ o=o||{}; if(!sndNoiseBuf) return; const t0=AC.currentTime+(o.
    never sounds like one sample transposed, which is the trap the pitched version fell into.
    Kept dry, low and close for the ASMR read: no ring, no brightness, nothing sustained. */
 function crackle(o){ o=o||{};
-  const n=(o.n||3)+((Math.random()*(o.nVar||3))|0);
+  const n=(o.n||3)+((Math.random()*(o.nVar||3))|0), base=o.delay||0;
   for(let i=0;i<n;i++){
     // The FIRST impulse is the fracture itself: it lands at once and hardest. The rest are debris
-    // settling, so they bias EARLY (pow>1 pulls the draw toward zero) and fall away in level — that
-    // decay is the difference between a crack and a rattle.
-    const at = i===0 ? 0 : Math.pow(Math.random(),1.8)*(o.spread||0.075);
+    // settling, so they bias EARLY (bias>1 pulls the draw toward zero) and fall away in level — that
+    // decay is the difference between a crack and a rattle. bias<1 spreads them out instead, which is
+    // what turns one break into a crumble.
+    const at = base + (i===0 ? 0 : Math.pow(Math.random(),o.bias==null?1.8:o.bias)*(o.spread||0.075));
     const fall = i===0 ? 1 : 0.30+0.45*Math.random();
     noise({peak:(o.peak||0.03)*fall,
            dur:(i===0?0.020:0.010)+Math.random()*0.018,
@@ -1475,22 +1478,45 @@ function crackle(o){ o=o||{};
   }
   // a short woody/stony body under the ticks so it has a material, not just a spray of clicks
   if(o.body) tone(o.body*(0.94+Math.random()*0.12),
-    {type:'sine',peak:o.bodyPeak||0.028,dur:0.17,glide:o.body*0.62,lp:520,attack:0.004});
+    {type:'sine',peak:o.bodyPeak||0.028,dur:0.17,glide:o.body*0.62,lp:520,attack:0.004,delay:o.delay||0});
+}
+/* A STRUCK RESONATOR. Noise through a very narrow bandpass rings at the band's centre, which is how you
+   get a body that sings — glass, a tuned bar, a rim — without an oscillator's purity. Q is the material:
+   low Q reads as wood, high Q as glass or metal. */
+function bandPing(f,o){ o=o||{}; if(!sndNoiseBuf) return;
+  const t0=AC.currentTime+(o.delay||0), dur=o.dur||0.5;
+  const src=AC.createBufferSource(); src.buffer=sndNoiseBuf;
+  const b=AC.createBiquadFilter(); b.type='bandpass'; b.frequency.value=f; b.Q.value=o.q||34;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(o.peak==null?0.5:o.peak,t0+0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+0.002+dur);
+  src.connect(b); b.connect(g); g.connect(_out(o.bus||_curBus));
+  src.onended=()=>{ try{ g.disconnect(); }catch(_){} };
+  src.start(t0); src.stop(t0+0.06);
+  setTimeout(()=>{ try{ g.disconnect(); }catch(_){} }, (dur+0.4)*1000);
 }
 function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[name]<ms) return false; sndT[name]=t; return true; }
 /* Which bus each cue plays on (see SND_MIX). Set once by sfx() and read by tone()/noise(), rather than
    threading a bus field through every option object in the table below — the cue table stays readable
    and a cue can never be routed inconsistently across its own layered voices. */
-/* The blaster's held rush. A SUSTAINED sound is perceptually far louder and more fatiguing than a
-   transient at the same peak — at 0.05 this sat on top of everything and read as aggressive rather than
-   as a tool running in the background. It is a bed: it should sit UNDER the events, felt more than heard.
-   Hence a hard cut to the level and a darker corner (less hiss up top, which is most of the aggression). */
-const SAND_BED={lp:1600,hp:260,peak:0.015,lfoHz:0.5,lfoDepth:200,bus:'tool'};
+/* HELD TOOL BEDS. Each hold-to-use tool runs a sustained voice while it works and the discrete events
+   punctuate it — a tool is a continuous thing you interrupt, not a string of separate noises.
+   A sustained sound is perceptually far louder than a transient at the same peak, so every peak here is
+   a fraction of what a one-shot would take: these sit UNDER the events, felt more than heard.
+     sand  — SAW SHIMMER. Bright and fine; the fastest wander of the four, so it reads as high-speed.
+     brute — GRIND BED. Dark and heavy, slow wander: a wheel under load.
+     jet   — AIR JET. Mid, breathy, quick wander: pressure held open.
+     torch — BELLOWS. Lowest and softest, barely moving: a flame being fed rather than a hiss. */
+const SAND_BED ={lp:3400,hp:1500,peak:0.016,lfoHz:2.2,lfoDepth:700,bus:'tool'};
+const BRUTE_BED={lp:700, hp:150, peak:0.020,lfoHz:0.8,lfoDepth:180,bus:'tool'};
+const JET_BED  ={lp:2600,hp:600, peak:0.015,lfoHz:1.1,lfoDepth:600,bus:'tool'};
+const TORCH_BED={lp:1000,hp:150, peak:0.017,lfoHz:0.35,lfoDepth:220,bus:'tool'};
 const CUE_BUS={
   tap:'ui', close:'ui',
   dig:'tool', cleave:'tool', brute:'tool', facet:'tool', polish:'tool', brine:'tool',
   grind:'tool', mortar:'tool', scribe:'tool', torch:'tool', burn:'tool', discard:'ui',
-  sandrefine:'tool', sandcut:'tool', sandbed:'tool',
+  sandrefine:'tool', sandcut:'tool', sandbed:'tool', brutebed:'tool', jetbed:'tool', torchbed:'tool',
   break:'event', clang:'event', seat:'event', fit:'event', unlock:'event', repair:'event',
   stage:'event', brewdone:'event', travel:'event', notify:'event', yield:'event', core:'event', land:'event', ping:'event',
   warn:'alert', crack:'alert', damage:'alert', hurt:'alert', lowair:'alert', death:'alert', empty:'alert'
@@ -1501,7 +1527,12 @@ let sfxLastAt=0;                                   // when a SPECIFIC (non-notif
    share a rising run instead of stacking. Anything after a gap starts the run again. */
 let _yieldN=0, _yieldAt=0;
 function yieldIndex(){ const t=performance.now(); if (t-_yieldAt>140) _yieldN=0; _yieldAt=t; return _yieldN++; }
-let _sandBedOn=false;                              // edge-tracking for the blaster's held loop (see the tick)
+/* Every held tool's bed FOLLOWS its live flag from the tick rather than being started and stopped at each
+   of the places that set it (pointer up, empty tank, no bottle, tool swap, view change, hard reset). One of
+   those would eventually be missed and strand a sound with the tool put away. Edge-triggered, so it costs
+   one boolean compare per bed per frame. */
+const _bedOn={};
+function holdBed(id,on,cfg){ if(!!on===!!_bedOn[id]) return; _bedOn[id]=!!on; on?loopStart(id,cfg):loopStop(id); }
 // The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
 function sfx(name,opt){
   if(!sndOn) return; sndStart(); if(!AC) return; opt=opt||{};
@@ -1518,16 +1549,23 @@ function sfx(name,opt){
     case 'close': tone(360,{type:'sine',peak:0.045,dur:0.13,glide:270,lp:1400}); break;
     case 'dig':   if(!_throttle('dig',95))return;   // sandy scrape + a warm low thud, pitch-jittered so a hold never rings
                   noise({peak:0.045,dur:0.09,lp:500+Math.random()*260,hp:90}); tone(56+Math.random()*10,{type:'sine',peak:0.05,dur:0.09,lp:380}); break;
-    case 'break': noise({peak:0.085,dur:0.2,lp:900,hp:120}); tone(122*j(),{type:'sine',peak:0.075,dur:0.22,glide:58,lp:700}); break;
+    // GRAVEL CRUMBLE — a handful of rock giving way, not one thud
+    case 'break': crackle({n:8,nVar:6,peak:0.05,lp:1900,hp:260,spread:0.26,bias:1.1});
+                  tone(112*j(),{type:'sine',peak:0.06,dur:0.24,glide:56,lp:600,attack:0.006}); break;
     case 'clang': tone(300*j(),{type:'triangle',peak:0.075,dur:0.38,lp:1800}); tone(452*j(),{type:'sine',peak:0.045,dur:0.3,lp:2200}); noise({peak:0.03,dur:0.05,lp:2500,hp:600}); break;
     case 'seat':  tone(178*j(),{type:'sine',peak:0.08,dur:0.16,glide:150,lp:1200}); tone(356,{type:'sine',peak:0.045,dur:0.2,delay:0.02,lp:1800}); noise({peak:0.022,dur:0.04,lp:2200,hp:800}); break;
-    case 'cleave':noise({peak:0.07,dur:0.14,lp:1400,hp:300}); tone(240*j(),{type:'sine',peak:0.05,dur:0.14,glide:150,lp:1000}); break;
+    // TWIG SNAP — one clean break, then a little debris
+    case 'cleave':noise({peak:0.085,dur:0.02,lp:3600,hp:600,attack:0.0008});
+                  crackle({n:2,nVar:2,peak:0.03,lp:2200,hp:500,spread:0.05,delay:0.02});
+                  tone(230*j(),{type:'sine',peak:0.04,dur:0.13,glide:150,lp:1000,delay:0.01}); break;
     // Held tools repeat while the button is down, so their filter corner is jittered too (jn) — a fixed
     // corner on a looped buffer is exactly what reads as a tape loop rather than a working machine.
     case 'brute': if(!_throttle('brute',140))return; noise({peak:0.05,dur:0.3,lp:700*jn(),hp:150,attack:0.03}); break;
     case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200*jn(),hp:1600,attack:0.02}); break;
-    case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600*jn(),hp:300,attack:0.12}); break;
-    case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900*jn(),hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
+    // POLISH SWEEP — one long pass of the lap
+    case 'polish':if(!_throttle('polish',260))return; noise({peak:0.03,dur:0.45,lp:1600*jn(),hp:300,attack:0.25}); break;
+    // the rush itself is JET_BED; this is just the water finding stone, over the top of it
+    case 'brine': if(!_throttle('brine',150))return; for(let i=0;i<2;i++) tone(300+Math.random()*260,{type:'sine',peak:0.026,dur:0.1,delay:i*0.07,lp:1400}); break;
     /* SANDBLAST is three sounds, not one. The old single burst per hit could never read as a blaster —
        a real one is a CONTINUOUS rush you interrupt with events. So the rush is a held loop (see
        loopStart / the 'sand' bed, driven off the `sanding` flag in the tick), and these two are the
@@ -1544,16 +1582,26 @@ function sfx(name,opt){
                   tone(148*j(),{type:'sine',peak:0.05,dur:0.24,glide:94,lp:620}); break;
     // Audition only: run the held bed briefly so the continuous layer can be judged without holding the tool.
     case 'sandbed': loopStart('sandDemo',SAND_BED); setTimeout(()=>loopStop('sandDemo'),1300); break;
+    case 'brutebed':loopStart('bruteDemo',BRUTE_BED); setTimeout(()=>loopStop('bruteDemo'),1300); break;
+    case 'jetbed':  loopStart('jetDemo',JET_BED);   setTimeout(()=>loopStop('jetDemo'),1300); break;
+    case 'torchbed':loopStart('torchDemo',TORCH_BED); setTimeout(()=>loopStop('torchDemo'),1300); break;
     case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100*jn(),hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
     case 'burn':  noise({peak:0.04,dur:0.6,lp:1400,hp:400,attack:0.18}); tone(150,{type:'sine',peak:0.045,dur:0.5,glide:90,lp:900}); break;
     case 'discard':tone(300,{type:'sine',peak:0.045,dur:0.14,glide:180,lp:1200}); noise({peak:0.025,dur:0.06,lp:1600,hp:300}); break;
     case 'warn':  if(!_throttle('warn',500))return; tone(196,{type:'sine',peak:0.05,dur:0.16,glide:150,lp:900}); tone(147,{type:'sine',peak:0.045,dur:0.2,delay:0.08,lp:800}); break;
     // A part latching into equipment — firmer and more mechanical than 'seat' (which is the core meeting
     // its housing); this is the collar closing on it.
-    case 'fit':   tone(140*j(),{type:'triangle',peak:0.07,dur:0.13,lp:1100}); tone(280*j(),{type:'sine',peak:0.05,dur:0.18,delay:0.05,lp:1600}); noise({peak:0.028,dur:0.05,lp:2000,hp:700}); break;
+    // RATCHET RUN — the collar swept home, teeth tightening as it seats
+    case 'fit':   for(let i=0;i<7;i++){ const d=i*(0.075-i*0.005);
+                    noise({peak:0.04,dur:0.013,lp:4200,hp:1200,attack:0.0008,delay:d});
+                    bandPing(1450+i*40,{q:20,dur:0.05,peak:0.13,delay:d}); }
+                  tone(150,{type:'sine',peak:0.05,dur:0.16,glide:104,lp:800,delay:0.34}); break;
     case 'mortar':if(!_throttle('mortar',150))return; noise({peak:0.038,dur:0.3,lp:800*jn(),hp:120,attack:0.06}); break;   // stone pestle on stone, held
     case 'scribe':if(!_throttle('scribe',110))return; noise({peak:0.036,dur:0.12,lp:1300*jn(),hp:260}); break;             // hand rub chipping matrix, held
-    case 'crack': tone(210*j(),{type:'triangle',peak:0.07,dur:0.1,glide:96,lp:1600}); noise({peak:0.055,dur:0.26,lp:2200,hp:400}); break;   // crystal shatters — the one cue with a bite to it
+    // GLASS BREAK — sharp, then a long scatter of debris. The one cue allowed a bite.
+    case 'crack': noise({peak:0.075,dur:0.05,lp:7000,hp:2200,attack:0.001});
+                  crackle({n:7,nVar:6,peak:0.03,lp:6000,hp:1600,spread:0.4,bias:0.9});
+                  tone(200*j(),{type:'triangle',peak:0.05,dur:0.12,glide:96,lp:1600}); break;
     /* Played UNDERNEATH the tool's own cue whenever a cut eats crystal from inside the template, so the
        work still sounds like the tool you're holding but a bad bite is unmistakable. Two low tones a few
        Hz apart BEAT against each other; that unsettled wobble is what reads as "wrong" without needing
@@ -1562,7 +1610,7 @@ function sfx(name,opt){
                   tone(118*j(),{type:'triangle',peak:0.075,dur:0.28,glide:82,lp:700});
                   tone(126*j(),{type:'sine',peak:0.05,dur:0.26,glide:88,lp:600});
                   noise({peak:0.03,dur:0.12,lp:600,hp:90}); break;
-    case 'torch': if(!_throttle('torch',170))return; noise({peak:0.036,dur:0.34,lp:1500*jn(),hp:500,attack:0.09}); break;  // gas flame hiss, held
+    // (the flux torch is a held BED now — see TORCH_BED and the tick; nothing fires per step)
     case 'stage': tone(392*j(),{type:'sine',peak:0.05,dur:0.26,lp:2200}); tone(587.33,{type:'sine',peak:0.035,dur:0.3,delay:0.1,lp:2400}); break;   // brew stage advanced
     case 'brewdone':{ const notes=[349.23,440,523.25,698.46]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.05,dur:0.42,delay:i*0.11,lp:2200})); break; }
     case 'travel':{ // planetfall: a long descending settle under a soft rumble — the lab coming down
@@ -1574,10 +1622,13 @@ function sfx(name,opt){
     // ---- world / survival. These are FEEDBACK, not decoration: a player taking damage or running out of
     // air must hear it even mid-dig, so they sit on the alert bus and duck nothing.
     case 'hurt':  if(!_throttle('hurt',180))return; tone(160*j(),{type:'triangle',peak:0.075,dur:0.16,glide:88,lp:1000}); noise({peak:0.05,dur:0.14,lp:800,hp:150}); break;
-    case 'lowair':if(!_throttle('lowair',1400))return;   // slow, patient pulse — a reminder, never an alarm
-                  tone(233.08,{type:'sine',peak:0.05,dur:0.5,attack:0.12,lp:900}); tone(174.61,{type:'sine',peak:0.04,dur:0.6,delay:0.3,attack:0.14,lp:800}); break;
+    // ALERT PULSE — two low tones, spaced and patient. A reminder, never an alarm.
+    case 'lowair':if(!_throttle('lowair',1400))return;
+                  tone(233,{type:'sine',peak:0.055,dur:0.5,attack:0.12,lp:900});
+                  tone(175,{type:'sine',peak:0.045,dur:0.6,delay:0.3,attack:0.14,lp:800}); break;
     case 'death': { const notes=[220,174.61,146.83,110]; notes.forEach((f,i)=>tone(f,{type:'sine',peak:0.06,dur:0.7,delay:i*0.16,attack:0.05,lp:1100})); noise({peak:0.035,dur:1.1,lp:400,hp:60,attack:0.35}); break; }
-    case 'empty': if(!_throttle('empty',700))return; noise({peak:0.03,dur:0.18,lp:1800,hp:600,attack:0.02}); tone(262,{type:'sine',peak:0.04,dur:0.14,glide:196,lp:1400}); break;  // tank dry: a hollow puff
+    // STEAM VENT — the last of the pressure escaping, corner climbing as it thins out
+    case 'empty': if(!_throttle('empty',700))return; noise({peak:0.045,dur:0.6,lp:900,sweepTo:3400,hp:300,attack:0.01}); break;
     /* Ore into the crate. A higher-tier drill clears several tiles at once, and those bonus yields arrive
        in the SAME frame — one throttled cue would swallow all but the first, which is why the extra blocks
        registered nothing. Each takes an index instead: it delays and pitches up a step, so a 3- or 9-block
@@ -1590,13 +1641,14 @@ function sfx(name,opt){
        landing in the crate, nor like a re-skinned version of it. Where a material gets a dry tick, this
        BLOOMS: a slow crystalline swell, fundamental + fifth + octave + twelfth entering in turn, long
        tailed, nothing percussive anywhere in it. */
-    case 'core':  { const f=329.63;
-                  tone(f,     {type:'sine',peak:0.055,attack:0.05,dur:0.90,lp:2600});
-                  tone(f*1.5, {type:'sine',peak:0.038,attack:0.07,dur:0.95,delay:0.05,lp:3000});
-                  tone(f*2,   {type:'sine',peak:0.026,attack:0.09,dur:1.00,delay:0.11,lp:3400});
-                  tone(f*3,   {type:'sine',peak:0.013,attack:0.12,dur:0.80,delay:0.18,lp:4000}); break; }
+    /* HARMONIC SWELL — their pick for a core coming out of the rock. Three fifths entering in turn
+       with long attacks: it reads as something POWERING UP rather than a chime being struck, which
+       is right for the moment the loop exists for. */
+    case 'core':  [261.63,392,523.25].forEach((f,i)=>
+                    tone(f,{type:'sine',peak:0.055-i*0.009,attack:0.35+i*0.08,dur:0.9,lp:2600,delay:i*0.06})); break;
     case 'land':  tone(90,{type:'sine',peak:0.08,dur:0.8,glide:52,lp:600,attack:0.02}); noise({peak:0.06,dur:0.9,lp:340,hp:50,attack:0.02}); break;   // the lab settling into dirt
-    case 'ping':  tone(880,{type:'sine',peak:0.04,dur:0.5,attack:0.005,lp:3000}); tone(1318.5,{type:'sine',peak:0.022,dur:0.6,delay:0.06,lp:3200}); break;   // scanner sweep
+    // GLASS PING — a fine rim struck. High Q so the band itself sings; no oscillator.
+    case 'ping':  bandPing(2100,{q:42,dur:0.9,peak:0.34}); break;
   }}catch(_){}
 }
 // Ambience — a barely-there low wind bed (looped noise through a slowly wandering low-pass). Off by default.
@@ -1648,10 +1700,10 @@ function loopStop(id){
 }
 function loopStopAll(){ for(const id in sndLoops) loopStop(id); }
 function setSound(on){ sndOn=on; try{ localStorage.setItem('corewright.sound',on?'on':'off'); }catch(_){}
-  // Muting the master would silence a held loop but leave it running; tear them down instead. _sandBedOn
-  // resets too, so the tick re-starts the bed if the tool is still held when sound comes back on.
+  // Muting the master would silence a held loop but leave it running; tear them down instead. The edge
+  // flags reset too, so the tick re-starts any bed whose tool is still held when sound comes back on.
   if(on){ sndStart(); if(sndMaster) sndMaster.gain.value=sndVol; }
-  else { if(sndMaster) sndMaster.gain.value=0.0; loopStopAll(); _sandBedOn=false; } }
+  else { if(sndMaster) sndMaster.gain.value=0.0; loopStopAll(); for(const k in _bedOn) _bedOn[k]=false; } }
 function setVolume(v){ sndVol=Math.max(0,Math.min(1,v)); try{ localStorage.setItem('corewright.vol',String(sndVol)); }catch(_){}
   if(sndOn&&sndMaster) sndMaster.gain.value=sndVol; }
 function setAmbience(on){ ambOn=on; try{ localStorage.setItem('corewright.amb',on?'on':'off'); }catch(_){}
@@ -16191,8 +16243,7 @@ function forgeSimTick(){
   forgeAccum+=dt;
   while (forgeAccum>=FSTEP){
     forgeAccum-=FSTEP; forgeSpin++;
-    if (fluxOn){ fluxHeat(); sfx('torch'); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
-                                                 // the hiss rides the FIXED step, not the frame, so it can't speed up on a fast panel
+    if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
     if (forgeLevelHold && forgeLevelDir && forgeSpin%2===0) forgeLevelSlide(forgeLevelDir[0],forgeLevelDir[1]);   // leveller ONLY moves metal — the torch does the melting; drag slides whatever is already molten
     if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
@@ -19079,7 +19130,7 @@ document.getElementById('volRange').onchange=()=>{ if (sndOn) sfx('seat'); };
    are heard next to each other, which is how you actually judge relative level. */
 const AUDITION=[
   ['ui',      ['tap','close']],
-  ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sandbed','sandrefine','sandcut','mortar','torch','grind','burn','discard']],
+  ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sandbed','brutebed','jetbed','torchbed','sandrefine','sandcut','mortar','grind','burn','discard']],
   ['events',  ['yield','core','break','clang','seat','fit','stage','brewdone','repair','unlock','land','ping','travel','notify']],
   ['alerts',  ['warn','empty','damage','crack','hurt','lowair','death']]
 ];
@@ -19172,7 +19223,7 @@ function newRun(){
   enemies=[]; projectiles=[]; particles=[];
   mine=null; attackTgt=null; grinding=false; sawClosing=false; jetting=false; scribing=false; polishing=false;
   jetArmed=false; sandBottleActive=false; sanding=false;
-  loopStopAll(); _sandBedOn=false;        // no held tool sound survives a bench teardown
+  loopStopAll(); for(const k in _bedOn) _bedOn[k]=false;   // no held tool sound survives a bench teardown
   potion=null; preview=new Set();
   comp='cell'; gx=0; gy=0; gz=0;
   document.querySelector('#compChip b').textContent=COMPONENTS.cell.label;
@@ -20248,8 +20299,11 @@ let t=0, lastNow=0;
      of the six places that set it (pointer up, empty tank, no bottle armed, view change, hard reset). One
      of those would eventually be missed and leave a hiss running with the tool put away. Edge-triggered,
      so it's one boolean compare per frame. */
-  { const on = (typeof sanding!=='undefined') && sanding && CARVE_VIEWS.has(view);
-    if (on!==_sandBedOn){ _sandBedOn=on; on?loopStart('sand',SAND_BED):loopStop('sand'); } }
+  { const carving=CARVE_VIEWS.has(view);
+    holdBed('sand', carving && typeof sanding !=='undefined' && sanding,  SAND_BED);
+    holdBed('brute',carving && typeof grinding!=='undefined' && grinding, BRUTE_BED);
+    holdBed('jet',  carving && typeof jetting !=='undefined' && jetting,  JET_BED);
+    holdBed('torch',view==='forgeb' && typeof fluxOn!=='undefined' && fluxOn, TORCH_BED); }
   frameStats(now);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's
