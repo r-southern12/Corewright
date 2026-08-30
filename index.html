@@ -2834,7 +2834,6 @@ function clearBench(){
   voxels.forEach(v=>mineral.remove(v.mesh));
   dying.forEach(d=>mineral.remove(d.mesh));
   voxels=[]; dying=[];
-  protCharged.clear();   // ward dedup holds mesh refs from THIS core; the next core rebuilds fresh meshes
   // The drawn representation outlives the shard list unless it is torn down
   // here too — otherwise the old core hangs in the air over the new one.
   if (typeof disposeBatches==='function'){ disposeBatches(); batchMass=-1; batchTint=-1; }
@@ -3641,12 +3640,34 @@ function forgeMetalOwned(k){ const t=metalTier(k);                              
 const consumables={};                          // id -> {grade, charges}
 let boreTiles=0, renderOres=0;                 // active FIELD effects (persist across saves)
 let lodeX=null, lodeY=null, lodeT=0;           // lodestone ping target + seconds remaining
-// BENCH effects. protectCubes is a PERSISTENT budget — a Template Ward shields the next N template cubes a
-// tool would cut, spent one per distinct cube saved (protCharged dedups repeated grazes so a hold doesn't
-// drain it on one cube). protUntil/superUntil are TIMED windows (performance.now ms), transient — they run
-// out on a clock, not on a count, so they don't survive a reload. This is the admin protect/super-sand
-// mechanic (protectOn / adminSuperSand) made finite: same shield, same scoop, just metered.
-let protectCubes=0; let protUntil=0, superUntil=0; const protCharged=new Set();
+/* BENCH effects. wardVol is a PERSISTENT budget metered in CRYSTAL VOLUME, not in cubes.
+   It counted cubes until v23, and that made the ward wildly inconsistent: refining is not blocked by a
+   ward (splitting loses nothing, by design), but one refine pass turns a Tier-I core's ~15 template cubes
+   into ~246, so the same ward covered 16x less of the same stone. Worse, the paid-for flag lived on the
+   MESH, and a split makes eight new meshes — so a cube you had already paid to protect cost eight more
+   charges the moment the saw refined it. Volume fixes both at the root: half a cube of crystal costs half
+   as much to shield however many pieces it has been cut into, and the paid flag now rides the CELL so
+   splitOneCube hands it to the children.
+   protUntil/superUntil stay TIMED windows (performance.now ms) and are transient — they run out on a
+   clock, not a count, so they don't survive a reload. */
+let wardVol=0; let protUntil=0, superUntil=0;
+// One tier-I ward ~= ten COARSE Tier-I cubes (0.55^3 x 10 = 1.66), so the feel at coarse grain is what it
+// always was — it simply no longer collapses the moment the grain is refined.
+const WARD_VOL_PER_GRADE=1.6;
+const cellVol=c=>c.size*c.size*c.size;
+/* The budget is volume, but "1.60" means nothing at a bench. Report it as HOW MANY CUBES IT WOULD COVER
+   AT THE GRAIN IN FRONT OF YOU, which is the number that actually tells you whether to risk the next cut.
+   It rises as you refine — correct, and the whole point: the same crystal, in more pieces. */
+function wardCubesLeft(vol){
+  const v=(vol==null?wardVol:vol); if (v<=0) return 0;
+  let unit=null;
+  if (typeof voxels!=='undefined' && voxels.length){                 // median live crystal cube
+    const sizes=voxels.filter(x=>isCrystal(x.cell)).map(x=>x.cell.size).sort((a,b)=>a-b);
+    if (sizes.length) unit=Math.pow(sizes[sizes.length>>1],3);
+  }
+  if (!unit) unit=Math.pow((typeof TIERS!=='undefined'&&activeCore&&TIERS[activeCore.tier]?TIERS[activeCore.tier].vox:0.55),3);
+  return Math.max(1,Math.round(v/unit));
+}
 const CARVE_VIEWS=new Set(['dig','cleave','brute','facet','polish']);   // where the bench pack rides
 // place:'field' -> rides the expedition HUD (#pack); place:'bench' -> rides the lapidary toolbar (#benchPack).
 const CONSUMABLE_INFO={
@@ -3691,7 +3712,7 @@ function useConsumable(id){
   if (id==='bore'){ boreTiles=5*g; say(`Bore charge — breach the tier wall for the next ${boreTiles} tiles.`,'good'); }
   else if (id==='render'){ renderOres=5*g; say(`Ore Render — the next ${renderOres} ores yield double.`,'good'); }
   else if (id==='lodestone'){ lodestonePing(g); }
-  else if (id==='ward'){ protectCubes+=10*g; if (typeof refreshTint==='function'&&CARVE_VIEWS.has(view)) refreshTint(); say(`Template Ward — ${10*g} more template cubes shielded (${protectCubes} banked).`,'good'); }
+  else if (id==='ward'){ wardVol+=WARD_VOL_PER_GRADE*g; if (typeof refreshTint==='function'&&CARVE_VIEWS.has(view)) refreshTint(); say(`Template Ward — ${wardCubesLeft(WARD_VOL_PER_GRADE*g)} more cubes' worth of crystal shielded (${wardCubesLeft()} at this grain).`,'good'); }
   else if (id==='wardT'){ protUntil=performance.now()+(15+g*8)*1000; if (typeof refreshTint==='function'&&CARVE_VIEWS.has(view)) refreshTint(); say(`Warding Flux — the pattern is sealed for ${15+g*8}s.`,'good'); }
   else if (id==='supersand'){ superUntil=performance.now()+(10+g*5)*1000; say(`Super Sandblast — a whole scoop per hit for ${10+g*5}s. Mind your ward.`,'good'); }
   else return;
@@ -3717,7 +3738,7 @@ function renderPack(){
     // A live status line for the metered bench effects, appended after the chips so you can watch a ward burn.
     const nowMs=performance.now();
     let status='';
-    if (protectCubes>0) status+=`<span class="packStat">▣ ward ${protectCubes}</span>`;
+    if (wardVol>0) status+=`<span class="packStat">▣ ward ≈${wardCubesLeft()}</span>`;
     if (nowMs<protUntil) status+=`<span class="packStat on">⬢ sealed ${Math.ceil((protUntil-nowMs)/1000)}s</span>`;
     if (nowMs<superUntil) status+=`<span class="packStat hot">≋ scoop ${Math.ceil((superUntil-nowMs)/1000)}s</span>`;
     b.innerHTML=_packChips('bench')+status;
@@ -3736,7 +3757,7 @@ function tickBenchPack(){
   const rush=nowMs<superUntil?Math.ceil((superUntil-nowMs)/1000):0;
   const chips=Object.keys(consumables).filter(id=>consumables[id].charges>0&&CONSUMABLE_INFO[id]&&CONSUMABLE_INFO[id].place==='bench')
     .map(id=>id+consumables[id].charges).join(',');
-  const sig=chips+'|'+protectCubes+'|'+seal+'|'+rush;
+  const sig=chips+'|'+(wardVol>0?wardCubesLeft():0)+'|'+seal+'|'+rush;   // the shown number, not the raw volume
   if (sig===_benchSig) return;
   _benchSig=sig; renderPack();
 }
@@ -4167,10 +4188,10 @@ function dissolve(set){
 }
 // Whether template-crystal protection is currently active: on during the tutorial, forced on by the admin
 // toggle, or paid for by a Template Ward — the timed Warding Flux (protUntil) seals everything, and the
-// persistent cube-budget ward (protectCubes) shields the next N cubes. When the budget hits 0 and no timed
+// persistent volume-budget ward (wardVol) shields crystal until its budget runs out. When it hits 0 and no timed
 // seal is up, protection simply ends (the ward is spent), so a rushed super-sand can cut the pattern again.
 function protectUnlimited(){ return tut.protect || adminProtect || performance.now()<protUntil; }
-function protectOn(){ return protectUnlimited() || protectCubes>0; }
+function protectOn(){ return protectUnlimited() || wardVol>0; }
 function superActive(){ return adminSuperSand || performance.now()<superUntil; }
 // During the tutorial (or with the admin guard on), a cut that would eat template material is REFUSED.
 // Returns true if the action should be blocked.
@@ -4208,13 +4229,16 @@ function tutAllow(set){
     if (isMatrix(v.cell)) { out.add(v.mesh); continue; }   // dirt/stone: never protected
     if (!(view==='dig'||inTemplate(v.cell))) { out.add(v.mesh); continue; }   // crystal OUTSIDE the template is waste — fair to trim
     // Template crystal (or any crystal at the dig bench): protected. Under the persistent cube-budget ward,
-    // spend one charge per DISTINCT cube saved — protCharged dedups so holding on one cube doesn't drain it,
-    // and once the budget is gone a newly-threatened cube falls through (removed). This is exactly the "blow
-    // through the ward" a rushed super-sand scoop causes: it presents many new template cubes at once.
+    // pay the cube's VOLUME to save it and flag the cell, so holding on one cube doesn't drain the budget and
+    // refining it later costs nothing more (the flag rides the cell through a split). Once the budget can't
+    // cover a newly-threatened cube it falls through (removed) — which is still exactly the "blow through the
+    // ward" a rushed super-sand scoop causes, since a scoop presents far more crystal at once than a tap.
     if (unlimited) continue;               // sealed: omit (spare), no cost
-    if (protCharged.has(v.mesh)) continue; // already paid for this cube — keep sparing it free
-    if (protectCubes>0){ protCharged.add(v.mesh); protectCubes--; continue; }  // spend a charge to save it
-    out.add(v.mesh);                       // ward spent for this cube — let the tool take it
+    if (v.cell.warded) continue;           // already paid for this crystal — keep sparing it free, and its
+                                           // children inherit the flag through a split (see splitOneCube)
+    const vol=cellVol(v.cell);
+    if (wardVol>=vol){ v.cell.warded=true; wardVol-=vol; continue; }   // pay its VOLUME to save it
+    out.add(v.mesh);                       // ward can't cover it — let the tool take it
   }
   return out;
 }
@@ -4374,7 +4398,9 @@ function splitOneCube(v){
   activeCore.cells=activeCore.cells.filter(x=>x!==c);
   for (const sx of [-1,1]) for (const sy of [-1,1]) for (const sz of [-1,1]){
     const kid={px:c.px+sx*q, py:c.py+sy*q, pz:c.pz+sz*q, size:h,
-      conc:c.conc, shade:Math.min(1.2,c.shade*(0.94+Math.random()*0.12))};
+      conc:c.conc, shade:Math.min(1.2,c.shade*(0.94+Math.random()*0.12)),
+      warded:c.warded};        // a ward already paid for this crystal; refining it must not charge again
+
     activeCore.cells.push(kid);
     addVoxelMesh(kid,activeCore.polish);
   }
@@ -19081,7 +19107,7 @@ function newRun(){
   unlocks.clear();
   for (const k in MACHINES) MACHINES[k].unlocked=(k==='dig'||k==='cleave'||k==='brute'||k==='seatbench');
   for (const k in consumables) delete consumables[k];   // the consumable pack + its live effects start empty
-  boreTiles=0; renderOres=0; protectCubes=0; protUntil=0; superUntil=0; protCharged.clear();
+  boreTiles=0; renderOres=0; wardVol=0; protUntil=0; superUntil=0;
   lodeX=lodeY=null; lodeT=0; renderPack();
 
   // world actors
@@ -19803,7 +19829,7 @@ guideRecall=()=>{
    Unique IDs on cores/corpses prevent duplication on reload.
    ============================================================ */
 const SAVE_KEY='corewright.save.v2';
-const SAVE_VERSION=22;  // v22: per-tier alloy agents (manganese/umbrite/chromite/quintessence) — new ore tiles change virgin gen   // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
+const SAVE_VERSION=23;  // v23: Template Ward metered in crystal VOLUME (wardVol) instead of a cube count   // v22: per-tier alloy agents (manganese/umbrite/chromite/quintessence) — new ore tiles change virgin gen   // v21: bench consumables (template wards/super-sand) + persistent ward budget; potion/tank cache payouts   // v20: consumable pack (bore/render/lodestone) + live effect counters   // v19: cache unlock ledger (bench tools earned from ancient caches, not dust)   // v18: deep tiers — T4/T5 cores, adamant/aether ore + alloys, world deepened to 150   // v17: potion POTENCY + dust grade (potionStr/powderGrade), mass-based burn   // v16: brewing-line setup (brewEquip/brewCore)   // v15: per-core/per-template alignment memory (core.align)   // v14: persistent forge-station upgrade tier (forgeStationTier)   // v13: persistent forged-parts shelf (installable, with 3D-snapshot icons) + core.comp   // v12: forged frames persist a 3D voxel snapshot (part.forge) + alloy-seat resonance   // v11: core hues, machine affinity, graded solvents   // v9: the lab is a placed world structure   // v8: persistent jet/brine/sand tanks   // v7: seen-tile discovery for the hardness spectrum
 const _SV6=6;   // v6: forge templates + durable anvil; persistent seated drill core
 let saveTimer=0;
 function q3(n){ return Math.round(n*1000)/1000; }
@@ -19906,7 +19932,7 @@ function saveGame(){
       forgedParts,
       machines:Object.fromEntries(Object.entries(MACHINES).map(([k,m])=>[k,m.unlocked])),
       unlocks:[...unlocks],                    // the cache-tool ledger
-      consumables:{...consumables}, boreTiles, renderOres, protectCubes,   // cache overflow rewards + live effect counters (timed seals/rush are transient, not saved)
+      consumables:{...consumables}, boreTiles, renderOres, wardVol,   // cache overflow rewards + live effect counters (timed seals/rush are transient, not saved)
 
       inv:inventory.map(packCore),
       active:activeCore?activeCore.id:null,
@@ -19986,8 +20012,11 @@ function loadGame(){
     unlocks.clear(); if (d.unlocks) for (const k of d.unlocks) grantUnlock(k);
     for (const k in consumables) delete consumables[k];
     if (d.consumables) Object.assign(consumables, d.consumables);
-    boreTiles=d.boreTiles||0; renderOres=d.renderOres||0; protectCubes=d.protectCubes||0;
-    protUntil=superUntil=0; protCharged.clear(); lodeX=lodeY=null; lodeT=0; renderPack();
+    boreTiles=d.boreTiles||0; renderOres=d.renderOres||0;
+    // v23 moved the ward from a cube COUNT to a crystal-VOLUME budget. Convert an older save at the rate
+    // the count was worth on coarse Tier-I stone, so nobody's banked wards silently shrink or balloon.
+    wardVol = d.wardVol!==undefined ? d.wardVol : (d.protectCubes||0)*Math.pow(0.55,3);
+    protUntil=superUntil=0; lodeX=lodeY=null; lodeT=0; renderPack();
     inventory=(d.inv||[]).map(unpackCore);
     activeCore=d.active?inventory.find(c=>c.id===d.active)||null:null;
     corpse=d.corpse?{x:d.corpse.x,y:d.corpse.y,
