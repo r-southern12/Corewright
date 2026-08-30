@@ -1458,16 +1458,21 @@ function _throttle(name,ms){ const t=performance.now(); if(sndT[name]&&t-sndT[na
 /* Which bus each cue plays on (see SND_MIX). Set once by sfx() and read by tone()/noise(), rather than
    threading a bus field through every option object in the table below — the cue table stays readable
    and a cue can never be routed inconsistently across its own layered voices. */
+// The blaster's held rush. Airy and mid-weighted (not the thin high band that read as an electrical
+// arc), with a slow wander on the cutoff so it breathes instead of sitting flat.
+const SAND_BED={lp:2400,hp:320,peak:0.05,lfoHz:0.55,lfoDepth:280,bus:'tool'};
 const CUE_BUS={
   tap:'ui', close:'ui',
-  dig:'tool', cleave:'tool', brute:'tool', facet:'tool', polish:'tool', brine:'tool', sand:'tool',
+  dig:'tool', cleave:'tool', brute:'tool', facet:'tool', polish:'tool', brine:'tool',
   grind:'tool', mortar:'tool', scribe:'tool', torch:'tool', burn:'tool', discard:'ui',
+  sandrefine:'tool', sandcut:'tool', sandbed:'tool',
   break:'event', clang:'event', seat:'event', fit:'event', unlock:'event', repair:'event',
   stage:'event', brewdone:'event', travel:'event', notify:'event', yield:'event', land:'event', ping:'event',
   warn:'alert', crack:'alert', damage:'alert', hurt:'alert', lowair:'alert', death:'alert', empty:'alert'
 };
 let _curBus=null;
 let sfxLastAt=0;                                   // when a SPECIFIC (non-notify) cue last played — see sfx()
+let _sandBedOn=false;                              // edge-tracking for the blaster's held loop (see the tick)
 // The one call site the rest of the game uses. Guarded so a bad cue can never break a frame.
 function sfx(name,opt){
   if(!sndOn) return; sndStart(); if(!AC) return; opt=opt||{};
@@ -1494,11 +1499,22 @@ function sfx(name,opt){
     case 'facet': if(!_throttle('facet',120))return; noise({peak:0.03,dur:0.18,lp:3200*jn(),hp:1600,attack:0.02}); break;
     case 'polish':if(!_throttle('polish',150))return; noise({peak:0.033,dur:0.4,lp:1600*jn(),hp:300,attack:0.12}); break;
     case 'brine': if(!_throttle('brine',200))return; noise({peak:0.045,dur:0.5,lp:900*jn(),hp:200,attack:0.08}); for(let i=0;i<3;i++) tone(280+Math.random()*260,{type:'sine',peak:0.03,dur:0.1,delay:0.05+i*0.09,lp:1400}); break;
-    // Sandblast was a narrow 2.5k-5k band with a fast attack, which is exactly the recipe for a sparking
-    // electrical arc — an arc is a bright, instant crackle. Grit on stone is broadband AIR with a swell:
-    // drop the high-pass so the body of the rush comes through, take the fizz off the top, and let it
-    // build rather than snap. "Pssshh", not "bzzt".
-    case 'sand':  if(!_throttle('sand',160))return; noise({peak:0.045,dur:0.42,lp:2600*jn(),hp:380,attack:0.14}); break;
+    /* SANDBLAST is three sounds, not one. The old single burst per hit could never read as a blaster —
+       a real one is a CONTINUOUS rush you interrupt with events. So the rush is a held loop (see
+       loopStart / the 'sand' bed, driven off the `sanding` flag in the tick), and these two are the
+       events that punctuate it. They must differ, because the tool does two different things:
+         refine — a coarse cube SPLIT a step finer. Nothing is lost, so it's a dry granular tick that
+                  rises, the sound of material getting smaller.
+         cut    — grain already at the floor WORN AWAY. This is a real loss, so it carries a low body
+                  under it: that weight is the "depth" the bare hiss was missing. */
+    case 'sandrefine': if(!_throttle('sandrefine',70))return;
+                  noise({peak:0.028,dur:0.09,lp:4200*jn(),hp:1500,attack:0.004});
+                  tone(760*j(),{type:'sine',peak:0.02,dur:0.08,glide:1150,lp:5200}); break;
+    case 'sandcut':    if(!_throttle('sandcut',80))return;
+                  noise({peak:0.042,dur:0.2,lp:1500*jn(),hp:200,attack:0.008});
+                  tone(148*j(),{type:'sine',peak:0.05,dur:0.24,glide:94,lp:620}); break;
+    // Audition only: run the held bed briefly so the continuous layer can be judged without holding the tool.
+    case 'sandbed': loopStart('sandDemo',SAND_BED); setTimeout(()=>loopStop('sandDemo'),1300); break;
     case 'grind': if(!_throttle('grind',120))return; noise({peak:0.05,dur:0.28,lp:1100*jn(),hp:180,attack:0.04}); tone(90*j(),{type:'sine',peak:0.04,dur:0.28,lp:500}); break;
     case 'burn':  noise({peak:0.04,dur:0.6,lp:1400,hp:400,attack:0.18}); tone(150,{type:'sine',peak:0.045,dur:0.5,glide:90,lp:900}); break;
     case 'discard':tone(300,{type:'sine',peak:0.045,dur:0.14,glide:180,lp:1200}); noise({peak:0.025,dur:0.06,lp:1600,hp:300}); break;
@@ -1552,8 +1568,45 @@ function ambStart(){ if(!AC||sndAmb) return; try{
 function ambStop(){ if(!sndAmb) return; try{ const {src,g,lfo}=sndAmb; g.gain.cancelScheduledValues(AC.currentTime);
     g.gain.setValueAtTime(g.gain.value,AC.currentTime); g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+1.2);
     src.stop(AC.currentTime+1.4); lfo.stop(AC.currentTime+1.4); }catch(_){} sndAmb=null; }
+/* HELD LOOPS — a sustained voice for a tool you hold down, as opposed to the one-shot cues above.
+   Per-hit bursts can't sound like a blaster: a real one is a continuous rush you interrupt with events,
+   not a string of separate noises. This is the ambience bed's machinery generalised, so the torch, the
+   lap and the jets can take the same treatment later. Keyed by id, idempotent, and both ends are ramped
+   (a raw start/stop on a gain node clicks). */
+const sndLoops={};
+function loopStart(id,cfg){
+  if(!sndOn) return; sndStart(); if(!AC||!sndNoiseBuf||sndLoops[id]) return;
+  cfg=cfg||{};
+  try{
+    const src=AC.createBufferSource(); src.buffer=sndNoiseBuf; src.loop=true;
+    const lp=_lp(cfg.lp||1400,cfg.q); let node=src; node.connect(lp); node=lp;
+    if(cfg.hp){ const h=AC.createBiquadFilter(); h.type='highpass'; h.frequency.value=cfg.hp; node.connect(h); node=h; }
+    const g=AC.createGain(); g.gain.value=0.0001; node.connect(g); g.connect(_out(cfg.bus||'tool'));
+    g.gain.exponentialRampToValueAtTime(cfg.peak||0.05, AC.currentTime+(cfg.fade||0.10));
+    // A slow wander on the cutoff so a held tool BREATHES. A fixed corner on a looped buffer is the
+    // single thing that makes a sustained noise read as a tape loop rather than a working machine.
+    const lfo=AC.createOscillator(); lfo.type='sine'; lfo.frequency.value=cfg.lfoHz||0.6;
+    const lg=AC.createGain(); lg.gain.value=cfg.lfoDepth||220;
+    lfo.connect(lg); lg.connect(lp.frequency); lfo.start(); src.start();
+    sndLoops[id]={src,g,lfo};
+  }catch(_){}
+}
+function loopStop(id){
+  const L=sndLoops[id]; if(!L) return; delete sndLoops[id];
+  try{ const t=AC.currentTime, f=0.16;
+    L.g.gain.cancelScheduledValues(t);
+    L.g.gain.setValueAtTime(Math.max(0.0001,L.g.gain.value),t);
+    L.g.gain.exponentialRampToValueAtTime(0.0001,t+f);
+    L.src.stop(t+f+0.02); L.lfo.stop(t+f+0.02);
+    L.src.onended=()=>{ try{ L.g.disconnect(); }catch(_){} };
+  }catch(_){}
+}
+function loopStopAll(){ for(const id in sndLoops) loopStop(id); }
 function setSound(on){ sndOn=on; try{ localStorage.setItem('corewright.sound',on?'on':'off'); }catch(_){}
-  if(on){ sndStart(); if(sndMaster) sndMaster.gain.value=sndVol; } else if(sndMaster) sndMaster.gain.value=0.0; }
+  // Muting the master would silence a held loop but leave it running; tear them down instead. _sandBedOn
+  // resets too, so the tick re-starts the bed if the tool is still held when sound comes back on.
+  if(on){ sndStart(); if(sndMaster) sndMaster.gain.value=sndVol; }
+  else { if(sndMaster) sndMaster.gain.value=0.0; loopStopAll(); _sandBedOn=false; } }
 function setVolume(v){ sndVol=Math.max(0,Math.min(1,v)); try{ localStorage.setItem('corewright.vol',String(sndVol)); }catch(_){}
   if(sndOn&&sndMaster) sndMaster.gain.value=sndVol; }
 function setAmbience(on){ ambOn=on; try{ localStorage.setItem('corewright.amb',on?'on':'off'); }catch(_){}
@@ -4922,13 +4975,14 @@ function sandAt(cx,cy,now){
     if (protectOn()){ const ok=tutAllow(new Set(scoop.map(s=>s.mesh))); scoop=scoop.filter(s=>ok.has(s.mesh)); }
     if (!scoop.length) return;
     lastSand=now;
-    sfx('sand');                                  // airy abrasive hiss (throttled)
     const gf=grainFloor();
     const fine=scoop.filter(s=>s.cell.size<=gf);      // at the floor → worn away, exactly as a single hit would
     const coarse=scoop.filter(s=>s.cell.size>gf);     // above the floor → SPLIT a step finer, not removed
     const blown=fine.length ? dissolve(new Set(fine.map(s=>s.mesh))) : 0;
     let refined=0;
     for (const s of coarse){ if (voxels.length+7>MAX_VOXELS) break; if (!s.mesh.parent) continue; splitOneCube(s); refined++; }
+    // A super scoop usually does both at once; lead with the LOSS, since that's the one worth hearing.
+    if (blown) sfx('sandcut'); else if (refined) sfx('sandrefine');
     targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,6,0.16);
     cullInterior(); refreshTint(); liveOutput(); updateGrainHud(); updateSandBar();
     say(`Super-sand — ${refined} broken down, ${blown} of the finest blown away.`);
@@ -4948,7 +5002,6 @@ function sandAt(cx,cy,now){
     return;
   }
   lastSand=now;
-  sfx('sand');                                    // airy abrasive hiss (throttled)
   if (!infinite) tank.sand=Math.max(0,tank.sand-grit);
   // Sandblast REFINES rather than bores. A coarse cube struck by the jet breaks
   // into eight finer ones, exactly as the saw's first pass does — the abrasive
@@ -4962,11 +5015,13 @@ function sandAt(cx,cy,now){
   const wasKeeper=isCrystal(v.cell)&&inTemplate(v.cell);
   if (v.cell.size>grainFloor()){
     splitOneCube(v);
+    sfx('sandrefine');                            // grain broken a step finer — nothing lost
     targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,2,0.05);
     cullInterior(); refreshTint(); liveOutput(); updateGrainHud();
   } else {
     const shed=dissolve(one);
     if (shed>0){
+      sfx('sandcut');                             // grain at the floor worn away — a real loss, so it has weight
       if (wasKeeper){ addShake(0.05); sfx('damage'); }   // you just cut into the piece
       targetMesh.getWorldPosition(wpos); spark(wpos.x,wpos.y,wpos.z,1,0.07);
       refreshTint(); liveOutput(); updateGrainHud();
@@ -18940,7 +18995,7 @@ document.getElementById('volRange').onchange=()=>{ if (sndOn) sfx('seat'); };
    are heard next to each other, which is how you actually judge relative level. */
 const AUDITION=[
   ['ui',      ['tap','close']],
-  ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sand','mortar','torch','grind','burn','discard']],
+  ['tools',   ['dig','scribe','cleave','brute','facet','polish','brine','sandbed','sandrefine','sandcut','mortar','torch','grind','burn','discard']],
   ['events',  ['yield','break','clang','seat','fit','stage','brewdone','repair','unlock','land','ping','travel','notify']],
   ['alerts',  ['warn','empty','damage','crack','hurt','lowair','death']]
 ];
@@ -19033,6 +19088,7 @@ function newRun(){
   enemies=[]; projectiles=[]; particles=[];
   mine=null; attackTgt=null; grinding=false; sawClosing=false; jetting=false; scribing=false; polishing=false;
   jetArmed=false; sandBottleActive=false; sanding=false;
+  loopStopAll(); _sandBedOn=false;        // no held tool sound survives a bench teardown
   potion=null; preview=new Set();
   comp='cell'; gx=0; gy=0; gz=0;
   document.querySelector('#compChip b').textContent=COMPONENTS.cell.label;
@@ -20099,6 +20155,12 @@ let t=0, lastNow=0;
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   if (typeof guideTick==='function') guideTick(now); // render the cube-alien guide when it's on screen
+  /* The blaster's held rush FOLLOWS the live `sanding` flag rather than being started and stopped at each
+     of the six places that set it (pointer up, empty tank, no bottle armed, view change, hard reset). One
+     of those would eventually be missed and leave a hiss running with the tool put away. Edge-triggered,
+     so it's one boolean compare per frame. */
+  { const on = (typeof sanding!=='undefined') && sanding && CARVE_VIEWS.has(view);
+    if (on!==_sandBedOn){ _sandBedOn=on; on?loopStart('sand',SAND_BED):loopStop('sand'); } }
   frameStats(now);
   }catch(err){
     // A single frame's exception must never kill the animation loop — that's
