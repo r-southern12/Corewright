@@ -1574,12 +1574,17 @@ function sfx(name,opt){
                   rises, the sound of material getting smaller.
          cut    — grain already at the floor WORN AWAY. This is a real loss, so it carries a low body
                   under it: that weight is the "depth" the bare hiss was missing. */
+    /* GLASS PING — the grain letting go. Kept SHORT on purpose: this fires several times a second under
+       a held blaster, so the long singing version (the scanner's, 0.9s) would pile into a mush. No low
+       body under it at all — that was the drum. */
     case 'sandrefine': if(!_throttle('sandrefine',70))return;
-                  // the grain letting go — a small dry stone crack, different in shape every time
-                  crackle({n:3,nVar:3,peak:0.026,lp:1500,hp:240,spread:0.07,body:190,bodyPeak:0.022}); break;
+                  bandPing(2400*j(),{q:26,dur:0.20,peak:0.16}); break;
+    /* GLASS BREAK, scaled down. The scribe's 'crack' is the SEVERE version of this same sound, so a
+       routine cube coming off has to read as its little brother rather than its equal: fewer shards,
+       tighter spread, lower peak. Again no low body — the weight comes from the shards, not a thud. */
     case 'sandcut':    if(!_throttle('sandcut',80))return;
-                  noise({peak:0.042,dur:0.2,lp:1500*jn(),hp:200,attack:0.008});
-                  tone(148*j(),{type:'sine',peak:0.05,dur:0.24,glide:94,lp:620}); break;
+                  noise({peak:0.05,dur:0.035,lp:7000,hp:2200,attack:0.001});
+                  crackle({n:3,nVar:2,peak:0.022,lp:6000,hp:1600,spread:0.16,bias:1.2}); break;
     // Audition only: run the held bed briefly so the continuous layer can be judged without holding the tool.
     case 'sandbed': loopStart('sandDemo',SAND_BED); setTimeout(()=>loopStop('sandDemo'),1300); break;
     case 'brutebed':loopStart('bruteDemo',BRUTE_BED); setTimeout(()=>loopStop('bruteDemo'),1300); break;
