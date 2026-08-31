@@ -12672,66 +12672,246 @@ function tileMineSpeed(t,tx,ty){
 }
 
 // ---------- enemies ----------
+/* ============================================================
+   CREATURES OF THE DEEP.
+   Was two entries, both surface-only, and the spiker never moved (hop:false left
+   its velocity unset, so it just sat there). Now a depth-tiered bestiary on a
+   handful of AIs — the danger, the count and the roster all rise as you dig.
+     hop   — the old lob toward the player when grounded (grub).
+     walk  — chases along the ground; a `climb` type hops a one-tile ledge.
+     leap  — walks in, then springs when close (spiker).
+     fly   — swims straight at the player through open AIR, ignoring gravity;
+             a wall turns it (flitter).
+     bore  — the signature deep threat: beelines toward the player THROUGH ROCK,
+             drilling any tile in its path. Slow, so you can run or fight, but a
+             wall is no escape.
+     range — holds its distance and spits a hostile projectile (spitter).
+   `band:[lo,hi]` is the depth-tier window a kind spawns in; per-spawn hp/dmg
+   also scale with the tier, so the same creature met deeper hits harder. */
 const ENEMY_TYPES={
-  slime:{hp:22,dmg:8,col:'#57c98a',eye:'#0B0E1A',r:0.42,
-    drillMult:0.5, blastMult:3.0, hop:true},
-  spiker:{hp:38,dmg:14,col:'#b06ad0',eye:'#F5C86A',r:0.46,
-    drillMult:2.2, blastMult:0.5, hop:false}
+  grub:   {ai:'hop',  hp:18, dmg:6,  r:0.40, speed:0.12, col:'#57c98a', eye:'#0B0E1A', drillMult:0.6, blastMult:3.0, band:[1,2]},
+  crawler:{ai:'walk', hp:26, dmg:9,  r:0.40, speed:0.055,col:'#84b23f', eye:'#0B0E1A', drillMult:1.0, blastMult:1.4, band:[1,3], climb:true},
+  spiker: {ai:'leap', hp:46, dmg:14, r:0.46, speed:0.075,col:'#b06ad0', eye:'#F5C86A', drillMult:2.2, blastMult:0.5, band:[2,3]},
+  flitter:{ai:'fly',  hp:22, dmg:11, r:0.36, speed:0.075,col:'#5ac2e0', eye:'#0B0E1A', drillMult:1.2, blastMult:1.2, band:[2,4]},
+  spitter:{ai:'range',hp:40, dmg:0,  r:0.44, speed:0.035,col:'#d98a3a', eye:'#2a1608', drillMult:1.0, blastMult:1.0, band:[3,5], fireDmg:12, range:7, cd:2.6},
+  borer:  {ai:'bore', hp:130,dmg:20, r:0.52, speed:0.030,col:'#c8564a', eye:'#F5C86A', drillMult:0.7, blastMult:0.8, band:[3,5]},
+  stalker:{ai:'walk', hp:76, dmg:24, r:0.44, speed:0.115,col:'#e04a68', eye:'#F5C86A', drillMult:1.6, blastMult:0.9, band:[4,5], climb:true}
 };
+// Which kinds roll at each depth tier, weighted. Deeper tiers drop the fodder and lean into the borers,
+// spitters and stalkers.
+const SPAWN_TABLE={
+  1:[['grub',5],['crawler',3]],
+  2:[['grub',3],['crawler',4],['spiker',3],['flitter',2]],
+  3:[['crawler',2],['spiker',4],['flitter',3],['spitter',3],['borer',2]],
+  4:[['spiker',2],['flitter',2],['spitter',3],['borer',4],['stalker',3]],
+  5:[['spitter',3],['borer',4],['stalker',4],['flitter',2]]
+};
+// How deep the player is, in tiers — drives spawn table, rate, cap and stat scaling.
+function depthTier(){ const d=player.y-surfaceY[Math.floor(player.x)];
+  return d<25?1 : d<60?2 : d<95?3 : d<125?4 : 5; }
+function pickSpawn(tier){ const tbl=SPAWN_TABLE[tier]||SPAWN_TABLE[1]; let tot=0; for(const e of tbl)tot+=e[1];
+  let r=Math.random()*tot; for(const e of tbl){ r-=e[1]; if(r<=0) return e[0]; } return tbl[0][0]; }
 let enemies=[], spawnTimer=0;
 function spawnEnemy(){
-  if (enemies.length>=6) return;
-  const kind=Math.random()<0.65?'slime':'spiker';
-  for (let tries=0;tries<24;tries++){
-    const x=Math.floor(player.x)+(Math.random()<0.5?-1:1)*(8+Math.floor(Math.random()*14));
-    const y=surfaceY[x]+3+Math.floor(Math.random()*40);
-    if (y>=BEDROCK_Y) continue;
-    if (tileAt(x+0.5,y+0.5)!==T_AIR) continue;
-    if (tileAt(x+0.5,y+1.5)===T_AIR) continue;
-    if (Math.hypot(x-player.x,y-player.y)<10) continue;
-    enemies.push({kind,x:x+0.5,y:y+0.9,vx:0,vy:0,hp:ENEMY_TYPES[kind].hp,
-      hurtT:0,hopT:Math.random()*2});
+  const tier=depthTier();
+  if (enemies.length >= 4+tier*2) return;                  // deeper = a bigger swarm allowed
+  const kind=pickSpawn(tier), T=ENEMY_TYPES[kind];
+  for (let tries=0;tries<26;tries++){
+    const dir=Math.random()<0.5?-1:1;
+    const x=Math.floor(player.x)+dir*(9+Math.floor(Math.random()*16));
+    // All kinds spawn near the player's CURRENT depth — in the tunnels and caverns they're actually in —
+    // not relative to the far surface (which, dug deep, put them out of range to despawn instantly).
+    const cy=Math.floor(player.y); let y=-1;
+    if (T.ai==='bore'){                                    // a borer lives IN the rock — embed it a few tiles off
+      y=cy+(Math.random()<0.5?-1:1)*(5+Math.floor(Math.random()*9));
+      if (y<1||y>=BEDROCK_Y) continue;
+    } else if (T.ai==='fly'){                              // a flyer needs any air pocket near your level
+      for (let oy=-6;oy<=6;oy++){ const yy=cy+oy; if (yy<0||yy>=BEDROCK_Y) continue;
+        if (tileAt(x+0.5,yy+0.5)===T_AIR){ y=yy; break; } }
+      if (y<0) continue;
+    } else {                                               // ground types need a floored air cell near you
+      for (let oy=-6;oy<=8;oy++){ const yy=cy+oy; if (yy<1||yy>=BEDROCK_Y) continue;
+        if (tileAt(x+0.5,yy+0.5)===T_AIR && tileAt(x+0.5,yy-0.5)===T_AIR && tileAt(x+0.5,yy+1.5)!==T_AIR){ y=yy; break; } }
+      if (y<0) continue;
+    }
+    if (Math.hypot(x-player.x,y-player.y)<9) continue;     // never right on top of the player
+    const mult=1+(tier-1)*0.24;                            // same kind, nastier deeper
+    enemies.push({kind,x:x+0.5,y:y+0.9,vx:0,vy:0,
+      hp:Math.round(T.hp*mult), hpMax:Math.round(T.hp*mult), dmg:Math.round(T.dmg*mult),
+      hurtT:0, hopT:Math.random()*2, fireT:(T.cd||0)*Math.random(), bore:0, wob:Math.random()*6.28});
     return;
   }
 }
+// Ground physics + a climber's ledge-hop. Shared by walk / leap / hop / range.
+function moveGround(e,T){
+  e.vy=Math.min(0.42,e.vy+0.022);
+  const grounded=solid(tileAt(e.x,e.y+0.14));
+  let nx=e.x+e.vx;
+  if (solid(tileAt(nx+(e.vx>0?T.r:-T.r),e.y-0.2))){       // wall ahead
+    if (T.climb&&grounded&&!solid(tileAt(e.x+(e.vx>0?T.r:-T.r),e.y-1.15))){ e.vy=-0.33; nx=e.x+e.vx*0.4; }  // hop it
+    else { nx=e.x; e.vx=0; }
+  }
+  e.x=nx;
+  let ny=e.y+e.vy;
+  if (e.vy>0&&solid(tileAt(e.x,ny+0.05))){ ny=Math.floor(ny+0.05)-0.051; e.vy=0; }
+  else if (e.vy<0&&solid(tileAt(e.x,ny-T.r*2))){ ny=e.y; e.vy=0; }
+  e.y=ny;
+  return grounded;
+}
+// A flyer bounces gently off solid rather than clipping into it.
+function moveFly(e,T){
+  let nx=e.x+e.vx;
+  if (solid(tileAt(nx+(e.vx>0?T.r:-T.r),e.y))){ nx=e.x; e.vx*=-0.4; }
+  e.x=nx;
+  let ny=e.y+e.vy;
+  if (solid(tileAt(e.x,ny+(e.vy>0?T.r:-T.r)))){ ny=e.y; e.vy*=-0.4; }
+  e.y=ny;
+}
+// The borer: head straight for the player, and chew through whatever tile is in front of its nose. No
+// yield from the rock it eats (it is not mining, it is coming for you); a little debris and a shudder.
+function boreStep(e,T,ux,uy,dt){
+  const nx=e.x+ux*(T.r+0.15), ny=e.y+uy*(T.r+0.15);
+  const tx=Math.floor(nx), ty=Math.floor(ny), t=(ty>=0&&ty<WH)?getTile(tx,ty):T_BEDROCK;
+  if (t!==T_AIR && t!==T_BEDROCK){
+    e.bore += dt*(1.7/Math.max(0.6,TILE_INFO[t].resist));  // harder rock is slower to gnaw
+    e.x+=ux*T.speed*0.3; e.y+=uy*T.speed*0.3;              // creep forward while grinding
+    if (e.bore>=1){ e.bore=0;
+      setTile(tx,ty,T_AIR); setSeen(tx,ty,1);
+      for(let p=0;p<4;p++) particles.push({x:tx+0.5,y:ty+0.5,vx:(Math.random()-0.5)*0.14,vy:-Math.random()*0.1,life:16,col:'#7a5140'});
+      if (Math.hypot(e.x-player.x,e.y-player.y)<8) addShake(0.03);   // felt only when it's near
+    }
+  } else if (t===T_BEDROCK){                               // can't breach the world floor — slide along it
+    e.x+=ux*T.speed*0.5;
+  } else {                                                 // open air — swim freely
+    e.x+=ux*T.speed; e.y+=uy*T.speed;
+  }
+}
+// A spitter's shot: a hostile projectile (see stepProjectiles) rather than a melee hit.
+function enemyFire(e,T,dxp,dyp){
+  const d=Math.hypot(dxp,dyp)||1;
+  projectiles.push({x:e.x,y:e.y-0.3,vx:dxp/d*0.30,vy:dyp/d*0.30-0.05,life:2.4,hostile:true,dmg:Math.round(T.fireDmg*(1+(depthTier()-1)*0.24))});
+}
+function killEnemy(e,T,i){
+  for (let p=0;p<10;p++)
+    particles.push({x:e.x,y:e.y-0.3,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.15,life:24,col:T.col});
+  const bounty=Math.max(1,Math.round((e.hpMax||T.hp)/8));  // tougher things pay more dust
+  dust+=bounty; updateMeters();
+  say(`The ${e.kind} comes apart. +${bounty}◈`);
+  enemies.splice(i,1);
+}
 function stepEnemies(dt){
   spawnTimer-=dt;
-  if (spawnTimer<=0){ spawnTimer=4+Math.random()*3; spawnEnemy(); }
+  if (spawnTimer<=0){ const tier=depthTier(); spawnTimer=Math.max(1.7,4.8-tier*0.45)+Math.random()*2; spawnEnemy(); }
   for (let i=enemies.length-1;i>=0;i--){
     const e=enemies[i], T=ENEMY_TYPES[e.kind];
-    e.vy=Math.min(0.4,e.vy+0.02);
-    if (T.hop){
-      e.hopT-=dt;
-      const grounded=solid(tileAt(e.x,e.y+0.05));
-      if (grounded&&e.hopT<=0&&Math.hypot(e.x-player.x,e.y-player.y)<9){
-        e.hopT=1.1+Math.random()*0.8;
-        e.vy=-0.3;
-        e.vx=(player.x>e.x?1:-1)*0.12;
-      }
-      if (grounded) e.vx*=0.8;
-    }
-    let nx=e.x+e.vx;
-    if (solid(tileAt(nx+(e.vx>0?T.r:-T.r),e.y-0.2))){ nx=e.x; e.vx=0; }
-    e.x=nx;
-    let ny=e.y+e.vy;
-    if (e.vy>0&&solid(tileAt(e.x,ny+0.05))){ ny=Math.floor(ny+0.05)-0.051; e.vy=0; }
-    else if (e.vy<0&&solid(tileAt(e.x,ny-T.r*2))){ ny=e.y; e.vy=0; }
-    e.y=ny;
+    const dxp=player.x-e.x, dyp=(player.y-0.45)-e.y, distp=Math.hypot(dxp,dyp);
+    if (distp>46){ enemies.splice(i,1); continue; }        // stray too far: despawn so deep spawns don't pile up
+    const seen=distp < (T.ai==='range'||T.ai==='bore'?24:13);
     e.hurtT=Math.max(0,e.hurtT-dt);
-    if (Math.hypot(e.x-player.x,e.y-(player.y-0.45))<T.r+0.45&&player.iFrames<=0){
-      hp-=T.dmg; player.iFrames=1.0; sfx('hurt'); updateMeters();
-      say(`The ${e.kind} bites — ${T.dmg} damage.`,'warn');
-      if (hp<=0) die();
+
+    if (T.ai==='fly'){
+      if (seen){ const s=T.speed, cap=s*2.4, w=0.8+0.4*Math.sin(e.wob+=dt*5);
+        e.vx=Math.max(-cap,Math.min(cap, e.vx+Math.sign(dxp)*s*0.35*w));
+        e.vy=Math.max(-cap,Math.min(cap, e.vy+Math.sign(dyp)*s*0.35*w));
+      } else { e.vx*=0.9; e.vy*=0.9; }
+      moveFly(e,T);
+    } else if (T.ai==='bore'){
+      boreStep(e,T,dxp/(distp||1),dyp/(distp||1),dt);
+    } else {
+      const grounded=solid(tileAt(e.x,e.y+0.14));
+      if (T.ai==='hop'){
+        e.hopT-=dt;
+        if (grounded&&e.hopT<=0&&seen){ e.hopT=1.0+Math.random()*0.7; e.vy=-0.30; e.vx=Math.sign(dxp)*T.speed; }
+        if (grounded) e.vx*=0.8;
+      } else if (T.ai==='leap'){
+        if (grounded){ e.vx=Math.sign(dxp)*T.speed*(seen?1:0.2);
+          e.hopT-=dt;
+          if (seen&&e.hopT<=0&&Math.abs(dxp)<6&&Math.abs(dxp)>1){ e.hopT=0.9+Math.random()*0.6; e.vy=-0.34; e.vx=Math.sign(dxp)*T.speed*1.7; } }
+      } else if (T.ai==='range'){
+        if (grounded){ const w=T.range;
+          e.vx=(Math.abs(dxp)>w+1.5?Math.sign(dxp):Math.abs(dxp)<w-1.5?-Math.sign(dxp):0)*T.speed; }
+        e.fireT-=dt;
+        if (seen&&e.fireT<=0&&Math.abs(dyp)<5){ e.fireT=T.cd; enemyFire(e,T,dxp,dyp); }
+      } else {                                             // walk
+        if (grounded) e.vx=Math.sign(dxp)*T.speed*(seen?1:0.15);
+      }
+      moveGround(e,T);
     }
-    if (e.hp<=0){
-      for (let p=0;p<10;p++)
-        particles.push({x:e.x,y:e.y-0.3,vx:(Math.random()-0.5)*0.18,
-          vy:-Math.random()*0.15,life:24,col:T.col});
-      dust+=3; updateMeters();
-      say(`The ${e.kind} comes apart. +3◈`);
-      enemies.splice(i,1);
+
+    // Contact: melee kinds hurt on touch (the spitter fights at range only).
+    if (T.ai!=='range' && distp<T.r+0.5 && player.iFrames<=0){
+      hp-=e.dmg; player.iFrames=1.0; sfx('hurt'); updateMeters();
+      say(`The ${e.kind} ${T.ai==='bore'?'gores':'strikes'} — ${e.dmg} damage.`,'warn');
+      if (hp<=0){ die(); return; }
     }
+    if (e.hp<=0) killEnemy(e,T,i);
   }
+}
+
+// Each kind gets its own silhouette so a threat reads at a glance — a borer's drill-head is not something
+// you mistake for a grub. All hand-drawn on the 2D world canvas; `hurtT` flashes them white on a hit.
+function drawEnemy(e,T,ex,ey,now){
+  const flash=e.hurtT>0, body=flash?'#ffffff':T.col, fx=Math.sign(player.x-e.x)||1, r=T.r*TS;
+  ctx.save();
+  if (e.kind==='grub'){
+    const squish=solid(tileAt(e.x,e.y+0.14))?1:0.82;
+    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.8,r,r*squish,0,0,7); ctx.fill();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex+fx*2-2,ey-r,4,4);
+  } else if (e.kind==='spiker'){
+    ctx.fillStyle=body; ctx.beginPath(); ctx.arc(ex,ey-r,r*0.8,0,7); ctx.fill();
+    ctx.strokeStyle=body; ctx.lineWidth=2;
+    for (let s=0;s<8;s++){ const a=s*Math.PI/4+now*0.001;
+      ctx.beginPath(); ctx.moveTo(ex+Math.cos(a)*r*0.8,ey-r+Math.sin(a)*r*0.8);
+      ctx.lineTo(ex+Math.cos(a)*r*1.25,ey-r+Math.sin(a)*r*1.25); ctx.stroke(); }
+    ctx.fillStyle=T.eye; ctx.fillRect(ex-2,ey-r-2,4,4);
+  } else if (e.kind==='crawler'){
+    // a low segmented body with little scurrying legs
+    ctx.strokeStyle=body; ctx.lineWidth=2;
+    for (let l=-1;l<=1;l++){ const lx=ex+l*r*0.5, lp=Math.sin(now*0.02+l)*r*0.3;
+      ctx.beginPath(); ctx.moveTo(lx,ey-r*0.5); ctx.lineTo(lx-lp,ey); ctx.stroke(); }
+    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.7,r*1.15,r*0.6,0,0,7); ctx.fill();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex+fx*(r*0.7)-2,ey-r*0.8,3,3);
+  } else if (e.kind==='flitter'){
+    // a mote with two beating wings
+    const beat=0.5+0.5*Math.abs(Math.sin(now*0.02));
+    ctx.fillStyle=flash?'#fff':'rgba(120,220,240,0.5)';
+    for (const w of [-1,1]){ ctx.beginPath(); ctx.moveTo(ex,ey-r);
+      ctx.quadraticCurveTo(ex+w*r*1.6,ey-r-r*beat, ex+w*r*1.3,ey-r+r*0.5); ctx.closePath(); ctx.fill(); }
+    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r,r*0.5,r*0.85,0,0,7); ctx.fill();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex-1,ey-r*1.2,3,3);
+  } else if (e.kind==='spitter'){
+    // squat, with a raised barrel that glows before it fires
+    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.7,r,r*0.85,0,0,7); ctx.fill();
+    const charge=e.fireT<0.6?(0.6-e.fireT)/0.6:0;
+    ctx.save(); ctx.translate(ex+fx*r*0.6,ey-r*0.9); ctx.rotate(fx>0?-0.3:0.3-Math.PI);
+    ctx.fillStyle=body; ctx.fillRect(0,-r*0.22,r*0.7,r*0.44);
+    if (charge>0){ ctx.fillStyle=`rgba(255,180,90,${charge})`; ctx.beginPath(); ctx.arc(r*0.7,0,r*0.3*charge,0,7); ctx.fill(); }
+    ctx.restore();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex-fx*r*0.3-1,ey-r,3,3);
+  } else if (e.kind==='borer'){
+    // a drill-headed grub — the nose is a spinning cone aimed at the player
+    const ang=Math.atan2(player.y-e.y,player.x-e.x);
+    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.6,r*1.1,r*0.9,0,0,7); ctx.fill();
+    ctx.save(); ctx.translate(ex+Math.cos(ang)*r*0.7,ey-r*0.6+Math.sin(ang)*r*0.7); ctx.rotate(ang);
+    ctx.fillStyle=flash?'#fff':'#e8c77e';
+    ctx.beginPath(); ctx.moveTo(r*0.9,0); ctx.lineTo(-r*0.3,-r*0.55); ctx.lineTo(-r*0.3,r*0.55); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#5a3a2a'; ctx.lineWidth=1.5;                 // the flutes, turning
+    for (let k=-2;k<=2;k++){ const o=(now*0.02+k)%1; ctx.beginPath();
+      ctx.moveTo(-r*0.3+o*r*1.2,-r*0.5+o*r*0.5); ctx.lineTo(-r*0.3+o*r*1.2,r*0.5-o*r*0.5); ctx.stroke(); }
+    ctx.restore();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex-fx*r*0.4-2,ey-r*0.7,4,4);
+  } else if (e.kind==='stalker'){
+    // lean angular predator — an arrowhead body on sharp legs
+    ctx.strokeStyle=body; ctx.lineWidth=2.4;
+    for (const l of [-0.6,0,0.6]){ ctx.beginPath(); ctx.moveTo(ex+l*r,ey-r*0.6);
+      ctx.lineTo(ex+l*r-fx*r*0.3+Math.sin(now*0.03+l)*r*0.25,ey); ctx.stroke(); }
+    ctx.fillStyle=body; ctx.beginPath();
+    ctx.moveTo(ex+fx*r*1.2,ey-r*0.9); ctx.lineTo(ex-fx*r*0.9,ey-r*1.35); ctx.lineTo(ex-fx*r*0.9,ey-r*0.45); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=T.eye; ctx.fillRect(ex+fx*r*0.5-2,ey-r,4,4);
+  } else {
+    ctx.fillStyle=body; ctx.beginPath(); ctx.arc(ex,ey-r,r*0.8,0,7); ctx.fill();
+  }
+  ctx.restore();
 }
 
 /* ============================================================
@@ -12860,10 +13040,21 @@ function stepProjectiles(dt){
   for (let i=projectiles.length-1;i>=0;i--){
     const p=projectiles[i];
     p.x+=p.vx; p.y+=p.vy; p.vy+=0.018; p.life-=dt;
-    let hit=p.life<=0||solid(tileAt(p.x,p.y));
-    if (!hit) for (const e of enemies)
-      if (Math.hypot(e.x-p.x,e.y-p.y)<0.6){ hit=true; break; }
-    if (hit){ explode(p.x,p.y); projectiles.splice(i,1); }
+    if (p.hostile){
+      // A spitter's shot: hurts the PLAYER, passes through enemies, and doesn't tear up terrain.
+      let hit=p.life<=0||solid(tileAt(p.x,p.y));
+      if (Math.hypot(player.x-p.x,player.y-0.45-p.y)<0.6 && player.iFrames<=0){
+        hp-=p.dmg||10; player.iFrames=0.8; sfx('hurt'); updateMeters();
+        say(`Hit by spit — ${p.dmg||10} damage.`,'warn'); hit=true; if (hp<=0){ die(); }
+      }
+      if (hit){ for(let k=0;k<6;k++) particles.push({x:p.x,y:p.y,vx:(Math.random()-0.5)*0.16,vy:-Math.random()*0.12,life:16,col:'#d98a3a'}); projectiles.splice(i,1); }
+    } else {
+      // The player's own Blast Phial: detonates on terrain or an enemy.
+      let hit=p.life<=0||solid(tileAt(p.x,p.y));
+      if (!hit) for (const e of enemies)
+        if (Math.hypot(e.x-p.x,e.y-p.y)<0.6){ hit=true; break; }
+      if (hit){ explode(p.x,p.y); projectiles.splice(i,1); }
+    }
   }
 }
 
@@ -14419,41 +14610,22 @@ function drawWorld(now){
   for (const e of enemies){
     const T=ENEMY_TYPES[e.kind];
     const ex=e.x*TS-camX, ey=e.y*TS-camY;
-    if (Math.hypot(e.x-player.x,e.y-player.y)>14) continue;
-    ctx.fillStyle=e.hurtT>0?'#ffffff':T.col;
-    if (e.kind==='slime'){
-      const squish=solid(tileAt(e.x,e.y+0.05))?1:0.8;
-      ctx.beginPath();
-      ctx.ellipse(ex,ey-T.r*TS*0.8,T.r*TS,T.r*TS*squish,0,0,7);
-      ctx.fill();
-      ctx.fillStyle=T.eye;
-      ctx.fillRect(ex+(player.x>e.x?2:-6),ey-T.r*TS,4,4);
-    } else {
-      ctx.beginPath();
-      ctx.arc(ex,ey-T.r*TS,T.r*TS*0.8,0,7); ctx.fill();
-      ctx.strokeStyle=T.col; ctx.lineWidth=2;
-      for (let s=0;s<8;s++){
-        const a=s*Math.PI/4+now*0.001;
-        ctx.beginPath();
-        ctx.moveTo(ex+Math.cos(a)*T.r*TS*0.8,ey-T.r*TS+Math.sin(a)*T.r*TS*0.8);
-        ctx.lineTo(ex+Math.cos(a)*T.r*TS*1.25,ey-T.r*TS+Math.sin(a)*T.r*TS*1.25);
-        ctx.stroke();
-      }
-      ctx.fillStyle=T.eye;
-      ctx.fillRect(ex-2,ey-T.r*TS-2,4,4);
-    }
-    if (e.hp<ENEMY_TYPES[e.kind].hp){
+    if (Math.hypot(e.x-player.x,e.y-player.y)>16) continue;
+    drawEnemy(e,T,ex,ey,now);
+    if (e.hp<(e.hpMax||T.hp)){
       ctx.fillStyle='#0B0E1A'; ctx.fillRect(ex-TS*0.4,ey-T.r*TS*2.4,TS*0.8,3);
       ctx.fillStyle='#E0523D';
-      ctx.fillRect(ex-TS*0.4,ey-T.r*TS*2.4,TS*0.8*(e.hp/ENEMY_TYPES[e.kind].hp),3);
+      ctx.fillRect(ex-TS*0.4,ey-T.r*TS*2.4,TS*0.8*(e.hp/(e.hpMax||T.hp)),3);
     }
   }
 
-  ctx.fillStyle='#E8A33D';
   for (const p of projectiles){
+    ctx.fillStyle=p.hostile?'#e86a3a':'#E8A33D';
     ctx.beginPath();
-    ctx.arc(p.x*TS-camX,p.y*TS-camY,TS*0.14,0,7);
+    ctx.arc(p.x*TS-camX,p.y*TS-camY,TS*(p.hostile?0.12:0.14),0,7);
     ctx.fill();
+    if (p.hostile){ ctx.strokeStyle='rgba(255,120,60,.5)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(p.x*TS-camX,p.y*TS-camY,TS*0.2,0,7); ctx.stroke(); }
   }
 
   for (let i=particles.length-1;i>=0;i--){

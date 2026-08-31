@@ -229,6 +229,20 @@ Biomes are seeded 2D value-noise regions, not fixed x-ranges. Gate tiles
 **Readiness gate:** `<0.60` locked, `0.60–0.95` crawl, `≥0.95` full, with
 overkill scaling as `r^OVERKILL_EXP` past parity.
 
+**Creatures.** `ENEMY_TYPES` is a depth-tiered bestiary on a handful of shared
+AIs — `hop`, `walk` (with a `climb` ledge-hop), `leap`, `fly` (swims through open
+air, turns at walls), `bore` (beelines through *rock*, drilling any tile in its
+path — the signature deep threat) and `range` (holds distance, spits a
+`hostile:true` projectile). `depthTier()` (surface distance → 1–5) drives the
+weighted `SPAWN_TABLE`, the spawn rate/cap, and a per-spawn hp/dmg multiplier, so
+the roster and danger both climb as you dig. Spawns are placed near the player's
+*current depth* (in the tunnels they're in), not relative to the far surface.
+Enemies aren't saved — transient, cleared on load. One trap the rewrite fixed and
+worth not re-breaking: the ground `grounded` probe reads `e.y+0.14`, not `+0.05`
+— the landing snap (`floor−0.051`) leaves a resting enemy 0.001 short of the
+`+0.05` probe, so at `+0.05` ground types never register as grounded and never
+chase (which is why they used to "just sit there").
+
 **Lab.** A placed world structure with four wings (`LAB_WINGS`): Lapidary,
 Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
 `LAB_RECALL_DIST`.
