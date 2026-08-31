@@ -261,6 +261,16 @@
   .lapHotspot:hover,.lapHotspot:focus-visible{background:transparent;border-color:var(--crystal);
     box-shadow:inset 0 0 34px rgba(79,227,193,.14),0 0 18px rgba(79,227,193,.16);outline:none}
   /* core picker controls */
+  #psList{display:flex;flex-direction:column;gap:8px}
+  .psRow{display:flex;align-items:center;gap:11px;padding:10px 12px;background:linear-gradient(180deg,#161d21,#111619);
+    border:1px solid var(--line);clip-path:polygon(0 0,100% 0,calc(100% - 9px) 100%,9px 100%)}
+  .psRow.unknown{opacity:.6}
+  .psSw{width:14px;height:14px;flex:0 0 14px;border:1px solid rgba(0,0,0,.5);box-shadow:0 0 6px currentColor,inset 0 1px 1px rgba(255,255,255,.3)}
+  .psRow .info{flex:1;min-width:0}
+  .psRow .info b{font:600 14px Georgia,serif;color:var(--ink)}
+  .psRow .info .sub{font-size:11px;color:var(--dim);margin-top:2px}
+  .psRow .pot{font:600 13px 'IBM Plex Mono',monospace;color:var(--crystal);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .psRow .psBtns{display:flex;gap:5px;flex:0 0 auto}
   #corePicker .cpBar{display:flex;gap:8px;margin:2px 0 12px}
   #cpSearch{flex:1;min-height:36px;padding:6px 12px;color:var(--ink);background:#0d1122;
     border:1px solid var(--line);font:13px Georgia,serif}
@@ -944,6 +954,7 @@
 <button class="closeX" id="x_forge" aria-label="Close forge" style="display:none">✕</button>
 <button class="closeX" id="x_lapidary" aria-label="Close lapidary" style="display:none">✕</button>
 <button class="closeX" id="x_corePicker" aria-label="Close picker" style="display:none">✕</button>
+<button class="closeX" id="x_potionShelf" aria-label="Close potion store" style="display:none">✕</button>
 <button class="closeX" id="x_brew" aria-label="Close brewing" style="display:none">✕</button>
 
 <div id="stationBar"></div>
@@ -1203,6 +1214,13 @@
       </select>
     </div>
     <div id="cpList"></div>
+  </div>
+</div>
+
+<div id="potionShelf" class="overlay">
+  <div class="wrap">
+    <h2>Potion Store</h2>
+    <div id="psList"></div>
   </div>
 </div>
 
@@ -19134,6 +19152,41 @@ function openCorePicker(kind){
 function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on');
   document.getElementById('nav').style.display='';       // restore the switcher over the hub
   syncCloseX(); }
+/* THE POTION STORE — the lapidary's potion bay, made real. It shows every solvent you can make: current
+   stock (or tank charge), its best recorded potency, and the run-off controls, so you can top up your
+   phials right here without walking to the brewing line. Improving potency still means the line (the
+   minigame) — the store links you there; this is only the mass-produce side, same rule as the brew HUD. */
+function openPotionShelf(){
+  if (typeof cancelLapCore==='function') cancelLapCore();
+  document.getElementById('potionShelf').classList.add('on');
+  document.getElementById('nav').style.display='none';
+  syncCloseX(); renderPotionShelf();
+}
+function closePotionShelf(){ document.getElementById('potionShelf').classList.remove('on');
+  document.getElementById('nav').style.display=''; syncCloseX(); }
+function renderPotionShelf(){
+  const el=document.getElementById('psList'); if (!el) return;
+  const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
+  el.innerHTML=BREW_POTIONS.map(pt=>{
+    const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
+    const known=potionStr[pt.id]>0, isTank=!!pt.tank, ok=adminOn||brewCanAfford(pt);
+    const stock=isTank ? `${tank[pt.tank]||0} / ${tankCap(pt.tank)} charge` : `${potions[pt.id]||0} in stock`;
+    const cost=`${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈`;
+    const btns=known
+      ? `<button class="tiny" data-run="${pt.id}" ${ok?'':'disabled'} title="Run off one more at best potency, no minigame">⟳ Run off</button>`+
+        `<button class="tiny" data-max="${pt.id}" ${ok?'':'disabled'} title="Run off as many as you can afford">×max</button>`
+      : `<button class="tiny" data-line="${pt.id}" title="Brew it on the line to discover its potency">Brew →</button>`;
+    return `<div class="psRow${known?'':' unknown'}">`+
+      `<span class="psSw" style="background:${hx(H.glow)};color:${hx(H.glow)}">&#8203;</span>`+
+      `<div class="info"><b>${pt.label}</b><div class="sub">${stock} · ${cost}</div></div>`+
+      `<span class="pot">${known?'×'+potionStr[pt.id].toFixed(1):'—'}</span>`+
+      `<div class="psBtns">${btns}</div></div>`;
+  }).join('');
+  el.querySelectorAll('[data-run]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.run); if(pt){ quickBrew(pt,1); renderPotionShelf(); } });
+  el.querySelectorAll('[data-max]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.max); if(pt){ quickBrew(pt,999); renderPotionShelf(); } });
+  el.querySelectorAll('[data-line]').forEach(b=>b.onclick=()=>{ closePotionShelf();
+    if (owned('brewing')||adminOn) showView('brewb'); else say('The brewing kit is recovered from an ancient cache — find it to brew your own solvents.','warn'); });
+}
 function cpCard(core,kind){
   const div=document.createElement('div'); div.className='card t'+core.tier;
   div.style.display='flex'; div.style.alignItems='center'; div.style.gap='8px';
@@ -19194,7 +19247,7 @@ function lapZoneAction(id){
   else if (id==='vault') openCorePicker('wrought');
   else if (id==='bruting'||id==='faceting'||id==='polishing'||id==='seating') openCorePicker('clean');
   else if (id==='deepbrine'||id==='sandblast') say('That bay is sealed — a future reward brings it online.','warn');
-  else if (id==='potions') say('Potions are brewed and stored over at the Brewing station.');
+  else if (id==='potions') openPotionShelf();
 }
 // Hub wiring (elements exist in the initial markup).
 { const cv=document.getElementById('lapScene');
@@ -19205,6 +19258,7 @@ function lapZoneAction(id){
   });
 }
 { const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
+{ const x=document.getElementById('x_potionShelf'); if (x) x.onclick=closePotionShelf; }
 { const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
 { const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
 addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene();
@@ -19617,12 +19671,13 @@ document.getElementById('modeBtn').onclick=()=>{
    their parent overlay's display. Show only the exit for whichever overlay is on top — the core
    picker when it's open (it covers the lapidary), otherwise the single open hub overlay. */
 function syncCloseX(){
-  const map={x_lapidary:'lapidary', x_forge:'forge', x_brew:'brew', x_lab:'lab', x_corePicker:'corePicker'};
-  const pickerOn=document.getElementById('corePicker').classList.contains('on');
+  const map={x_lapidary:'lapidary', x_forge:'forge', x_brew:'brew', x_lab:'lab', x_corePicker:'corePicker', x_potionShelf:'potionShelf'};
+  // The picker and the potion store are foreground overlays — whichever is open owns the corner.
+  const topOn=document.getElementById('corePicker').classList.contains('on')||document.getElementById('potionShelf').classList.contains('on');
   for (const id in map){
     const ov=document.getElementById(map[id]);
     let show=!!ov && ov.classList.contains('on');
-    if (id!=='x_corePicker' && pickerOn) show=false;   // the picker sits on top and owns the corner
+    if (id!=='x_corePicker' && id!=='x_potionShelf' && topOn) show=false;
     const el=document.getElementById(id); if (el) el.style.display=show?'':'none';
   }
 }
