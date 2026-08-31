@@ -1512,6 +1512,11 @@ const SAND_BED ={lp:3400,hp:1500,peak:0.009,lfoHz:2.2,lfoDepth:700,bus:'tool'};
 // LAP WHIRR, very reduced — the faceting saw while its blade is closing. Quietest of the beds by some
 // way: the saw's own cutting ticks are the event, this is only the machine turning behind them.
 const FACET_BED={lp:1500,hp:300, peak:0.008,lfoHz:1.6,lfoDepth:320,hum:168,humPeak:0.22,bus:'tool'};
+// The saw's whirr rises with its selected speed plate — a slight lift at 2x, a clearer one at 5x.
+// Deliberately NOT the literal 2x/5x speed factor: a +14% / +47% pitch bump reads as "winding up", where
+// doubling the pitch would just sound like a different tool. Keyed on the SELECTED speed (benchSpeed),
+// so it tracks live as you toggle the plate mid-cut.
+const FACET_PITCH={1:1.0, 2:1.14, 5:1.47};
 const BRUTE_BED={lp:700, hp:150, peak:0.020,lfoHz:0.8,lfoDepth:180,bus:'tool'};
 const JET_BED  ={lp:2600,hp:600, peak:0.015,lfoHz:1.1,lfoDepth:600,bus:'tool'};
 const TORCH_BED={lp:1000,hp:150, peak:0.017,lfoHz:0.35,lfoDepth:220,bus:'tool'};
@@ -1693,6 +1698,7 @@ function loopStart(id,cfg){
     const hums=[];
     if(cfg.hum){ for(const [hf,hg] of [[cfg.hum,1],[cfg.hum*2,0.45]]){
       const o2=AC.createOscillator(); o2.type='sine'; o2.frequency.value=hf*(1+(Math.random()-0.5)*0.004);
+      o2._base=o2.frequency.value;                 // remembered so a live retune (loopRetune) is relative, not absolute
       const hv=AC.createGain(); hv.gain.value=(cfg.humPeak||0.3)*hg;
       o2.connect(hv); hv.connect(g); o2.start(); hums.push(o2); } }
     // A slow wander on the cutoff so a held tool BREATHES. A fixed corner on a looped buffer is the
@@ -1700,7 +1706,22 @@ function loopStart(id,cfg){
     const lfo=AC.createOscillator(); lfo.type='sine'; lfo.frequency.value=cfg.lfoHz||0.6;
     const lg=AC.createGain(); lg.gain.value=cfg.lfoDepth||220;
     lfo.connect(lg); lg.connect(lp.frequency); lfo.start(); src.start();
-    sndLoops[id]={src,g,lfo,hums};
+    sndLoops[id]={src,g,lfo,hums,lp,lpBase:(cfg.lp||1400),pitch:1};
+  }catch(_){}
+}
+// Shift a running bed's PITCH without restarting it: ramp the hum partials (and, gently, the filter
+// corner so the noise brightens with them) to a multiple of their base. Used to make the faceting saw
+// sing higher at 2x / 5x. A no-op when the multiplier hasn't actually moved, so it's cheap per frame.
+function loopRetune(id,mult){
+  const L=sndLoops[id]; if(!L||Math.abs((L.pitch||1)-mult)<0.001) return;
+  L.pitch=mult;
+  try{ const t=AC.currentTime;
+    if(L.hums) L.hums.forEach(o=>{ const f=Math.max(1,(o._base||o.frequency.value)*mult);
+      o.frequency.cancelScheduledValues(t); o.frequency.setValueAtTime(o.frequency.value,t);
+      o.frequency.exponentialRampToValueAtTime(f,t+0.14); });
+    if(L.lp){ const f=Math.max(60,L.lpBase*(1+(mult-1)*0.5));   // half the pitch move, so it lifts without getting shrill
+      L.lp.frequency.cancelScheduledValues(t); L.lp.frequency.setValueAtTime(L.lp.frequency.value,t);
+      L.lp.frequency.exponentialRampToValueAtTime(f,t+0.14); }
   }catch(_){}
 }
 function loopStop(id){
@@ -20432,7 +20453,9 @@ let t=0, lastNow=0;
     holdBed('sand', carving && typeof sanding !=='undefined' && sanding,  SAND_BED);
     holdBed('brute',carving && typeof grinding!=='undefined' && grinding, BRUTE_BED);
     holdBed('jet',  carving && typeof jetting !=='undefined' && jetting,  JET_BED);
-    holdBed('facet',carving && typeof sawClosing!=='undefined' && sawClosing, FACET_BED);
+    const facetOn=carving && typeof sawClosing!=='undefined' && sawClosing;
+    holdBed('facet',facetOn, FACET_BED);
+    if(facetOn) loopRetune('facet', FACET_PITCH[benchSpeed()]||1);   // whirr rises with the selected speed plate
     holdBed('torch',view==='forgeb' && typeof fluxOn!=='undefined' && fluxOn, TORCH_BED); }
   frameStats(now);
   }catch(err){
