@@ -12079,6 +12079,15 @@ function clickLabWing(sx,sy){
   if (wing) enterWing(wing);
   return true;
 }
+// Is the player home — standing at/inside the landed ship? A box around the footprint (the hull sprite
+// spreads a little wider than the 8 tiles, and you approach from the airlock end), with headroom above
+// and a tile of slack below. While home the player takes no damage and no new threats spawn: the ship is
+// a refuge, not a bench to be jumped at across the background.
+function playerAtLab(){
+  if (!lab.placed || lab.drop>0) return false;
+  return player.x > lab.x-2 && player.x < lab.x+LAB_W+2 &&
+         player.y > lab.y-3 && player.y < lab.y+LAB_H+1.5;
+}
 function labWingAt(px,py){
   if (!lab.placed||lab.drop>0) return null;
   if (py<lab.y-1||py>lab.y+LAB_H+1) return null;
@@ -12735,6 +12744,7 @@ function spawnEnemy(){
       if (y<0) continue;
     }
     if (Math.hypot(x-player.x,y-player.y)<9) continue;     // never right on top of the player
+    if (lab.placed && x>lab.x-3 && x<lab.x+LAB_W+3 && y>lab.y-3 && y<lab.y+LAB_H+2) continue;   // never inside/at the ship
     const mult=1+(tier-1)*0.24;                            // same kind, nastier deeper
     enemies.push({kind,x:x+0.5,y:y+0.9,vx:0,vy:0,
       hp:Math.round(T.hp*mult), hpMax:Math.round(T.hp*mult), dmg:Math.round(T.dmg*mult),
@@ -12801,7 +12811,9 @@ function killEnemy(e,T,i){
 }
 function stepEnemies(dt){
   spawnTimer-=dt;
-  if (spawnTimer<=0){ const tier=depthTier(); spawnTimer=Math.max(1.7,4.8-tier*0.45)+Math.random()*2; spawnEnemy(); }
+  // No new threats while the player is home at the ship.
+  if (spawnTimer<=0){ const tier=depthTier(); spawnTimer=Math.max(1.7,4.8-tier*0.45)+Math.random()*2;
+    if (!playerAtLab()) spawnEnemy(); }
   for (let i=enemies.length-1;i>=0;i--){
     const e=enemies[i], T=ENEMY_TYPES[e.kind];
     const dxp=player.x-e.x, dyp=(player.y-0.45)-e.y, distp=Math.hypot(dxp,dyp);
@@ -12838,8 +12850,9 @@ function stepEnemies(dt){
       moveGround(e,T);
     }
 
-    // Contact: melee kinds hurt on touch (the spitter fights at range only).
-    if (T.ai!=='range' && distp<T.r+0.5 && player.iFrames<=0){
+    // Contact: melee kinds hurt on touch (the spitter fights at range only) — never while the player is
+    // safe at the ship.
+    if (T.ai!=='range' && distp<T.r+0.5 && player.iFrames<=0 && !playerAtLab()){
       hp-=e.dmg; player.iFrames=1.0; sfx('hurt'); updateMeters();
       say(`The ${e.kind} ${T.ai==='bore'?'gores':'strikes'} — ${e.dmg} damage.`,'warn');
       if (hp<=0){ die(); return; }
@@ -13043,7 +13056,7 @@ function stepProjectiles(dt){
     if (p.hostile){
       // A spitter's shot: hurts the PLAYER, passes through enemies, and doesn't tear up terrain.
       let hit=p.life<=0||solid(tileAt(p.x,p.y));
-      if (Math.hypot(player.x-p.x,player.y-0.45-p.y)<0.6 && player.iFrames<=0){
+      if (Math.hypot(player.x-p.x,player.y-0.45-p.y)<0.6 && player.iFrames<=0 && !playerAtLab()){
         hp-=p.dmg||10; player.iFrames=0.8; sfx('hurt'); updateMeters();
         say(`Hit by spit — ${p.dmg||10} damage.`,'warn'); hit=true; if (hp<=0){ die(); }
       }
