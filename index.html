@@ -17357,6 +17357,29 @@ function brewFinish(){
   floatText(pt.label+' ×'+potency.toFixed(1),'var(--crystal)');
   brew=null; renderBrewHud();
 }
+/* RUN OFF — mass-produce a solvent you have ALREADY brewed, at its best recorded potency, without the
+   minigame. potionStr[id] is a running MAX, so this never raises it: a repeat pour is only ever as good
+   as your best line-brewed batch. To beat that you still upgrade gear / grind higher-grade dust and play
+   the line again — which is the whole progression the minigame drives. This just spares you replaying it
+   for every bottle once you've locked in a potency. Charges the same ingredients as a fresh brew. */
+function quickBrew(pt, batch){
+  batch=batch||1;
+  if (!(potionStr[pt.id]>0)){ say(`Brew ${pt.label} on the line once first — then you can run it off at that potency.`,'warn'); return 0; }
+  let made=0;
+  for (let n=0;n<batch;n++){
+    if (pt.tank && tank[pt.tank]>=tankCap(pt.tank)){ if(!made) say(`The ${pt.label} tank is already full.`,'warn'); break; }
+    if (!adminOn && !brewCanAfford(pt)) break;
+    if (!adminOn){ powder[pt.color]-=BREW_COST.powder; reagents[pt.reagent]-=BREW_COST.reagent; dust-=BREW_COST.dust; }
+    if (pt.tank){ const T=TANKS[pt.tank]; tank[pt.tank]=Math.min(tankCap(pt.tank), tank[pt.tank]+Math.round(T.per*0.85)); }
+    else { potions[pt.id]=(potions[pt.id]||0)+1; }
+    made++;
+  }
+  if (made){ sfx('brewdone'); updateMeters(); updateStock(); renderBrewHud();
+    say(`Ran off ${made}× ${pt.label} at best potency ×${potionStr[pt.id].toFixed(1)}.`,'good'); }
+  else if (!(pt.tank && tank[pt.tank]>=tankCap(pt.tank)))
+    say(`Not enough ${pt.color} powder / ${pt.reagent} / dust to run off ${pt.label}.`,'warn');
+  return made;
+}
 
 // ---- input ----------------------------------------------------------------
 function brewAngle(x,y){ return Math.atan2(y-innerHeight/2, x-innerWidth/2); }
@@ -17531,16 +17554,29 @@ function renderBrewHud(){
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
   if (!brew){
     const chips=BREW_POTIONS.map(pt=>{ const H=CORE_HUES.find(h=>h.key===pt.color); const ok=adminOn||brewCanAfford(pt);
-      const best=potionStr[pt.id]?` · best ×${potionStr[pt.id].toFixed(1)}`:'';
-      return `<button class="act" data-brew="${pt.id}" ${ok?'':'disabled'} style="text-align:left;opacity:${ok?1:0.5}">`+
+      const known=potionStr[pt.id]>0;
+      const best=known?` · best ×${potionStr[pt.id].toFixed(1)}`:'';
+      // The main button plays the line — the ONLY way to raise best potency. Once a potion is known, a
+      // second row runs it off at that best without the minigame: ×1, or ×max to spend all you can afford.
+      const runoff = known
+        ? `<div style="display:flex;gap:5px;margin-top:5px">`+
+          `<button class="act" data-quick="${pt.id}" ${ok?'':'disabled'} style="flex:1;font-size:11px;padding:4px 6px;opacity:${ok?1:0.5}" title="Brew one more at best potency, no minigame">⟳ Run off</button>`+
+          `<button class="act" data-qmax="${pt.id}" ${ok?'':'disabled'} style="font-size:11px;padding:4px 8px;opacity:${ok?1:0.5}" title="Brew as many as you can afford">×max</button></div>`
+        : '';
+      return `<div style="display:flex;flex-direction:column">`+
+        `<button class="act" data-brew="${pt.id}" style="text-align:left" title="${known?'Brew on the line — the way to improve potency':'Brew on the line'}">`+
         `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hx(H.glow)};box-shadow:0 0 5px ${hx(H.glow)}">&#8203;</span> `+
-        `${pt.label}<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`;
+        `${pt.label} <span style="font-size:10px;color:var(--dim)">${known?'▲ improve':'line'}</span>`+
+        `<div class="sub">${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈${best}</div></button>`+
+        runoff+`</div>`;
     }).join('');
     el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`+
-      `<span style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)">Brewing line — pick a potion (colour = core powder)</span>`+
+      `<span style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)">Brewing line — brew to improve, run off to mass-produce</span>`+
       `<button class="act" id="brewToSetup" style="font-size:11px;padding:3px 8px">← Setup</button></div>`+
       `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px">${chips}</div>`;
     el.querySelectorAll('[data-brew]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.brew); if (pt) brewStart(pt); });
+    el.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.quick); if (pt) quickBrew(pt,1); });
+    el.querySelectorAll('[data-qmax]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.qmax); if (pt) quickBrew(pt,999); });
     const bs=document.getElementById('brewToSetup'); if (bs) bs.onclick=()=>showView('brew');
     return;
   }
