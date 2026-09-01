@@ -19152,10 +19152,11 @@ function openCorePicker(kind){
 function closeCorePicker(){ cpKind=null; clearThumbs(); document.getElementById('corePicker').classList.remove('on');
   document.getElementById('nav').style.display='';       // restore the switcher over the hub
   syncCloseX(); }
-/* THE POTION STORE — the lapidary's potion bay, made real. It shows every solvent you can make: current
-   stock (or tank charge), its best recorded potency, and the run-off controls, so you can top up your
-   phials right here without walking to the brewing line. Improving potency still means the line (the
-   minigame) — the store links you there; this is only the mass-produce side, same rule as the brew HUD. */
+/* THE POTION STORE — the lapidary's potion bay, made real. Display only: it shows every solvent you can
+   make, its current stock (or tank charge) and its best recorded potency, so you can read your holdings
+   at a glance. You do NOT brew here — brewing (both the potency minigame and running off more at best
+   potency) belongs to the brewing station, deliberately, so the lab has one place metal turns to potion.
+   Each row just links you there. */
 function openPotionShelf(){
   if (typeof cancelLapCore==='function') cancelLapCore();
   document.getElementById('potionShelf').classList.add('on');
@@ -19169,21 +19170,16 @@ function renderPotionShelf(){
   const hx=v=>'#'+(v>>>0).toString(16).padStart(6,'0').slice(-6);
   el.innerHTML=BREW_POTIONS.map(pt=>{
     const H=CORE_HUES.find(h=>h.key===pt.color)||CORE_HUES[0];
-    const known=potionStr[pt.id]>0, isTank=!!pt.tank, ok=adminOn||brewCanAfford(pt);
+    const known=potionStr[pt.id]>0, isTank=!!pt.tank;
     const stock=isTank ? `${tank[pt.tank]||0} / ${tankCap(pt.tank)} charge` : `${potions[pt.id]||0} in stock`;
-    const cost=`${BREW_COST.powder} ${pt.color} · ${BREW_COST.reagent} ${pt.reagent} · ${BREW_COST.dust}◈`;
-    const btns=known
-      ? `<button class="tiny" data-run="${pt.id}" ${ok?'':'disabled'} title="Run off one more at best potency, no minigame">⟳ Run off</button>`+
-        `<button class="tiny" data-max="${pt.id}" ${ok?'':'disabled'} title="Run off as many as you can afford">×max</button>`
-      : `<button class="tiny" data-line="${pt.id}" title="Brew it on the line to discover its potency">Brew →</button>`;
+    // Display only — brewing lives at the brewing station. Every row links there; nothing is made here.
+    const btns=`<button class="tiny" data-line="${pt.id}" title="${known?'Run off more, or improve potency, at the brewing station':'Brew it on the line to discover its potency'}">Brewing →</button>`;
     return `<div class="psRow${known?'':' unknown'}">`+
       `<span class="psSw" style="background:${hx(H.glow)};color:${hx(H.glow)}">&#8203;</span>`+
-      `<div class="info"><b>${pt.label}</b><div class="sub">${stock} · ${cost}</div></div>`+
+      `<div class="info"><b>${pt.label}</b><div class="sub">${stock}</div></div>`+
       `<span class="pot">${known?'×'+potionStr[pt.id].toFixed(1):'—'}</span>`+
       `<div class="psBtns">${btns}</div></div>`;
   }).join('');
-  el.querySelectorAll('[data-run]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.run); if(pt){ quickBrew(pt,1); renderPotionShelf(); } });
-  el.querySelectorAll('[data-max]').forEach(b=>b.onclick=()=>{ const pt=BREW_POTIONS.find(p=>p.id===b.dataset.max); if(pt){ quickBrew(pt,999); renderPotionShelf(); } });
   el.querySelectorAll('[data-line]').forEach(b=>b.onclick=()=>{ closePotionShelf();
     if (owned('brewing')||adminOn) showView('brewb'); else say('The brewing kit is recovered from an ancient cache — find it to brew your own solvents.','warn'); });
 }
