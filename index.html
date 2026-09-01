@@ -866,6 +866,12 @@
   #fbPower.maxed .fbpBolt{color:#7fd8ff;text-shadow:0 0 9px rgba(90,210,255,.85),0 1px 0 #000}
   #fbPower .fbpNum{display:block;font:700 10px Georgia,serif;color:var(--sub);margin-top:5px}
   #fbPower .fbpNum i{font-style:normal;color:rgba(160,170,185,.55);font-weight:600}
+  /* CUTTER mode: the same dial reads as the cutter's precision cell — magenta accents + a "CUT" stamp. */
+  #fbPower.cut{border-color:rgba(255,46,166,.4)}
+  #fbPower.cut::after{content:"CUT";color:rgba(255,120,200,.7)}
+  #fbPower.cut .fbpBolt{color:#ff6ec0;text-shadow:0 0 8px rgba(255,46,166,.8),0 1px 0 #000}
+  #fbPower.cut .fbpSeg.lit{background:linear-gradient(90deg,#ffbfe6,#ff2ea6);
+    box-shadow:0 0 7px rgba(255,46,166,.7),inset 0 1px 0 #fff7}
 
   /* The FEED bar — the player-composed ore queue along the top of the screen. Stores on the
      left (click to add / load), the queued ore chunks on the right (click to drop & melt). */
@@ -16063,33 +16069,57 @@ let forgePowerLevel=1;                   // current dial setting (session), 1..F
 function forgeMaxPower(){ return FORGE_MAX_POWER; }
 function forgeRangeMul(){ return 1 + (forgePowerLevel-1)*0.5; }   // level 1 = x1, level 2 = x1.5, level 3 = x2 radius
 function forgeR(base){ return base*forgeRangeMul(); }
-// The power DIAL: a column of pips on the right, current level lit, tap to step up (wraps at max).
+// THE CUTTER PRECISION DIAL — the cutter's own 3-tier control, run on the SAME dial as the torch
+// (the dial reflects whichever tool is active). The old cutter borrowed the torch's range multiplier,
+// so it was as wide as the torch and far too coarse for trimming. It now has independent radii, and
+// tier 1 is a SINGLE cell — the refined option the player asked for. Bigger tiers for bulk removal.
+const FORGE_MAX_CUT=3;
+let forgeCutLevel=1;                     // 1..FORGE_MAX_CUT — 1 = single cell (finest), up to a small sphere
+const CUT_RADII=[0.0, 1.2, 2.0];         // brush radius per level: 1 cell / ~7 cells / ~33 cells
+function forgeCutRadius(){ return CUT_RADII[Math.max(0,Math.min(FORGE_MAX_CUT-1,forgeCutLevel-1))]; }
+// Whether the dial is currently driving the CUTTER (vs the torch). Keyed on the active tool.
+function forgeDialIsCut(){ return forgeTool==='grind'; }
+// The DIAL: a column of pips, current level lit, tap to step up (wraps at max). One dial, two meanings —
+// torch flux normally, cutter precision when the cutter is out (label + accent swap via the .cut class).
 function renderForgePower(){
   const el=document.getElementById('fbPower'); if (!el) return;
-  const mx=forgeMaxPower();
-  if (forgePowerLevel>mx) forgePowerLevel=mx; if (forgePowerLevel<1) forgePowerLevel=1;
-  // a slim flux-cell: a glass column of energy segments over a brass base, bolt on top, x/max below.
-  // Segments light bottom-up to the current level. Amber flux to sit with the torch it powers.
-  let h='<span class="fbpBolt">⚡</span><span class="fbpBars">';
-  for (let i=mx;i>=1;i--) h+=`<span class="fbpSeg${i<=forgePowerLevel?' lit':''}"></span>`;
-  h+=`</span><span class="fbpNum">${forgePowerLevel}<i>/${mx}</i></span>`;
+  const cut=forgeDialIsCut();
+  const mx=cut?FORGE_MAX_CUT:forgeMaxPower();
+  let lvl;
+  if (cut){ if (forgeCutLevel>mx) forgeCutLevel=mx; if (forgeCutLevel<1) forgeCutLevel=1; lvl=forgeCutLevel; }
+  else { if (forgePowerLevel>mx) forgePowerLevel=mx; if (forgePowerLevel<1) forgePowerLevel=1; lvl=forgePowerLevel; }
+  // a slim cell: a glass column of energy segments over a brass base, glyph on top, x/max below.
+  // Segments light bottom-up to the current level. Amber flux for the torch; magenta for the cutter.
+  let h=`<span class="fbpBolt">${cut?'✂':'⚡'}</span><span class="fbpBars">`;
+  for (let i=mx;i>=1;i--) h+=`<span class="fbpSeg${i<=lvl?' lit':''}"></span>`;
+  h+=`</span><span class="fbpNum">${lvl}<i>/${mx}</i></span>`;
   el.innerHTML=h;
-  el.classList.toggle('maxed', forgePowerLevel>=mx && mx>1);
+  el.classList.toggle('cut', cut);
+  el.classList.toggle('maxed', !cut && lvl>=mx && mx>1);
+  el.title = cut ? 'Cutter precision — tap to widen the removal brush (tier 1 = a single cell)'
+                 : 'Torch flux — tap to widen the torch’s reach (powered by the anvil core + press upgrade)';
   positionForgeDial();
 }
-// Pin the dial just inboard of the TORCH on the 3D rack, so it reads as the torch's own power cell
-// (the range upgrade is torch-only). The rack is camera-parented and screen-fixed, so we project the
-// torch slot to pixels and place the dial to its left; recomputed on render and on resize.
+// Pin the dial just inboard of the ACTIVE tool on the 3D rack, so it reads as that tool's own cell.
+// The rack is camera-parented and screen-fixed, so we project the tool's slot to pixels and place the
+// dial to its left; recomputed on render and on resize.
 const _dialV=new THREE.Vector3();
 function positionForgeDial(){
-  const el=document.getElementById('fbPower'); if (!el||!_rackSlots.torch) return;
-  camera.updateMatrixWorld(); _rackSlots.torch.group.updateWorldMatrix(true,false);   // fresh matrices before we project
-  _rackSlots.torch.group.getWorldPosition(_dialV); _dialV.project(camera);
+  const el=document.getElementById('fbPower'); if (!el) return;
+  const slot=(forgeDialIsCut()?_rackSlots.grind:_rackSlots.torch)||_rackSlots.torch; if (!slot) return;
+  camera.updateMatrixWorld(); slot.group.updateWorldMatrix(true,false);   // fresh matrices before we project
+  slot.group.getWorldPosition(_dialV); _dialV.project(camera);
   const sx=(_dialV.x*0.5+0.5)*innerWidth, sy=(-_dialV.y*0.5+0.5)*innerHeight;
   el.style.left=Math.round(sx-70)+'px'; el.style.top=Math.round(sy-34)+'px'; el.style.right='auto';
 }
 addEventListener('resize',()=>{ if (view==='forgeb') positionForgeDial(); });
 function forgeCyclePower(){
+  if (forgeDialIsCut()){
+    forgeCutLevel = forgeCutLevel>=FORGE_MAX_CUT ? 1 : forgeCutLevel+1;
+    renderForgePower();
+    if (typeof say==='function') say('Cutter '+forgeCutLevel+'/'+FORGE_MAX_CUT+(forgeCutLevel===1?' — single-cell, finest trim.':forgeCutLevel===FORGE_MAX_CUT?' — broad, for bulk removal.':' — a small cluster.'),'good');
+    return;
+  }
   const mx=forgeMaxPower();
   forgePowerLevel = forgePowerLevel>=mx ? 1 : forgePowerLevel+1;
   renderForgePower();
@@ -16306,9 +16336,9 @@ function forgeLevelPlaneHot(held){
 // QUENCHED metal too. Marks live in fgCut and render magenta (see fCellShade).
 let forgeCutMode=0;          // during a paint stroke: +1 = marking, -1 = un-marking (set from the first cell)
 // Toggle every FILLED cell in a small brush around a grid centre to the current stroke's mark value.
-// Brush widens with the torch power dial, same as the other tools reach further at higher flux.
+// Brush size is the cutter's own 3-tier precision dial (forgeCutLevel): tier 1 is a single cell.
 function forgeCutPaint(cx,cy,cz){
-  const R=forgeR(1.35), r2=R*R, v=forgeCutMode>0?1:0;
+  const R=forgeCutRadius(), r2=R*R, v=forgeCutMode>0?1:0;   // the cutter's OWN tier, not the torch range
   for (let iy=Math.floor(cy-R); iy<=Math.ceil(cy+R); iy++)
     for (let ix=Math.floor(cx-R); ix<=Math.ceil(cx+R); ix++)
       for (let iz=Math.floor(cz-R); iz<=Math.ceil(cz+R); iz++){
@@ -17133,6 +17163,7 @@ function forgeSetTool(name){
   for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
   if (typeof forgeSyncPalette==='function') forgeSyncPalette();
   if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the hanging pot
+  if (typeof renderForgePower==='function') renderForgePower();   // dial reflects the active tool (torch flux vs cutter precision)
   renderForgeFeed();                                        // top bar switches feed <-> crucible mode
   updateForgeHud();
 }
