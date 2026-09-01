@@ -16171,6 +16171,27 @@ function forgeOverTemplate(sx,sy){
   }
   return false;
 }
+// A pour target at the MOULD MOUTH under the cursor, whether or not metal is there yet.
+// The crucible pours at fluxAim, but fluxAim normally comes from forgeAimCell — a raycast
+// of the FILLED metal surface — so on an EMPTY dish there's nothing to hit and a press over
+// the mould just rotated the bench. That's why the crucible "wasn't usable until something
+// was sloughed in first". This gives it a target from the start: intersect the view ray with
+// the rim plane (grid row forgeRim, the open-chamber floor just above the box) and, if that
+// point sits over a footprint column, return that column's mouth cell. Poured alloy lands
+// there and drips straight down into the mould, exactly like a torched slough — same as the
+// level tool uses forgeOverTemplate to work over a low/empty pool.
+function forgeAimMouthCell(sx,sy){
+  ndc.set((sx/VW)*2-1,-(sy/VH)*2+1); ray.setFromCamera(ndc,camera);
+  _fro.copy(ray.ray.origin); forgeGroup.worldToLocal(_fro);
+  _frp.copy(ray.ray.origin).add(ray.ray.direction); forgeGroup.worldToLocal(_frp);
+  _frd.subVectors(_frp,_fro).normalize();
+  if (Math.abs(_frd.y) < 1e-4) return null;                 // ray parallel to the rim plane
+  const tt=(fWY(forgeRim)-_fro.y)/_frd.y; if (tt<=0) return null;   // rim plane is behind the camera
+  _faim.copy(_fro).addScaledVector(_frd,tt);
+  const c=_l2g(_faim), ix=Math.round(c.x), iz=Math.round(c.z);
+  if (!fIn(ix,forgeRim,iz) || !fgFootprint[ix+iz*FGW]) return null; // not over the mould
+  return {x:ix, y:forgeRim, z:iz};
+}
 // apply the torch: warm a 3D sphere of cells centred on the surface hit. Holding
 // on one spot drives that patch molten and it sloughs off; the sim re-aims at
 // the receding surface each tick, so the melt eats downward through the stone.
@@ -17015,7 +17036,11 @@ function forgeDown(x,y){
     }
     if (forgeCrucHeat<1){ forgeCrucPouring=true; forgeSX=x; forgeSY=y; return; }   // hold heats the pot to molten
     if (forgeCrucBudget<=0){ say('The crucible is empty — its charge is poured.','warn'); return; }
-    if (aim){ forgeCrucPouring=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }   // molten: pour
+    // Molten: pour. Aim at the metal surface if there's metal to hit; otherwise pour into the
+    // EMPTY mould mouth under the cursor, so the crucible works from the start (no need to torch
+    // a base layer in first). Only a press clear of the mould rotates the bench.
+    const pourAim=aim||forgeAimMouthCell(x,y);
+    if (pourAim){ forgeCrucPouring=true; fluxAim=pourAim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
@@ -17041,7 +17066,10 @@ function forgeMove(x,y){
   }
   if (!fluxOn && !forgeGrinding && !forgeCrucPouring) return;
   forgeSX=x; forgeSY=y;                        // the tick re-aims from here
-  const aim=forgeAimCell(x,y); if (aim){ fluxAim=aim; forgeSetBeam(); }
+  // While pouring alloy, fall back to the mould mouth when the surface raycast misses, so a drag
+  // across a still-empty (or low) dish keeps the stream on target instead of freezing at the last hit.
+  const aim=forgeAimCell(x,y) || (forgeCrucPouring ? forgeAimMouthCell(x,y) : null);
+  if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
 function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false;
   forgeLevelHold=false; forgeLevelDir=null; if (forgeTool==='level'){ forgeLevelPlaneHot(false); forgeDirty=true; }   // release: slab + ring cool back to the blue "pick a layer" state
