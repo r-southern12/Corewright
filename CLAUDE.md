@@ -103,13 +103,30 @@ through (once or twice) *before* selecting victims, so a higher grade wastes
 far less crystal to overshoot. `GRAIN_LEVELS`/`FINEST_GRAIN` moved above the
 plane code because it depends on them.
 
-**The flux press — heat-and-slump forging (MVP).** NOT carving in reverse.
-Carving aims a tool at a static object and removes; this aims HEAT at a live one
-and lets physics move it. A **rugged copper stone hangs above an empty mould
-dish**, clear air between them (`forgeSeedBillet`; the lumpy silhouette + mottled
-cold colour make it read as raw ore, not a billet). You press-and-hold the flux
-torch on the stone and metal goes molten where the beam touches; the molten patch
-**sloughs off and drips down** into the dish, then slumps and levels to fill it.
+**The flux press — heat-and-slump forging.** NOT carving in reverse. Carving aims a
+tool at a static object and removes; this pours metal into a mould and lets physics
+settle it, then aligns and trims.
+
+**The crucible is the MAIN tool and the default on entry** (`forgeTool='crucible'`).
+The mould dish starts **empty** — you FILL it by pouring. You load two of the feed
+ores into the pot, hold to HEAT it to molten, then hold over the mould to POUR: alloy
+(or a single metal, if both loads match) drips in at the mouth and slumps to fill.
+`forgeAimMouthCell` gives the pour a target over the *empty* dish, so the crucible
+works from the very first action — you never have to lay a base layer first.
+
+The **torch and leveller are ALIGNING tools**, kept but no longer the fill path: the
+torch re-melts and nudges poured metal (corralling a pool), the leveller sweeps a
+molten layer flat. The **cutter** (the old grinder, tool id `'grind'`) is a
+*select-to-remove* tool: paint over cells to mark them (they glow magenta via `fgCut`
+in `fCellShade`), paint again to un-mark, then **Remove** in the top strip deletes the
+selection (`forgeCutRemove`). Unlike the old grinder it removes metal *inside* the
+template — the way you correct a pour — and works on quenched metal too.
+
+**Retired:** the original primary fill — drop a feed nugget so it hangs as a stone,
+torch it, and let the slough drip into the mould (`forgeDropFeed` /
+`forgeSeedNugget` / `forgeHangClear`, now unwired; the "Only molten metal moves"
+slump physics below still governs the crucible pour). Ore now only ever feeds the
+crucible. The notes below describe that slump/drip physics, which the pour reuses.
 
 **Only molten metal moves — cold metal is HELD.** This is the load-bearing rule:
 it is why the stone hangs above the empty dish (a tall air gap, `BASE =

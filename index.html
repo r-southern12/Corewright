@@ -15076,6 +15076,9 @@ const fgLocked=new Uint8Array(FG_N);   // 1 = QUENCHED metal: frozen in place, i
 const fgMetal=new Uint8Array(FG_N);    // metal TYPE per cell: 0 = copper framework, 1 = crucible ALLOY.
                                        // Travels with the cell through the flow (fMove) so the alloy
                                        // housing renders as its own colour — the two-colour build.
+const fgCut=new Uint8Array(FG_N);      // 1 = marked for removal by the CUTTER (select-to-remove). A UI
+                                       // selection overlay only — the sim never reads it; forgeCutRemove
+                                       // deletes marked cells on demand. Cleared on enter/turn/removal.
 let fgMouldTotal=0;
 const MOULD_DEPTH=13;                    // box cavity is iy 0..DEPTH-1; DEPTH+ is the open chamber above.
                                        // Deepened from 3 so a real core socket sinks into it and metal
@@ -15725,7 +15728,9 @@ function forgeUpdateCursor(x,y){
   // glyph (which wrongly read as "rotate" while you were levelling). Pressing always levels.
   if (forgeTool==='level'){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }
   if (forgeRackPick(x,y)){ forgeCursorTool.visible=false; forgeRotateGlyph.visible=false; return; }  // over the rack
-  const aim=forgeAimCell(x,y);
+  // Crucible: the mould starts empty, so fall back to the mouth target — the cursor tool sits over the
+  // dish (ready to pour) instead of flashing the rotate glyph as if there were nothing to do here.
+  const aim=forgeAimCell(x,y) || (forgeTool==='crucible' ? forgeAimMouthCell(x,y) : null);
   if (aim){
     forgeCursorTool.position.copy(_faimW); forgeCursorTool.position.y+=0.25;   // sit ON the near ore edge
     forgeCursorTool.visible=true; forgeRotateGlyph.visible=false;
@@ -16004,9 +16009,14 @@ function fCellShade(ix,iy,iz){
   // leveller doesn't melt. Wins over all other tints.
   if (forgeTool==='level' && forgeLevelPlane.visible && iy===forgeLevelY)
     _fcolor.lerp(forgeLevelHold?_fLvlHeld:_fLvlPick, forgeLevelHold?0.95:0.85);   // near-total override so the band reads against the verdigris metal
+  // CUTTER SELECTION: cells the player has marked to cut glow a hot magenta so the selection reads
+  // clearly against both molten and set metal. A UI overlay, not a material state — wins over every
+  // other tint; forgeCutRemove deletes these on demand and clears the marks.
+  if (fgCut[cid]) _fcolor.copy(_fCutCol);
   return (inMould && t<0.16) ? 0 : Math.max(0,Math.min(1,(t-0.08)/0.34));
 }
 const _fLvlPick=new THREE.Color(0x8fe4ff), _fLvlHeld=new THREE.Color(0xeaffff);   // icy cyan while picking, near-white once grabbed — high contrast vs the metal
+const _fCutCol=new THREE.Color(0xff2ea6);   // cutter mark — a vivid magenta no metal/heat colour occupies
 function fPushFace(cx0,cy0,cz0, F, heat){            // one cell face: 2 tris, flat outward normal
   for (const k of _FTRI){
     if (forgeVCount>=FORGE_MAXV) return;
@@ -16090,12 +16100,15 @@ function forgeCyclePower(){
 // fine control the torch can't give ("almost impossible to get flat surfaces"). Metal
 // above the plane melts and drains below it; metal at the plane levels out.
 // The active tool. Torch melts, Level flattens (a heat-slab), Grind shaves metal off —
-// the grinder is the ONLY way to clean a lump off QUENCHED metal, which can't be re-melted.
+// the cutter is the ONLY way to remove QUENCHED metal, which can't be re-melted.
 // (Quench and Turn are one-shot actions, not held tools.) The 3D tool palette selects this.
-let forgeTool='torch';                  // 'torch' | 'level' | 'grind' | 'crucible'
-let forgeLevelHold=false, forgeLevelY=2, forgeGrinding=false, forgeCrucPouring=false;
+// The crucible is the MAIN tool and the default on entry — it is how the mould is FILLED; the
+// torch and leveller align/settle what it pours, and the cutter takes metal back out. The old
+// "drop an ore nugget and torch the hovering lump into the mould" fill path was retired: ore
+// now only ever feeds the crucible (see renderForgeFeed / the retired forgeDropFeed).
+let forgeTool='crucible';               // 'torch' | 'level' | 'grind'(cutter) | 'crucible'
+let forgeLevelHold=false, forgeLevelY=2, forgeCutPainting=false, forgeCrucPouring=false;
 let forgeLevelDir=null;                  // [gx,gz] grid slide direction set by the drag while the level is held; null = no slide
-const GRIND_RATE=3;                     // cells the grinder shaves per sim step
 // THE CRUCIBLE — the PLAYER-LOADED alloy pour. Copper is the base framework; the crucible
 // lays a second metal (the alloy housing) into any area of the template, in its own colour.
 // The player CHOOSES two ores, LOADS them into the pot, HEATS it to molten, then POURS —
@@ -16190,6 +16203,7 @@ function forgeAimMouthCell(sx,sy){
   _faim.copy(_fro).addScaledVector(_frd,tt);
   const c=_l2g(_faim), ix=Math.round(c.x), iz=Math.round(c.z);
   if (!fIn(ix,forgeRim,iz) || !fgFootprint[ix+iz*FGW]) return null; // not over the mould
+  _faimW.copy(_faim); forgeGroup.localToWorld(_faimW);             // world point at the mouth, for the cursor tool
   return {x:ix, y:forgeRim, z:iz};
 }
 // apply the torch: warm a 3D sphere of cells centred on the surface hit. Holding
@@ -16283,24 +16297,47 @@ function forgeLevelPlaneHot(held){
   forgeLevelPlane.material.color.setHex(held?0xa6ecff:0x59d6ff);
   forgeLevelPlane.material.opacity=held?0.34:0.16;
 }
-// Grinder: shave metal off at the aim point, TOP-DOWN, a few cells per step. Mechanical,
-// not thermal — so it works on QUENCHED metal too. It ONLY removes metal that is OUTSIDE
-// the template (proud lumps, overspill) — cells that are part of the intended mould volume
-// (fgMould) are protected, so you can never grind into the actual part. That's exactly its
-// job: clean up what sits proud of the frame, nothing inside it.
-function forgeGrindStep(){
-  if (!fluxAim) return;
-  const R=1.35, r2=R*R, cx=fluxAim.x, cy=fluxAim.y, cz=fluxAim.z;
-  let removed=0;
-  for (let iy=Math.ceil(cy+R); iy>=Math.floor(cy-R) && removed<GRIND_RATE; iy--)
-    for (let ix=Math.floor(cx-R); ix<=Math.ceil(cx+R) && removed<GRIND_RATE; ix++)
-      for (let iz=Math.floor(cz-R); iz<=Math.ceil(cz+R) && removed<GRIND_RATE; iz++){
+// The CUTTER (select-to-remove): the metal-removal tool, reworked. The old grinder shaved
+// TOP-DOWN and PROTECTED everything inside the mould, so it could only clean proud flash — it
+// could never take metal back OUT of the part. Now the crucible is the main fill tool, so the
+// removal tool has to be able to correct a pour: it removes metal from WITHIN the template.
+// It is a SELECTION tool, not a held scrub — you paint a highlight over the cells you want gone
+// (paint again to un-highlight), then commit with Remove. Mechanical, not thermal, so it selects
+// QUENCHED metal too. Marks live in fgCut and render magenta (see fCellShade).
+let forgeCutMode=0;          // during a paint stroke: +1 = marking, -1 = un-marking (set from the first cell)
+// Toggle every FILLED cell in a small brush around a grid centre to the current stroke's mark value.
+// Brush widens with the torch power dial, same as the other tools reach further at higher flux.
+function forgeCutPaint(cx,cy,cz){
+  const R=forgeR(1.35), r2=R*R, v=forgeCutMode>0?1:0;
+  for (let iy=Math.floor(cy-R); iy<=Math.ceil(cy+R); iy++)
+    for (let ix=Math.floor(cx-R); ix<=Math.ceil(cx+R); ix++)
+      for (let iz=Math.floor(cz-R); iz<=Math.ceil(cz+R); iz++){
         if (!fIn(ix,iy,iz)) continue;
         if ((ix-cx)**2+(iy-cy)**2+(iz-cz)**2>r2) continue;
-        const id=fIdx(ix,iy,iz); if (!fgFill[id]||fgMould[id]) continue;   // protect metal inside the template
-        fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; fgMetal[id]=0; removed++; forgeDirty=true;
+        const id=fIdx(ix,iy,iz); if (!fgFill[id]) continue;
+        if (fgCut[id]!==v){ fgCut[id]=v; forgeDirty=true; }
       }
 }
+// Begin a stroke at the aimed surface cell: clicking a MARKED cell starts an un-mark stroke,
+// clicking an unmarked one starts a mark stroke (so a drag paints consistently either way).
+function forgeCutStart(aim){
+  const ix=Math.round(aim.x), iy=Math.round(aim.y), iz=Math.round(aim.z);
+  if (!fIn(ix,iy,iz)) return;
+  const id=fIdx(ix,iy,iz); if (!fgFill[id]) return;
+  forgeCutMode = fgCut[id] ? -1 : 1;
+  forgeCutPaint(ix,iy,iz);
+}
+function forgeCutCount(){ let n=0; for (let id=0;id<FG_N;id++) if (fgCut[id]&&fgFill[id]) n++; return n; }
+// Commit: delete every marked-and-still-filled cell, then clear the selection. The flow settles
+// whatever was above the hole on the next tick, exactly like any other vacated cell.
+function forgeCutRemove(){
+  let n=0;
+  for (let id=0;id<FG_N;id++) if (fgCut[id]&&fgFill[id]){ fgFill[id]=0; fgTemp[id]=0; fgLocked[id]=0; fgMetal[id]=0; n++; }
+  fgCut.fill(0);
+  forgeDirty=true; syncForgeMesh(); renderForgeFeed(); updateForgeHud();
+  if (typeof say==='function') say(n?('Cut away '+n+' cell'+(n===1?'':'s')+'.'):'Nothing marked to cut.', n?'good':'warn');
+}
+function forgeCutClear(){ fgCut.fill(0); forgeCutMode=0; forgeDirty=true; syncForgeMesh(); renderForgeFeed(); }
 // The TORCH also NUDGES: while you hold it, molten metal near the beam is pushed one cell directly
 // AWAY from the cursor (in the pool plane), so you can corral a pool by sweeping the torch behind
 // it. Only molten metal INSIDE THE TEMPLATE (below the rim) is corralled — melting the raw ore up
@@ -16606,7 +16643,7 @@ function forgeSimTick(){
     const e=1-Math.pow(1-forgeTurnT,3);
     forgePivot.quaternion.slerpQuaternions(forgeTurnFromQ,_forgeIdQ,e); }
   // re-aim + beam track EVERY frame for a responsive cursor, independent of steps
-  if (fluxOn||forgeGrinding||forgeCrucPouring){
+  if (fluxOn||forgeCrucPouring){
     if (forgeSX!==null){ const a=forgeAimCell(forgeSX,forgeSY); if (a){ fluxAim=a; forgeSetBeam(); } }
     forgeBeam.visible=!!fluxAim;
   } else forgeBeam.visible=false;
@@ -16616,7 +16653,6 @@ function forgeSimTick(){
     forgeAccum-=FSTEP; forgeSpin++;
     if (fluxOn){ fluxHeat(); if (forgeSpin%5===0) forgeTorchNudge(); }   // torch heats; corral is 1/5 speed, 1 cell/step
     if (forgeLevelHold && forgeLevelDir && forgeSpin%2===0) forgeLevelSlide(forgeLevelDir[0],forgeLevelDir[1]);   // leveller ONLY moves metal — the torch does the melting; drag slides whatever is already molten
-    if (forgeGrinding) forgeGrindStep();
     if (forgeCrucPouring) forgeCrucibleStep();
     forgeFlowStep();
     if ((forgeSpin&3)===0){ forgeDropSmallClusters(); }
@@ -16646,17 +16682,19 @@ function enterForge(){
   forgeRot=MAT_I.slice();                     // always start lying, un-rolled
   forgeSyncGhostGeo();                         // template may have changed shape (box vs bit cone) — swap ghost geometry
   forgeBuildMould(); forgePlaceGhosts();
-  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); forgeNugUsed=0;
+  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); fgCut.fill(0); forgeNugUsed=0;
   // recharge the crucible and clear any half-built load for a fresh part
   forgeCrucLoad=[]; forgeCrucHeat=0; forgeCrucBudget=0; forgeCrucSpent=false;
   // The feed starts EMPTY — the player composes it from stores (up to this part's ore count),
-  // then clicks which chunk to drop and melt. Nothing is queued or dropped automatically.
+  // then loads two chunks into the crucible. Ore only ever feeds the crucible now.
   forgeNugSize=FORGE_NUG_MASS;
   forgeFeed=[];
   renderForgeFeed();
   forgePhase='flux'; fluxOn=false; fluxAim=null;
-  forgeTool='torch'; forgeGrinding=false; forgeLevelHold=false; forgeLevelPlane.visible=false;
-  forgeSyncPalette();                        // rack highlight + cursor model to the torch
+  // The crucible is the MAIN tool — the mould starts empty and you FILL it by pouring. Start on it.
+  forgeTool='crucible'; forgeCutPainting=false; forgeCutMode=0; forgeLevelHold=false; forgeLevelPlane.visible=false;
+  forgeSyncPalette();                        // rack highlight + cursor model to the crucible
+  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show the hanging pot for the crucible tool
   forgeTurnT=1; forgePivot.quaternion.identity();
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
@@ -16717,7 +16755,7 @@ function forgeReorient(newRot, msg){
     else air.push([id,fgTemp[id],fgLocked[id],fgMetal[id]]);            // hanging nugget / falling drip -> keep put
   }
   forgeRot=newRot;
-  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0);
+  fgFill.fill(0); fgTemp.fill(0); fgLocked.fill(0); fgMetal.fill(0); fgCut.fill(0);   // a turn re-lays the cast — stale cutter marks go
   forgeBuildMould(); forgePlaceGhosts();
   const displaced=[];
   for (const c of cast){                               // re-lay cast metal, rotated (locked/alloy preserved)
@@ -16889,9 +16927,9 @@ function updateForgeHud(){
     : 'Crucible molten — hold on the frame; the pot TIPS for a moment, then pours ALLOY around the core seat. '+forgeCrucBudget+' left.';
   hint.textContent=
     forgeTool==='level' ? 'Leveller (moves metal — it does NOT melt): torch a layer molten first, then move the mouse up/down to line the glowing slab up with it, PRESS AND HOLD over the metal, and drag left / right / forward / back to slide that molten metal — sweep a pile out to the corners. Raise the slab one notch ABOVE the template to sweep bits stranded up in the chamber back over the mould. Drag OUTSIDE the metal to turn the bench.'
-    : forgeTool==='grind' ? 'Grinding: hold on a proud lump to shave it off — works on quenched metal too (the only way to clean a locked lump). Drag empty space to turn the bench.'
+    : forgeTool==='grind' ? 'Cutter: PAINT over the metal to mark what you want gone (it glows magenta); paint marked metal again to un-mark. Then press Remove in the top bar to cut it away — works inside the template and on quenched metal too. Drag empty space to turn the bench.'
     : forgeTool==='crucible' ? crucHint
-    : 'Click an ore in the top bar to DROP it in, then hold the flux torch on it to melt. Holding the torch near molten metal also NUDGES it away from the cursor, so you can corral the pour. Drag empty space to turn the bench.';
+    : 'Aligning tool. The crucible fills the mould; the torch re-melts and NUDGES that metal (hold near molten metal to push it away from the cursor and corral the pour), the leveller sweeps a layer flat. Drag empty space to turn the bench.';
   const crucNote = forgeCrucLoad.length ? '  ·  crucible loaded' : '';
   stat.textContent=fpc+'% filled  ·  '+q+'% quality  ·  ore '+Math.max(0,nugLeft)+' left'+crucNote;
   fill.style.width=fpc+'%';
@@ -16914,6 +16952,9 @@ function forgeAddFeed(metalKey){
     say('No more '+(ORE_INFO[metalKey]?ORE_INFO[metalKey].label:metalKey)+' in stores.','warn'); return; }
   forgeFeed.push({metal:metalKey,used:false}); renderForgeFeed(); updateForgeHud();
 }
+// RETIRED (kept for reference): dropping a feed nugget to hang and be torch-sloughed into the mould
+// was the old primary fill. The crucible is the main fill tool now, so this is no longer wired to any
+// button — ore only feeds the crucible. forgeSeedNugget/forgeHangClear are likewise now unused.
 function forgeDropFeed(i){
   const f=forgeFeed[i]; if (!f||f.used) return;
   // one nugget hangs at a time — gate the drop until the last one has melted down, so two
@@ -16942,9 +16983,20 @@ function renderForgeFeed(){
       `<span class="fbSw" style="background:${info.col}"></span>${info.label.replace(' ore','')}<b>${have}</b></button>`;
   }).join('');
   let html='';
-  if (forgeTool==='crucible'){
-    // The crucible melts its alloy down from TWO of the feed ores (not from stores):
-    // pick two un-used feed chunks to load the pot.
+  if (forgeTool==='grind'){
+    // THE CUTTER top strip: no ore here — it removes metal, it doesn't add it. Show how many cells are
+    // marked and give the two commit actions: Remove (delete the selection) and Clear (drop the marks).
+    const n=forgeCutCount();
+    html = `<span class="fbUnit"><span class="fbLbl">Cutter</span>`+
+      `<span class="fbLbl" style="color:var(--crystal)">${n?('&#9632; '+n+' cell'+(n===1?'':'s')+' marked'):'paint over metal to mark it'}</span></span>`+
+      `<span class="fbSep"></span><span class="fbUnit">`+
+      `<button class="fbMini" data-act="cutremove" ${n?'':'disabled'} title="Cut away every marked cell">&#10007; Remove${n?' ('+n+')':''}</button>`+
+      `<button class="fbMini" data-act="cutclear" ${n?'':'disabled'} title="Clear the selection without removing anything">clear marks</button>`+
+      `</span>`;
+  } else {
+    // The crucible LOADER — shown for every fill/align tool (crucible, torch, leveller), because the
+    // crucible is the only way metal enters the mould, so you queue ore and charge the pot from any of
+    // them. Melt its alloy down from TWO of the feed ores: pick two un-used feed chunks to load the pot.
     const canLoad = forgeCrucHeat<=0 && forgeCrucLoad.length<2;
     const feedChips=Array.from({length:forgeOreCount()},(_,i)=>{ const f=forgeFeed[i];
       if (!f) return `<span class="fbSlot empty" title="empty"></span>`;
@@ -16960,31 +17012,18 @@ function renderForgeFeed(){
     const state = forgeCrucLoad.length<2 ? 'pick two feed ores'
       : forgeCrucHeat<1 ? 'hold to heat — '+hpc+'%'
       : 'molten · '+forgeCrucBudget+' left';
-    // Stores are shown HERE too, so you can queue feed ore AND load the pot without switching tools
-    // first — otherwise the crucible can never be your first action (empty feed, no way to fill it).
+    const pending=forgeFeed.filter(f=>!f.used).length;
     html = `<span class="fbUnit"><span class="fbLbl">Stores</span><div class="fbGrp">${storeChips('feed')}</div></span>`+
-      `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl">Feed</span><div class="fbGrp slots">${feedChips}</div></span>`+
+      `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl">Feed</span><div class="fbGrp slots">${feedChips}</div>`+
+      (pending?`<button class="fbMini" data-act="clear" title="clear un-loaded ore from the queue">clear</button>`:'')+
+      `</span>`+
       `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl">Crucible</span>`+
       `<div class="fbGrp slots">${slot(0)}${slot(1)}`+
       `<span class="fbHeatWrap"><span class="fbHeatFill" style="width:${hpc}%"></span></span>`+
       `<span class="fbLbl" style="color:var(--crystal)">${state}</span></div></span>`+
       // No per-part cap any more: the crucible pours as long as you can feed it two ores. Show how many
       // more full loads the unused feed can make so "have 2 ores -> can pour" reads at a glance.
-      `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl" style="color:var(--crystal)">${Math.floor(forgeFeed.filter(f=>!f.used).length/2)} load${Math.floor(forgeFeed.filter(f=>!f.used).length/2)===1?'':'s'} ready</span></span>`;
-  } else {
-    // always render all of this part's ore slots (empty ones as placeholders) so the bar is a
-    // fixed full length from the start rather than growing as ore is queued.
-    const slots=Array.from({length:forgeOreCount()},(_,i)=>{ const f=forgeFeed[i];
-      if (!f) return `<span class="fbSlot empty" title="empty — add ore from stores"></span>`;
-      const info=ORE_INFO[f.metal]||{label:f.metal,col:'#999'};
-      return `<button class="fbSlot${f.used?' used':''}" data-act="drop" data-idx="${i}" title="${info.label}${f.used?' — melted':' — click to drop & melt'}">`+
-        `<span class="fbSw" style="background:${info.col}"></span></button>`; }).join('');
-    const pending=forgeFeed.filter(f=>!f.used).length;
-    html = `<span class="fbUnit"><span class="fbLbl">Stores</span><div class="fbGrp">${storeChips('feed')}</div></span>`+
-      `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl">Feed ${forgeFeed.length}/${forgeOreCount()}</span>`+
-      `<div class="fbGrp slots">${slots}</div>`+
-      (pending?`<button class="fbMini" data-act="clear" title="clear un-melted ore from the queue">clear</button>`:'')+
-      `</span>`;
+      `<span class="fbSep"></span><span class="fbUnit"><span class="fbLbl" style="color:var(--crystal)">${Math.floor(pending/2)} load${Math.floor(pending/2)===1?'':'s'} ready</span></span>`;
   }
   el.innerHTML=html;
 }
@@ -16994,8 +17033,9 @@ document.getElementById('fbFeed').addEventListener('click',e=>{
   const act=b.dataset.act;
   if (act==='feed') forgeAddFeed(b.dataset.metal);
   else if (act==='crucfeed') forgeCrucLoadFromFeed(+b.dataset.idx);
-  else if (act==='drop') forgeDropFeed(+b.dataset.idx);
   else if (act==='clear') forgeClearFeed();
+  else if (act==='cutremove') forgeCutRemove();
+  else if (act==='cutclear') forgeCutClear();
 });
 
 // ---- pointer: press metal to flux, drag empty space to rotate ----
@@ -17023,8 +17063,8 @@ function forgeDown(x,y){
     }
     return;
   }
-  if (forgeTool==='grind'){
-    if (aim){ forgeGrinding=true; fluxAim=aim; forgeSX=x; forgeSY=y; forgeSetBeam(); }
+  if (forgeTool==='grind'){          // the CUTTER: paint a removal selection (drag to extend / un-mark)
+    if (aim){ forgeCutPainting=true; forgeCutStart(aim); forgeSX=x; forgeSY=y; }
     else { forgeRotating=true; forgePX=x; forgePY=y; }
     return;
   }
@@ -17064,20 +17104,29 @@ function forgeMove(x,y){
     }
     return;
   }
-  if (!fluxOn && !forgeGrinding && !forgeCrucPouring) return;
+  if (forgeTool==='grind'){                     // the CUTTER: keep painting the selection under the drag
+    if (forgeCutPainting){ const a=forgeAimCell(x,y); if (a) forgeCutPaint(Math.round(a.x),Math.round(a.y),Math.round(a.z)); }
+    return;
+  }
+  if (!fluxOn && !forgeCrucPouring) return;
   forgeSX=x; forgeSY=y;                        // the tick re-aims from here
   // While pouring alloy, fall back to the mould mouth when the surface raycast misses, so a drag
   // across a still-empty (or low) dish keeps the stream on target instead of freezing at the last hit.
   const aim=forgeAimCell(x,y) || (forgeCrucPouring ? forgeAimMouthCell(x,y) : null);
   if (aim){ fluxAim=aim; forgeSetBeam(); }
 }
-function forgeUp(){ fluxOn=false; forgeGrinding=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false;
+function forgeUp(){ fluxOn=false; forgeCrucPouring=false; forgeCrucPourHold=0; forgeRotating=false;
+  // End a cutter stroke: the SELECTION stays (removal is a deliberate Remove press) — just refresh the
+  // "N marked" readout in the top strip and the hint.
+  if (forgeCutPainting){ forgeCutPainting=false; forgeCutMode=0; renderForgeFeed(); updateForgeHud(); }
   forgeLevelHold=false; forgeLevelDir=null; if (forgeTool==='level'){ forgeLevelPlaneHot(false); forgeDirty=true; }   // release: slab + ring cool back to the blue "pick a layer" state
   forgeSX=null; forgeSY=null; }
 // Select the active held tool. Holsters the others; shows the level slab (cool, ready to raise/lower)
 // when Level is chosen and hides it otherwise; syncs the palette/button highlight.
 function forgeSetTool(name){
-  forgeTool=name; fluxOn=false; forgeGrinding=false; forgeLevelHold=false; forgeLevelDir=null; forgeCrucPouring=false; forgeCrucPourHold=0; forgeBeam.visible=false;
+  // leaving the cutter drops any uncommitted selection so stray magenta marks never linger under another tool
+  if (forgeTool==='grind' && name!=='grind' && typeof fgCut!=='undefined') fgCut.fill(0);
+  forgeTool=name; fluxOn=false; forgeCutPainting=false; forgeCutMode=0; forgeLevelHold=false; forgeLevelDir=null; forgeCrucPouring=false; forgeCrucPourHold=0; forgeBeam.visible=false;
   if (name==='level'){ forgeLevelPlane.visible=true; forgePlaceLevelPlane(); forgeLevelPlaneHot(false); }   // the slab you raise/lower to pick a layer
   else forgeLevelPlane.visible=false;
   forgeDirty=true;   // rebuild so the level ring appears/clears with the tool
