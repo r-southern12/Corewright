@@ -15690,35 +15690,32 @@ const forgeCursorTool=new THREE.Group(); forgeCursorTool.visible=false; scene.ad
 forgeCursorTool.scale.setScalar(1.7); forgeCursorTool.rotation.set(0.22,0.35,-0.34);   // held-in-hand tilt
 const _cursorModels={}; FORGE_TOOL_DEFS.forEach(d=>{ const m=d.build(); m.visible=false; _cursorModels[d.id]=m; forgeCursorTool.add(m); });
 const forgeRotateGlyph=buildRotateModel(); forgeRotateGlyph.visible=false; forgeRotateGlyph.scale.setScalar(0.45); scene.add(forgeRotateGlyph);
-// The crucible STAGE — a pot that hangs over the chamber (where the ore nugget hangs) once the
-// crucible tool is active and loaded. Its molten glow ramps with forgeCrucHeat, so the player
-// SEES it charge from cold to white-hot before it can pour. Lives in forgeGroup (rides the
-// camera drag) but not forgePivot (it's a tool above the work; it doesn't turn with the part).
+// The crucible's HEAT GLOW + POUR TIP ride the CURSOR pot — the pot in the player's hand, at the aim —
+// NOT a separate pot hanging over the chamber. The player watches the pot they're holding charge from
+// cold to white-hot and tip to pour, right where they're working. (An earlier version hung a big pot
+// high in the chamber; it read as detached from the action, so it was removed.)
 const _crucCol=new THREE.Color();
-const forgeCrucStage=buildCrucibleModel(); forgeCrucStage.visible=false; forgeCrucStage.scale.setScalar(2.7);
-// hangs over the chamber but LOW enough to stay on-screen (it was up near the grid ceiling and
-// clipped off the top of the view); ~a nugget's height above the box. Its z-tilt is animated when
-// it pours (forgeCrucTip). The upright rest angle is a slight lean.
-const CRUC_REST_TIP=0.28;    // resting lean (radians)
-const CRUC_POUR_TIP=1.15;    // full pour tip
-forgeCrucStage.position.set(fWX((FGW-1)/2), fWY(FGH-16), fWZ((FGD-1)/2)); forgeCrucStage.rotation.z=CRUC_REST_TIP; forgeGroup.add(forgeCrucStage);
-const _crucGlow=_tm(new THREE.SphereGeometry(0.16,14,12),_fGlow(0xff7a30),0,0.3,0); forgeCrucStage.add(_crucGlow);
+const crucCursorModel=_cursorModels['crucible'];   // the crucible model that follows the pointer (built above)
+const CRUC_REST_TIP=0;       // upright in the hand at rest
+const CRUC_POUR_TIP=-0.95;   // tips forward so the spout dips to pour
+const _crucGlow=_tm(new THREE.SphereGeometry(0.17,14,12),_fGlow(0xff7a30),0,0.3,0);
+_crucGlow.visible=false; crucCursorModel.add(_crucGlow);   // sits at the pot mouth, rides the cursor pot
 function forgeCrucGlow(){
   const show=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
-  forgeCrucStage.visible=show;
+  _crucGlow.visible=show;
   if (!show) return;
   fHeatRamp(0.1+forgeCrucHeat*0.42,_crucCol);   // cold pot dull, molten near white-hot
   _crucGlow.material.color.copy(_crucCol);
   _crucGlow.scale.setScalar(0.6+forgeCrucHeat*0.9);
 }
-// Ease the pot's tip toward its target: resting lean normally, tipping over as the pour-hold
-// builds (and staying tipped while it pours), so the pour reads as a deliberate, weighty motion.
+// Ease the pot's tip toward its target: upright normally, tipping over as the pour-hold builds (and
+// staying tipped while it pours), so the pour reads as a deliberate, weighty motion — on the cursor pot.
 function forgeCrucTipTick(dt){
-  if (!forgeCrucStage.visible) return;
+  const active=forgeActive && forgeTool==='crucible' && forgeCrucLoad.length>0;
   let target=CRUC_REST_TIP;
-  if (forgeCrucPouring && forgeCrucHeat>=1)
+  if (active && forgeCrucPouring && forgeCrucHeat>=1)
     target=CRUC_REST_TIP+(CRUC_POUR_TIP-CRUC_REST_TIP)*Math.min(1,forgeCrucPourHold/CRUC_POUR_DELAY);
-  forgeCrucStage.rotation.z += (target-forgeCrucStage.rotation.z)*Math.min(1,dt*8);
+  crucCursorModel.rotation.z += (target-crucCursorModel.rotation.z)*Math.min(1,dt*8);
 }
 // Highlight the active rack slot and show the matching cursor model.
 function forgeSyncPalette(){
@@ -16724,7 +16721,7 @@ function enterForge(){
   // The crucible is the MAIN tool — the mould starts empty and you FILL it by pouring. Start on it.
   forgeTool='crucible'; forgeCutPainting=false; forgeCutMode=0; forgeLevelHold=false; forgeLevelPlane.visible=false;
   forgeSyncPalette();                        // rack highlight + cursor model to the crucible
-  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show the hanging pot for the crucible tool
+  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // arm the cursor pot's heat glow for the crucible tool
   forgeTurnT=1; forgePivot.quaternion.identity();
   forgeGroup.rotation.set(0.15,0,0);
   forgeActive=true; forgeDirty=true;
@@ -17162,7 +17159,7 @@ function forgeSetTool(name){
   forgeDirty=true;   // rebuild so the level ring appears/clears with the tool
   for (const t of ['torch','level','grind']){ const btn=document.getElementById('fbTool_'+t); if (btn) btn.classList.toggle('on', forgeTool===t); }
   if (typeof forgeSyncPalette==='function') forgeSyncPalette();
-  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the hanging pot
+  if (typeof forgeCrucGlow==='function') forgeCrucGlow();   // show/hide the cursor pot's heat glow
   if (typeof renderForgePower==='function') renderForgePower();   // dial reflects the active tool (torch flux vs cutter precision)
   renderForgeFeed();                                        // top bar switches feed <-> crucible mode
   updateForgeHud();
