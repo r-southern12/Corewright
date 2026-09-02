@@ -19301,35 +19301,73 @@ const ForgeScene=(function(){
     ctx.strokeStyle=ore.vein;ctx.lineWidth=Math.max(1,s*.07);ctx.beginPath();ctx.moveTo(-s*.28,-s*.18);ctx.lineTo(0,0);ctx.lineTo(s*.28,-s*.18);ctx.stroke();ctx.restore();
   }
   function smallMachineLabel(x,y,w,text,accent){accent=accent||C.brass2;const p=chamferPath(x,y,w,25,6);fillStroke(p,'#111516',accent,1.5);ctx.fillStyle='#e5c480';ctx.font='12px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,x+w/2,y+13);}
-  function oreRock(x,y,s,ore,selected){ctx.save();ctx.translate(x,y);if(selected){ctx.shadowColor='rgba(255,177,71,.46)';ctx.shadowBlur=18;}const pts=[[-.56,-.07],[-.38,-.56],[-.05,-.72],[.32,-.58],[.58,-.18],[.48,.38],[.08,.62],[-.44,.44]];const p=new Path2D();p.moveTo(pts[0][0]*s,pts[0][1]*s);for(let i=1;i<pts.length;i++)p.lineTo(pts[i][0]*s,pts[i][1]*s);p.closePath();const g=ctx.createLinearGradient(-s*.6,-s*.6,s*.6,s*.6);g.addColorStop(0,'#c3b79d');g.addColorStop(.25,ore.color);g.addColorStop(.62,ore.color);g.addColorStop(1,'#2a2b28');fillStroke(p,g,selected?C.amber0:'#29231d',selected?2.5:1.5);ctx.strokeStyle=ore.vein;ctx.globalAlpha=.76;ctx.lineWidth=Math.max(1.2,s*.07);ctx.beginPath();ctx.moveTo(-s*.35,-s*.18);ctx.lineTo(-s*.08,s*.03);ctx.lineTo(s*.18,-s*.22);ctx.lineTo(s*.42,s*.12);ctx.stroke();ctx.restore();}
-  function drawTemplateIcon(x,y,s,t,selected){ctx.save();ctx.translate(x,y);if(selected){ctx.shadowColor='rgba(91,235,220,.4)';ctx.shadowBlur=14;}ctx.strokeStyle=selected?C.teal0:C.brass1;ctx.fillStyle=selected?'rgba(55,156,152,.30)':'rgba(20,26,27,.8)';ctx.lineWidth=2.5;const p=new Path2D();if(t.shape===0){p.moveTo(-s*.45,-s*.32);p.lineTo(s*.3,-s*.32);p.lineTo(s*.48,0);p.lineTo(s*.3,s*.32);p.lineTo(-s*.45,s*.32);p.closePath();}else if(t.shape===1){p.moveTo(-s*.35,-s*.45);p.lineTo(s*.35,-s*.45);p.lineTo(s*.5,s*.3);p.lineTo(0,s*.5);p.lineTo(-s*.5,s*.3);p.closePath();}else if(t.shape===2){p.moveTo(-s*.52,-s*.12);p.lineTo(-s*.12,-s*.48);p.lineTo(s*.52,-s*.12);p.lineTo(s*.22,s*.4);p.lineTo(-s*.32,s*.36);p.closePath();}else if(t.shape===3){p.rect(-s*.42,-s*.34,s*.84,s*.68);}else{p.moveTo(0,-s*.5);p.lineTo(s*.5,0);p.lineTo(0,s*.5);p.lineTo(-s*.5,0);p.closePath();}ctx.fill(p);ctx.stroke(p);ctx.restore();}
+  // A cut crystalline ore chunk: a faceted silhouette with a central vertex the facets radiate from,
+  // a lit top-left facet and a shadowed lower-right one, crisp facet seams, and a vein glint in its own
+  // ore colour. Reads as a gem, not a blob, at any size (rack cells to conveyor slots).
+  const ORE_PTS=[[0,-1],[.66,-.5],[.64,.36],[.18,.84],[-.44,.72],[-.74,-.02],[-.42,-.72]];
+  const ORE_CORE=[-.1,-.08];
+  function orePath(s){const p=new Path2D();p.moveTo(ORE_PTS[0][0]*s,ORE_PTS[0][1]*s);for(let i=1;i<ORE_PTS.length;i++)p.lineTo(ORE_PTS[i][0]*s,ORE_PTS[i][1]*s);p.closePath();return p;}
+  function oreRock(x,y,s,ore,selected){
+    ctx.save();ctx.translate(x,y);
+    if(selected){ctx.shadowColor='rgba(255,177,71,.5)';ctx.shadowBlur=Math.max(8,s*1.1);}
+    const body=orePath(s);
+    const g=ctx.createRadialGradient(-s*.3,-s*.42,s*.08,0,0,s*1.28);
+    g.addColorStop(0,lighten(ore.color,.5));g.addColorStop(.5,ore.color);g.addColorStop(1,'#1f201e');
+    fillStroke(body,g,selected?C.amber0:'#181510',selected?2.2:1.3);
+    ctx.shadowBlur=0;
+    const cx=ORE_CORE[0]*s, cy=ORE_CORE[1]*s;
+    // lit facet (top wedge) and shadow facet (lower-right wedge)
+    const lit=new Path2D();lit.moveTo(cx,cy);lit.lineTo(ORE_PTS[0][0]*s,ORE_PTS[0][1]*s);lit.lineTo(ORE_PTS[1][0]*s,ORE_PTS[1][1]*s);lit.closePath();
+    ctx.fillStyle='rgba(255,255,255,.17)';ctx.fill(lit);
+    const dk=new Path2D();dk.moveTo(cx,cy);dk.lineTo(ORE_PTS[2][0]*s,ORE_PTS[2][1]*s);dk.lineTo(ORE_PTS[3][0]*s,ORE_PTS[3][1]*s);dk.closePath();
+    ctx.fillStyle='rgba(0,0,0,.30)';ctx.fill(dk);
+    // facet seams radiating from the core vertex
+    ctx.strokeStyle='rgba(0,0,0,.34)';ctx.lineWidth=Math.max(.7,s*.04);ctx.beginPath();
+    for(const q of ORE_PTS){ctx.moveTo(cx,cy);ctx.lineTo(q[0]*s,q[1]*s);}ctx.stroke();
+    // vein glint in the ore's own accent
+    ctx.strokeStyle=ore.vein;ctx.globalAlpha=.72;ctx.lineWidth=Math.max(1,s*.06);ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(ORE_PTS[0][0]*s*.62,ORE_PTS[0][1]*s*.62);ctx.stroke();
+    ctx.restore();
+  }
+  // Normalised template silhouette per shape (unit -0.5..0.5), so the icon and its inner wire share one path.
+  function tmplVerts(shape){
+    if(shape===0) return [[-.45,-.32],[.3,-.32],[.48,0],[.3,.32],[-.45,.32]];
+    if(shape===1) return [[-.35,-.45],[.35,-.45],[.5,.3],[0,.5],[-.5,.3]];
+    if(shape===2) return [[-.52,-.12],[-.12,-.48],[.52,-.12],[.22,.4],[-.32,.36]];
+    if(shape===3) return [[-.42,-.34],[.42,-.34],[.42,.34],[-.42,.34]];
+    return [[0,-.5],[.5,0],[0,.5],[-.5,0]];
+  }
+  function vertsPath(v,s){const p=new Path2D();p.moveTo(v[0][0]*s,v[0][1]*s);for(let i=1;i<v.length;i++)p.lineTo(v[i][0]*s,v[i][1]*s);p.closePath();return p;}
+  // A holographic template emblem: a glowing teal outline with a faint fill, an inner concentric wire and
+  // crosshairs (the "printed template" read), and lit vertex nodes. Selected = brighter + a soft bloom.
+  function drawTemplateIcon(x,y,s,t,selected){
+    ctx.save();ctx.translate(x,y);
+    const v=tmplVerts(t.shape), col=selected?C.teal0:C.teal2, outer=vertsPath(v,s);
+    if(selected){ctx.shadowColor='rgba(91,235,220,.55)';ctx.shadowBlur=Math.max(8,s*.4);}
+    ctx.fillStyle=selected?'rgba(55,156,152,.22)':'rgba(33,106,101,.12)';ctx.fill(outer);
+    ctx.strokeStyle=col;ctx.lineWidth=selected?2.4:1.6;ctx.stroke(outer);
+    ctx.shadowBlur=0;
+    ctx.globalAlpha=selected?.5:.32;ctx.strokeStyle=C.teal1;ctx.lineWidth=1;
+    ctx.stroke(vertsPath(v,s*.58));
+    ctx.beginPath();ctx.moveTo(-s*.5,0);ctx.lineTo(s*.5,0);ctx.moveTo(0,-s*.5);ctx.lineTo(0,s*.5);ctx.stroke();
+    ctx.globalAlpha=selected?1:.7;ctx.fillStyle=col;
+    for(const q of v){ctx.beginPath();ctx.arc(q[0]*s,q[1]*s,Math.max(1.3,s*.05),0,Math.PI*2);ctx.fill();}
+    ctx.restore();
+  }
 
   function drawUpperOriginMachines(time){
     smallMachineLabel(272,76,286,'MECHANICAL ORE RETRIEVAL RACK');
     panel(268,104,290,106,metalGrad(268,104,290,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
-    const cols=5, cw=46, ch=26, gxGap=6, gyGap=9, rx=286, ry=118;
+    // Clean ore grid filling the rack (the rails / travelling claw / delivery snout were removed — they
+    // read as stray line clutter). The grid IS the selector; the selected cell lights amber.
+    const cols=5, cw=46, ch=30, gxGap=8, gyGap=10, rx=282, ry=122;
     for(let i=0;i<ORES.length;i++){
       const col=i%cols,row=Math.floor(i/cols),x=rx+col*(cw+gxGap),y=ry+row*(ch+gyGap),sel=i===selectedOre;
       panel(x,y,cw,ch,sel?'#302718':'#151919',sel?C.amber0:C.brass3,5,sel?2.0:1.1);
       if(!ORES[i].owned){ctx.save();ctx.globalAlpha=.4;}
-      oreRock(x+cw/2,y+ch/2,sel?10.5:8.5,ORES[i],sel);
+      oreRock(x+cw/2,y+ch/2,sel?12:10,ORES[i],sel);
       if(!ORES[i].owned)ctx.restore();
     }
-    const railY=196, railX2=520;
-    ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(282,railY);ctx.lineTo(railX2,railY);ctx.moveTo(railX2,114);ctx.lineTo(railX2,railY);ctx.stroke();
-    ctx.strokeStyle=C.brass2;ctx.lineWidth=2.4;ctx.stroke();
-    const selCol=selectedOre%cols, selRow=Math.floor(selectedOre/cols), targetX=rx+selCol*(cw+gxGap)+cw/2, targetY=ry+selRow*(ch+gyGap)+ch/2;
-    const parkX=496, parkY=railY, cycle=(time*.00030)%1;
-    let px=parkX, py=parkY;
-    if(cycle<.28){const t=cycle/.28; px=lerp(parkX,targetX,t); py=railY;}
-    else if(cycle<.52){const t=(cycle-.28)/.24; px=targetX; py=lerp(railY,targetY,t);}
-    else if(cycle<.76){const t=(cycle-.52)/.24; px=targetX; py=lerp(targetY,railY,t);}
-    else {const t=(cycle-.76)/.24; px=lerp(targetX,parkX,t); py=railY;}
-    panel(px-16,py-12,32,24,C.steel2,C.amber2,5,1.5);bolt(px,py,3);
-    ctx.strokeStyle=C.brass1;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(px-8,py+10);ctx.lineTo(px-8,py+18);ctx.moveTo(px+8,py+10);ctx.lineTo(px+8,py+18);ctx.stroke();
-    if(cycle>.28 && cycle<.76){oreMiniRock(px,py+22,9,time,.3);}
-    for(let i=0;i<7;i++){const active=i===Math.floor((time*.004)%7);ctx.fillStyle=active?C.amber0:C.amber3;ctx.beginPath();ctx.arc(289+i*13,202,2.2,0,Math.PI*2);ctx.fill();}
-    panel(454,204,58,10,C.steel2,C.brass3,4,1.1);
 
     smallMachineLabel(1042,76,292,'GANTRY / ORBITAL TEMPLATE PRINTER',C.teal3);
     panel(1038,104,296,106,metalGrad(1038,104,296,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
@@ -19400,7 +19438,7 @@ const ForgeScene=(function(){
     panel(330,304,220,90,C.steel2,C.brass2,8,2);
     ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText('ORE GRADE',350,328);
     ctx.fillStyle=C.amber0;ctx.font='30px Impact, Arial';ctx.fillText(o.tier,350,360);
-    ctx.fillStyle='#8f988e';ctx.font='16px Arial';ctx.fillText(o.name+(o.owned===false?'  (sealed)':''),350,384);
+    ctx.fillStyle='#8f988e';ctx.font='16px Arial';ctx.fillText(o.name+(o.owned===false?'  (sealed)':'  ·  '+(o.count||0)+' in stores'),350,384);
     panel(1050,304,220,90,C.steel2,C.brass2,8,2);
     ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='right';ctx.fillText('FORGE TEMPLATE',1250,328);
     ctx.fillStyle=C.teal0;ctx.font='26px Impact, Arial';ctx.fillText(t.name,1250,360);
@@ -19430,8 +19468,7 @@ const ForgeScene=(function(){
     vis.sort((a,b)=>b.rel-a.rel);
     for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.amber0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();if(!ORES[v.i].owned){ctx.save();ctx.globalAlpha=.45;}oreRock(v.p.x,v.p.y,38*v.p.s,ORES[v.i],sel);if(!ORES[v.i].owned)ctx.restore();if(sel){ctx.fillStyle='#f2c77c';ctx.font='15px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText(ORES[v.i].tier,v.p.x,v.p.y+62);}}
     drawArrowButton(438,222,-1,'orePrev');drawArrowButton(585,587,1,'oreNext');
-    const o=ORES[selectedOre]||{tier:'—',name:'—',count:0};
-    panel(250,735,340,65,C.steel2,C.brass2,8,2);ctx.fillStyle='#8d927f';ctx.font='11px Arial';ctx.textAlign='center';ctx.fillText('SELECTED ORE / FORGE GRADE  ·  '+o.count+' in stores',420,754);ctx.fillStyle=C.amber0;ctx.font='22px Impact,Arial';ctx.fillText(o.tier+'  •  '+o.name,420,781);
+    // (the ORE GRADE readout beside the conveyor already names the selection — no duplicate panel here)
   }
   function drawTemplateConveyor(){
     labelPlate(1012,525,470,'FORGE TEMPLATE SELECTOR',C.brass2,19);
@@ -19441,8 +19478,7 @@ const ForgeScene=(function(){
     vis.sort((a,b)=>b.rel-a.rel);
     for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.teal0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();drawTemplateIcon(v.p.x,v.p.y,46*v.p.s,TEMPLATES[v.i],sel);}
     drawArrowButton(1015,587,-1,'templatePrev');drawArrowButton(1162,222,1,'templateNext');
-    const t=TEMPLATES[selectedTemplate]||{name:'—'};
-    panel(1010,735,340,65,C.steel2,C.brass2,8,2);ctx.fillStyle='#8d927f';ctx.font='11px Arial';ctx.textAlign='center';ctx.fillText('SELECTED FORGE TEMPLATE',1180,754);ctx.fillStyle=C.teal0;ctx.font='20px Impact,Arial';ctx.fillText(t.name,1180,781);
+    // (the FORGE TEMPLATE readout beside the conveyor already names the selection — no duplicate panel here)
   }
   function drawBeginForgeButton(){
     const x=670,y=724,w=260,h=83,hot=hovered==='begin',p=chamferPath(x,y,w,h,13);shadow(p,5,6,.3);
