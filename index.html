@@ -243,6 +243,9 @@
   .wrap{max-width:600px;margin:0 auto}
   /* Lapidary hub: a full-bleed 2D scene with transparent clickable hotspots over the drawn zones. */
   .lapHub{padding:0}
+  /* Forge hub: same full-bleed 2D scene pattern (letterboxed 16:9, sized by sizeForgeScene). */
+  .forgeHub{padding:0}
+  #forgeScene{position:absolute;display:block;z-index:0;cursor:pointer}
   /* 16:9 line, letterboxed and positioned by sizeLapCanvas (below the nav bar). */
   #lapScene{position:absolute;display:block;z-index:0}
   /* Foreground pass, layered ABOVE the docked core (z-index 30) so machine parts like the seating
@@ -961,6 +964,7 @@
 <button class="closeX" id="x_lapidary" aria-label="Close lapidary" style="display:none">✕</button>
 <button class="closeX" id="x_corePicker" aria-label="Close picker" style="display:none">✕</button>
 <button class="closeX" id="x_potionShelf" aria-label="Close potion store" style="display:none">✕</button>
+<button class="closeX" id="x_forgeManage" aria-label="Close forge parts" style="display:none">✕</button>
 <button class="closeX" id="x_brew" aria-label="Close brewing" style="display:none">✕</button>
 
 <div id="stationBar"></div>
@@ -1185,15 +1189,18 @@
 </div>
 <div id="fbPower" title="Torch flux — tap to widen the torch's reach (powered by the anvil core + press upgrade)"></div>
 
-<div id="forge" class="overlay">
+<!-- The Forge wing is now a full-bleed 2D scene (ForgeScene): an ore-grade conveyor, a template
+     conveyor and a BEGIN FORGE press that enters the flux press. Anvil-seat + forged-parts
+     management folds into the #forgeManage modal, opened from the scene's PARTS / ANVIL plate. -->
+<div id="forge" class="overlay forgeHub">
+  <canvas id="forgeScene" width="1600" height="900"></canvas>
+</div>
+
+<div id="forgeManage" class="overlay">
   <div class="wrap">
-    <h2>Metal stores</h2>
-    <div id="forgeOreList"></div>
-    <h2>Forge templates <span class="mono" id="forgeBonusNote"></span></h2>
-    <div class="sub" style="margin:2px 0 6px">Pick a template — it opens the flux press to forge by hand.</div>
+    <h2>Anvil core <span class="mono" id="forgeBonusNote"></span></h2>
     <div class="sub" style="margin:2px 0 4px">Seat a Forge Anvil core to assist press quality (durable — not consumed):</div>
     <div id="forgeInsertList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
-    <div id="forgeList"></div>
     <h2>Forged parts <span class="mono" id="forgedNote"></span></h2>
     <div class="sub" style="margin:2px 0 6px">Every part you forge is kept here as a 3D object — install it into its slot, or discard it.</div>
     <div id="forgedShelf" style="display:flex;gap:8px;flex-wrap:wrap"></div>
@@ -14862,29 +14869,29 @@ function mountThumbs(root){
     if (mesh) registerThumb(cv,mesh); else cv.classList.add('thumbEmpty');
   });
 }
+// The Forge wing is now the 2D ForgeScene (ore + template conveyors, BEGIN FORGE). renderForge
+// just sizes + kicks a draw and refreshes the management modal if it's open; the per-frame draw
+// runs from the animate loop. Kept the name — installForged/discardForged/showView all call it.
 function renderForge(){
-  // metal stores — data-driven from METALS, coarsest tier first (scales to 5 tiers)
-  const ol=document.getElementById('forgeOreList');
-  if (ol) ol.innerHTML=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,note:''};
-    const locked=!forgeMetalOwned(k);   // tier-IV/V metals until the Adamant/Aether Forge is recovered
-    // learn-the-ladder: show each metal's canonical alloy partner (base names its agent, agent names its base)
-    const pr=alloyPairing(k);
-    const ladder = (!locked && pr) ? ` <span style="color:var(--crystal)">+ ${pr.partnerName} → ${pr.alloy}</span>` : '';
-    const note=locked?`<span style="color:var(--brass)">sealed — needs the ${metalTier(k)===5?'Aether':'Adamant'} Forge (ancient cache)</span>`:oi.note+ladder;
-    return `<div class="card t${metalTier(k)}"${locked?' style="opacity:.5"':''}><div class="info">${oi.label}<div class="sub">${note}</div></div><div class="mono">${metals[k]||0}</div></div>`;
-  }).join('');
-  // ANVIL SLOT — the durable tool. Not consumed; it now ASSISTS the hands-on press quality.
-  document.getElementById('forgeBonusNote').textContent=
-    forgeAnvil?`— anvil seated: T${forgeAnvil.tier} at ${Math.round(forgeAnvil.output*100)}% → assists the press`
-              :`— no anvil seated → the press quality is all in the pour`;
+  sizeForgeScene();
+  if (typeof ForgeScene!=='undefined') ForgeScene.draw(performance.now());
+  const fm=document.getElementById('forgeManage');
+  if (fm && fm.classList.contains('on')) renderForgeManage();
+}
+// The anvil-seat + forged-parts management modal (opened from the scene's ANVIL CORE plate). This
+// is the old forge-wing management, moved into a picker so the scene can be full-bleed.
+function renderForgeManage(){
+  // ANVIL SLOT — the durable tool. Not consumed; it ASSISTS the hands-on press quality.
+  const note=document.getElementById('forgeBonusNote');
+  if (note) note.textContent = forgeAnvil?`— anvil seated: T${forgeAnvil.tier} at ${Math.round(forgeAnvil.output*100)}% → assists the press`
+                                         :`— no anvil seated → the press quality is all in the pour`;
   const pick=document.getElementById('forgeInsertList');
   if (pick){
     pick.innerHTML='';
     if (forgeAnvil){
-      const b=document.createElement('button');
-      b.className='chip lit';
+      const b=document.createElement('button'); b.className='chip lit';
       b.textContent=`remove anvil (${Math.round(forgeAnvil.output*100)}%)`;
-      b.onclick=()=>{ unseat('forgeAnvil'); renderForge();
+      b.onclick=()=>{ unseat('forgeAnvil'); renderForgeManage();
         say('Anvil lifted out of the press. Quality is all in the pour now.','warn'); };
       pick.appendChild(b);
     } else {
@@ -14892,29 +14899,22 @@ function renderForge(){
         'The press works without one.</span>';
     }
   }
-  const list=document.getElementById('forgeList');
-  list.innerHTML='';
-  for (const m of FORGE_TEMPLATES){
-    const div=document.createElement('div');
-    const isSuit=m.part==='suitFrame';
-    const fitted=isSuit?suitFrames[m.system]:drill[m.part];
-    div.className='card t'+(fitted?fitted.tier:1);
-    const fitQ=fitted?`${fitted.name||'fitted'} · ${Math.round((fitted.q||0)*100)}%`:'slot empty';
-    div.innerHTML=`<div class="info">${m.label}
-      <div class="sub">${m.desc}
-      · <span style="color:var(--amber)">material set by the ore you feed</span>
-      · <span style="color:var(--dim)">${fitQ}</span></div></div>`;
-    const btn=document.createElement('button');
-    btn.className='act';
-    btn.textContent='Forge at the press ⚒';
-    // Every template opens the flux press to forge by hand. The material, tier and fit are
-    // decided in finishForge from the ores actually cast — the pour is what counts.
-    btn.onclick=()=>{ forgePart=m; forgeActive=false; _forgeStash={}; showView('forgeb'); };
-    div.appendChild(btn);
-    list.appendChild(div);
-  }
   renderForgedShelf();
 }
+function sizeForgeScene(){
+  const cv=document.getElementById('forgeScene'); if (!cv) return;
+  const ov=cv.parentElement||document.body;
+  const top0=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--navH'))||150;
+  const availW=Math.max(2,ov.clientWidth), availH=Math.max(2,ov.clientHeight-top0-8);
+  const scale=Math.min(availW/1600, availH/900);
+  const dw=1600*scale, dh=900*scale;
+  cv.style.width=dw+'px'; cv.style.height=dh+'px';
+  cv.style.left=((availW-dw)/2)+'px'; cv.style.top=(top0+(availH-dh)/2)+'px';
+}
+function openForgeManage(){ const fm=document.getElementById('forgeManage'); if (!fm) return;
+  fm.classList.add('on'); document.getElementById('nav').style.display='none'; syncCloseX(); renderForgeManage(); }
+function closeForgeManage(){ const fm=document.getElementById('forgeManage'); if (!fm) return;
+  fm.classList.remove('on'); document.getElementById('nav').style.display=''; syncCloseX(); clearThumbs(); }
 // The persistent shelf of forged parts: each shows a screenshot-icon of its actual 3D voxel
 // form, its stats and whether it's the one currently installed, with Install / Discard actions.
 function renderForgedShelf(){
@@ -16158,6 +16158,7 @@ let forgeCrucSpent=false;               // ores for the current load already ded
 // ore's metal id, so a mixed feed reads as its constituents. forgeFeed holds {metal, used}/chunk.
 let forgeFeed=[];                       // [{metal:'copper', used:false}, ...] up to forgeOreCount()
 let forgeFeedMetal='copper';            // metal id the NEXT dropped nugget carries (set by the click)
+let forgePendingFeed=null;              // ore grade chosen on the Forge SCENE; pre-queued into the feed on enterForge
 // Slow enough that a held torch visibly HEATS a patch — it glows up over most of
 // a second — before it crosses FLOW_T and sloughs. That heat-up delay is the ore's
 // "heat resistance", and it was invisible when this was fast (the slough looked
@@ -16716,6 +16717,12 @@ function enterForge(){
   // then loads two chunks into the crucible. Ore only ever feeds the crucible now.
   forgeNugSize=FORGE_NUG_MASS;
   forgeFeed=[];
+  // Pre-load the ore grade chosen on the Forge scene, so the crucible (the main tool) starts with
+  // its first feed ore queued. Only when it's actually available — never nag on entry.
+  if (forgePendingFeed){
+    if (adminOn || (forgeMetalOwned(forgePendingFeed) && (metals[forgePendingFeed]||0)>0)) forgeAddFeed(forgePendingFeed);
+    forgePendingFeed=null;
+  }
   renderForgeFeed();
   forgePhase='flux'; fluxOn=false; fluxAim=null;
   // The crucible is the MAIN tool — the mould starts empty and you FILL it by pouring. Start on it.
@@ -19209,6 +19216,272 @@ function handlePointerMove(evt){
   return { draw:drawScene, hitZone, W, H, setStation, clearStations, stationPreview, corePos, drawForeground };
 })();
 
+/* ============================================================
+   THE FORGE WING SCENE — a full-bleed 2D industrial forge front (ported from the v8c
+   mockup) wired to the real game: an ore-grade conveyor (the metal you mean to pour), a
+   template conveyor (a FORGE_TEMPLATES part), and a BEGIN FORGE press that pre-loads the
+   crucible feed and opens the flux press. The ANVIL CORE plate opens #forgeManage for the
+   anvil seat + forged-parts shelf. Fully namespaced — its OWN canvas, palette and helpers —
+   so none of the ~245 game globals collide. ============================================================ */
+const ForgeScene=(function(){
+  const canvas=document.getElementById('forgeScene');
+  if (!canvas) return { draw(){}, setHooks(){}, getSelection(){return{oreKey:null,templateIndex:0};}, W:1600, H:900 };
+  canvas.width=1600; canvas.height=900;
+  const ctx=canvas.getContext('2d'); ctx.imageSmoothingEnabled=true;
+  const W=1600, H=900;
+  const C={ black:'#050707', wall:'#b7aa8d', wall2:'#8e826a',
+    steel0:'#77817d', steel1:'#414a49', steel2:'#232a2b', steel3:'#101516', steel4:'#080b0c',
+    brass0:'#e3b66b', brass1:'#b77b3b', brass2:'#77502b', brass3:'#422a18', brass4:'#24160d',
+    ivory0:'#d8c8a4', ivory1:'#b8a781', ivory2:'#7e735d',
+    teal0:'#c3fff6', teal1:'#69e5d7', teal2:'#21b6ad', teal3:'#14726f', teal4:'#0a4444',
+    amber0:'#ffe0a1', amber1:'#f7b640', amber2:'#bf6a1c', amber3:'#743816' };
+
+  let hooks={ begin(){}, manage(){} };
+  let selectedOre=0, oreVisual=0, selectedTemplate=0, templateVisual=0, hovered=null;
+  let message='Forge — pick an ore grade and a template, then BEGIN FORGE to open the press.';
+  let ORES=[], TEMPLATES=[];
+  const ROMAN=['','I','II','III','IV','V','VI','VII','VIII'];
+  function lighten(hex,f){ f=f==null?0.5:f; const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255;
+    r=Math.round(r+(255-r)*f); g=Math.round(g+(255-g)*f); b=Math.round(b+(255-b)*f);
+    return '#'+((1<<24)|(r<<16)|(g<<8)|b).toString(16).slice(1); }
+  // Rebuild the ore/template lists from live game state every frame, so owned/locked + counts track.
+  function refreshData(){
+    ORES=FORGE_ORE_ORDER.map(k=>{ const oi=ORE_INFO[k]||{label:k,col:'#999'};
+      return { key:k, name:(oi.label||k).replace(/ ore$/i,'').toUpperCase(), tier:'TIER '+(ROMAN[metalTier(k)]||metalTier(k)),
+        color:oi.col||'#999', vein:lighten(oi.col||'#999',0.55),
+        owned:(typeof forgeMetalOwned==='function'?forgeMetalOwned(k):true),
+        count:(typeof metals!=='undefined'?(metals[k]||0):0) }; });
+    TEMPLATES=FORGE_TEMPLATES.map((t,i)=>({ name:(t.label||('TEMPLATE '+(i+1))).toUpperCase(), sub:t.desc||'', shape:i%5 }));
+    if (selectedOre>=ORES.length) selectedOre=0;
+    if (selectedTemplate>=TEMPLATES.length) selectedTemplate=0;
+  }
+
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function shortestDelta(a,b,n){let d=(b-a)%n;if(d>n/2)d-=n;if(d<-n/2)d+=n;return d;}
+  function chamferPath(x,y,w,h,c){c=c==null?8:c;const p=new Path2D();p.moveTo(x+c,y);p.lineTo(x+w-c,y);p.lineTo(x+w,y+c);p.lineTo(x+w,y+h-c);p.lineTo(x+w-c,y+h);p.lineTo(x+c,y+h);p.lineTo(x,y+h-c);p.lineTo(x,y+c);p.closePath();return p;}
+  function fillStroke(path,fill,stroke,lw){stroke=stroke||C.steel4;lw=lw||2;ctx.fillStyle=fill;ctx.fill(path);ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke(path);}
+  function panel(x,y,w,h,fill,stroke,c,lw){fill=fill||C.steel2;stroke=stroke||C.brass2;c=c==null?8:c;lw=lw||2;const p=chamferPath(x,y,w,h,c);fillStroke(p,fill,stroke,lw);return p;}
+  function shadow(path,dx,dy,a){dx=dx==null?5:dx;dy=dy==null?6:dy;a=a==null?.28:a;ctx.save();ctx.translate(dx,dy);ctx.globalAlpha=a;ctx.fillStyle='#000';ctx.fill(path);ctx.restore();}
+  function bolt(x,y,r){r=r||3;const g=ctx.createRadialGradient(x-r*.4,y-r*.4,0,x,y,r);g.addColorStop(0,C.brass0);g.addColorStop(.5,C.brass1);g.addColorStop(1,C.brass4);ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#1a0f08';ctx.lineWidth=1;ctx.stroke();}
+  function metalGrad(x,y,w,h,light,mid,dark){light=light||'#73807d';mid=mid||'#414a49';dark=dark||'#1c2223';const g=ctx.createLinearGradient(x,y,x+w,y+h);g.addColorStop(0,light);g.addColorStop(.42,mid);g.addColorStop(1,dark);return g;}
+  function labelPlate(x,y,w,text,accent,font){accent=accent||C.brass1;font=font||18;const p=chamferPath(x,y,w,35,8);shadow(p,3,4,.22);const g=ctx.createLinearGradient(x,y,x,y+35);g.addColorStop(0,'#222521');g.addColorStop(1,'#0d1110');fillStroke(p,g,accent,2);ctx.strokeStyle='rgba(255,226,166,.16)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+12,y+5);ctx.lineTo(x+w-12,y+5);ctx.stroke();ctx.fillStyle='#f3c77d';ctx.font='400 '+font+'px Impact, Arial Narrow, sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,x+w/2,y+19);}
+  function wallLamp(x,y,w){w=w||72;const mount=chamferPath(x-w/2,y,w,12,4);fillStroke(mount,C.steel2,C.brass2,1.5);const g=ctx.createLinearGradient(x,y+12,x,y+25);g.addColorStop(0,'#fff0c1');g.addColorStop(1,'#c9801e');ctx.fillStyle=g;ctx.fillRect(x-w*.35,y+13,w*.7,7);const glow=ctx.createRadialGradient(x,y+18,2,x,y+18,72);glow.addColorStop(0,'rgba(255,208,113,.18)');glow.addColorStop(1,'rgba(255,208,113,0)');ctx.fillStyle=glow;ctx.beginPath();ctx.arc(x,y+18,72,0,Math.PI*2);ctx.fill();}
+
+  function drawBackWall(){
+    const bg=ctx.createLinearGradient(0,0,0,H);bg.addColorStop(0,'#0b0f10');bg.addColorStop(.18,'#151819');bg.addColorStop(1,'#080b0c');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=C.wall;ctx.fillRect(24,54,W-48,614);
+    ctx.strokeStyle='rgba(58,52,43,.42)';ctx.lineWidth=1;
+    for(let y=112;y<660;y+=92){ctx.beginPath();ctx.moveTo(26,y);ctx.lineTo(W-26,y);ctx.stroke();}
+    for(let x=44;x<W-40;x+=152){ctx.beginPath();ctx.moveTo(x,58);ctx.lineTo(x,664);ctx.stroke();}
+    ctx.fillStyle='#101415';ctx.fillRect(0,668,W,190);ctx.fillStyle='#0b0e0f';ctx.fillRect(0,856,W,44);ctx.fillStyle='#2b1d12';ctx.fillRect(0,853,W,3);
+    for(const x of [82,1518]){panel(x-24,60,48,774,metalGrad(x-24,60,48,774,'#3e4543','#1e2425','#0c0f10'),C.brass3,8,2);for(let y=92;y<810;y+=48)bolt(x,y,2.2);}
+    wallLamp(128,42,82);wallLamp(800,36,104);wallLamp(1472,42,82);
+    labelPlate(620,38,360,'FORGE — ANVIL CORE ARRAY',C.brass2,24);
+  }
+  function drawHoloTemplateWire(x,y,s,time,alpha){alpha=alpha==null?1:alpha;
+    const t=TEMPLATES[selectedTemplate]||{shape:0};
+    ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(time*.0014)*.12);ctx.scale(s,s);
+    ctx.globalAlpha=alpha;ctx.strokeStyle=C.teal0;ctx.lineWidth=2.2;ctx.shadowColor='rgba(81,245,230,.75)';ctx.shadowBlur=12;
+    const p=new Path2D();
+    if(t.shape===0){p.moveTo(-28,-20);p.lineTo(18,-20);p.lineTo(30,0);p.lineTo(18,20);p.lineTo(-28,20);p.closePath();}
+    else if(t.shape===1){p.moveTo(-22,-28);p.lineTo(22,-28);p.lineTo(31,18);p.lineTo(0,30);p.lineTo(-31,18);p.closePath();}
+    else if(t.shape===2){p.moveTo(-32,-8);p.lineTo(-8,-30);p.lineTo(32,-8);p.lineTo(14,25);p.lineTo(-20,23);p.closePath();}
+    else if(t.shape===3){p.rect(-26,-22,52,44);}
+    else{p.moveTo(0,-32);p.lineTo(32,0);p.lineTo(0,32);p.lineTo(-32,0);p.closePath();}
+    ctx.stroke(p);ctx.globalAlpha=.32*alpha;ctx.lineWidth=1;
+    for(let yy=-24;yy<=24;yy+=8){ctx.beginPath();ctx.moveTo(-28,yy);ctx.lineTo(28,yy);ctx.stroke();}
+    ctx.restore();
+  }
+  function oreMiniRock(x,y,s,time,phase){phase=phase||0;const ore=ORES[selectedOre]||{color:'#b76b43',vein:'#efad6c'};
+    ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(time*.0018+phase)*.12);
+    const pts=[[-.5,-.05],[-.3,-.52],[.08,-.62],[.48,-.18],[.38,.42],[0,.58],[-.44,.38]];
+    const p=new Path2D();p.moveTo(pts[0][0]*s,pts[0][1]*s);for(let i=1;i<pts.length;i++)p.lineTo(pts[i][0]*s,pts[i][1]*s);p.closePath();
+    const g=ctx.createLinearGradient(-s,-s,s,s);g.addColorStop(0,'#beb39b');g.addColorStop(.32,ore.color);g.addColorStop(1,'#282825');fillStroke(p,g,'#181713',1.3);
+    ctx.strokeStyle=ore.vein;ctx.lineWidth=Math.max(1,s*.07);ctx.beginPath();ctx.moveTo(-s*.28,-s*.18);ctx.lineTo(0,0);ctx.lineTo(s*.28,-s*.18);ctx.stroke();ctx.restore();
+  }
+  function smallMachineLabel(x,y,w,text,accent){accent=accent||C.brass2;const p=chamferPath(x,y,w,25,6);fillStroke(p,'#111516',accent,1.5);ctx.fillStyle='#e5c480';ctx.font='12px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(text,x+w/2,y+13);}
+  function oreRock(x,y,s,ore,selected){ctx.save();ctx.translate(x,y);if(selected){ctx.shadowColor='rgba(255,177,71,.46)';ctx.shadowBlur=18;}const pts=[[-.56,-.07],[-.38,-.56],[-.05,-.72],[.32,-.58],[.58,-.18],[.48,.38],[.08,.62],[-.44,.44]];const p=new Path2D();p.moveTo(pts[0][0]*s,pts[0][1]*s);for(let i=1;i<pts.length;i++)p.lineTo(pts[i][0]*s,pts[i][1]*s);p.closePath();const g=ctx.createLinearGradient(-s*.6,-s*.6,s*.6,s*.6);g.addColorStop(0,'#c3b79d');g.addColorStop(.25,ore.color);g.addColorStop(.62,ore.color);g.addColorStop(1,'#2a2b28');fillStroke(p,g,selected?C.amber0:'#29231d',selected?2.5:1.5);ctx.strokeStyle=ore.vein;ctx.globalAlpha=.76;ctx.lineWidth=Math.max(1.2,s*.07);ctx.beginPath();ctx.moveTo(-s*.35,-s*.18);ctx.lineTo(-s*.08,s*.03);ctx.lineTo(s*.18,-s*.22);ctx.lineTo(s*.42,s*.12);ctx.stroke();ctx.restore();}
+  function drawTemplateIcon(x,y,s,t,selected){ctx.save();ctx.translate(x,y);if(selected){ctx.shadowColor='rgba(91,235,220,.4)';ctx.shadowBlur=14;}ctx.strokeStyle=selected?C.teal0:C.brass1;ctx.fillStyle=selected?'rgba(55,156,152,.30)':'rgba(20,26,27,.8)';ctx.lineWidth=2.5;const p=new Path2D();if(t.shape===0){p.moveTo(-s*.45,-s*.32);p.lineTo(s*.3,-s*.32);p.lineTo(s*.48,0);p.lineTo(s*.3,s*.32);p.lineTo(-s*.45,s*.32);p.closePath();}else if(t.shape===1){p.moveTo(-s*.35,-s*.45);p.lineTo(s*.35,-s*.45);p.lineTo(s*.5,s*.3);p.lineTo(0,s*.5);p.lineTo(-s*.5,s*.3);p.closePath();}else if(t.shape===2){p.moveTo(-s*.52,-s*.12);p.lineTo(-s*.12,-s*.48);p.lineTo(s*.52,-s*.12);p.lineTo(s*.22,s*.4);p.lineTo(-s*.32,s*.36);p.closePath();}else if(t.shape===3){p.rect(-s*.42,-s*.34,s*.84,s*.68);}else{p.moveTo(0,-s*.5);p.lineTo(s*.5,0);p.lineTo(0,s*.5);p.lineTo(-s*.5,0);p.closePath();}ctx.fill(p);ctx.stroke(p);ctx.restore();}
+
+  function drawUpperOriginMachines(time){
+    smallMachineLabel(272,76,286,'MECHANICAL ORE RETRIEVAL RACK');
+    panel(268,104,290,106,metalGrad(268,104,290,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
+    const cols=5, cw=46, ch=26, gxGap=6, gyGap=9, rx=286, ry=118;
+    for(let i=0;i<ORES.length;i++){
+      const col=i%cols,row=Math.floor(i/cols),x=rx+col*(cw+gxGap),y=ry+row*(ch+gyGap),sel=i===selectedOre;
+      panel(x,y,cw,ch,sel?'#302718':'#151919',sel?C.amber0:C.brass3,5,sel?2.0:1.1);
+      if(!ORES[i].owned){ctx.save();ctx.globalAlpha=.4;}
+      oreRock(x+cw/2,y+ch/2,sel?10.5:8.5,ORES[i],sel);
+      if(!ORES[i].owned)ctx.restore();
+    }
+    const railY=196, railX2=520;
+    ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(282,railY);ctx.lineTo(railX2,railY);ctx.moveTo(railX2,114);ctx.lineTo(railX2,railY);ctx.stroke();
+    ctx.strokeStyle=C.brass2;ctx.lineWidth=2.4;ctx.stroke();
+    const selCol=selectedOre%cols, selRow=Math.floor(selectedOre/cols), targetX=rx+selCol*(cw+gxGap)+cw/2, targetY=ry+selRow*(ch+gyGap)+ch/2;
+    const parkX=496, parkY=railY, cycle=(time*.00030)%1;
+    let px=parkX, py=parkY;
+    if(cycle<.28){const t=cycle/.28; px=lerp(parkX,targetX,t); py=railY;}
+    else if(cycle<.52){const t=(cycle-.28)/.24; px=targetX; py=lerp(railY,targetY,t);}
+    else if(cycle<.76){const t=(cycle-.52)/.24; px=targetX; py=lerp(targetY,railY,t);}
+    else {const t=(cycle-.76)/.24; px=lerp(targetX,parkX,t); py=railY;}
+    panel(px-16,py-12,32,24,C.steel2,C.amber2,5,1.5);bolt(px,py,3);
+    ctx.strokeStyle=C.brass1;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(px-8,py+10);ctx.lineTo(px-8,py+18);ctx.moveTo(px+8,py+10);ctx.lineTo(px+8,py+18);ctx.stroke();
+    if(cycle>.28 && cycle<.76){oreMiniRock(px,py+22,9,time,.3);}
+    for(let i=0;i<7;i++){const active=i===Math.floor((time*.004)%7);ctx.fillStyle=active?C.amber0:C.amber3;ctx.beginPath();ctx.arc(289+i*13,202,2.2,0,Math.PI*2);ctx.fill();}
+    panel(454,204,58,10,C.steel2,C.brass3,4,1.1);
+
+    smallMachineLabel(1042,76,292,'GANTRY / ORBITAL TEMPLATE PRINTER',C.teal3);
+    panel(1038,104,296,106,metalGrad(1038,104,296,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
+    const hx=1188, hy=162;
+    ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(1060,118);ctx.lineTo(1316,118);ctx.moveTo(1060,198);ctx.lineTo(1316,198);ctx.stroke();
+    ctx.strokeStyle=C.brass2;ctx.lineWidth=2.5;ctx.stroke();
+    const travel=.5+.5*Math.sin(time*.0014), gx=1078+220*travel;
+    panel(gx-15,108,30,100,metalGrad(gx-15,108,30,100,'#6c746f','#303736','#101516'),C.teal3,5,1.6);
+    panel(gx-23,132,46,18,C.steel2,C.teal3,4,1.3);
+    for(const spec of [[66,.00080,.57],[52,-.00118,.43],[39,.00162,.66]]){
+      const r=spec[0],spd=spec[1],ys=spec[2];
+      ctx.save();ctx.translate(hx,hy);ctx.rotate(time*spd);ctx.scale(1,ys);ctx.strokeStyle='rgba(77,238,224,.52)';ctx.lineWidth=2.3;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();
+      for(let i=0;i<3;i++){const a=i*Math.PI*2/3;ctx.fillStyle=C.teal1;ctx.beginPath();ctx.arc(Math.cos(a)*r,Math.sin(a)*r,3.1,0,Math.PI*2);ctx.fill();}
+      ctx.restore();
+    }
+    const build=(time*.00036)%1;
+    for(let i=0;i<10;i++){const f=i/9;if(f>build)continue;ctx.save();ctx.translate(hx,hy+29-f*58);ctx.scale(.50+.5*f,.16);ctx.strokeStyle='rgba(91,246,231,'+(.13+.55*f)+')';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,39,39,0,0,Math.PI*2);ctx.stroke();ctx.restore();}
+    drawHoloTemplateWire(hx,hy,1.04,time,.96);
+    const scanX=hx-40+80*((time*.00082)%1);ctx.strokeStyle='rgba(211,255,252,.72)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(scanX,hy-36);ctx.lineTo(scanX,hy+36);ctx.stroke();
+    panel(1128,204,120,10,C.steel3,C.brass3,4,1.2);
+  }
+  function drawCentralForgeThroat(time){
+    const cx=800,cy=405,pulse=.5+.08*Math.sin(time*.003);
+    const glow=ctx.createRadialGradient(cx,cy+16,24,cx,cy,250);glow.addColorStop(0,'rgba(255,184,70,'+(.28*pulse+.12)+')');glow.addColorStop(.4,'rgba(222,93,21,'+(.20*pulse+.08)+')');glow.addColorStop(1,'rgba(84,23,5,0)');ctx.fillStyle=glow;ctx.beginPath();ctx.arc(cx,cy,250,0,Math.PI*2);ctx.fill();
+    ctx.save();ctx.translate(cx,cy);
+    ctx.strokeStyle='#111516';ctx.lineWidth=52;ctx.beginPath();ctx.arc(0,0,204,0,Math.PI*2);ctx.stroke();
+    ctx.strokeStyle=C.brass3;ctx.lineWidth=5;ctx.stroke();
+    for(let i=0;i<12;i++){const a=i*Math.PI*2/12;ctx.save();ctx.rotate(a);const seg=chamferPath(167,-21,65,42,6);fillStroke(seg,metalGrad(167,-21,65,42,'#515852','#252b2b','#101414'),i%3===0?C.brass1:C.brass3,2);bolt(180,0,2.4);bolt(220,0,2.4);ctx.restore();}
+    ctx.restore();
+    ctx.fillStyle='#2b1a10';ctx.beginPath();ctx.arc(cx,cy,139,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass2;ctx.lineWidth=8;ctx.stroke();
+    for(let i=0;i<14;i++){const a=i*Math.PI*2/14, a2=(i+1)*Math.PI*2/14;const p=new Path2D();p.arc(cx,cy,130,a+.02,a2-.02);p.arc(cx,cy,111,a2-.02,a+.02,true);p.closePath();fillStroke(p,i%2?'#67523c':'#765f44','#2f241b',1.2);}
+    const chamber=ctx.createRadialGradient(cx-18,cy-28,6,cx,cy,108);chamber.addColorStop(0,'#b34b1f');chamber.addColorStop(.26,'#7b2f18');chamber.addColorStop(.62,'#2c1009');chamber.addColorStop(1,'#070707');ctx.fillStyle=chamber;ctx.beginPath();ctx.arc(cx,cy,106,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=C.brass3;ctx.lineWidth=3;ctx.beginPath();ctx.arc(cx,cy,82,0,Math.PI*2);ctx.stroke();
+    const bed=ctx.createLinearGradient(cx,cy+18,cx,cy+92);bed.addColorStop(0,'rgba(255,209,111,.08)');bed.addColorStop(.38,'rgba(239,120,34,'+(.48*pulse)+')');bed.addColorStop(.82,'rgba(179,58,12,'+(.22*pulse)+')');bed.addColorStop(1,'rgba(90,24,5,.1)');ctx.fillStyle=bed;ctx.beginPath();ctx.ellipse(cx,cy+44,74,28,0,0,Math.PI*2);ctx.fill();
+  }
+  function drawAnvilCoreAsset(x,y,s,time){s=s||36;time=time||0;
+    ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(time*.0012)*.03);
+    const halo=ctx.createRadialGradient(0,0,2,0,0,s*1.55);halo.addColorStop(0,'rgba(74,228,216,.18)');halo.addColorStop(1,'rgba(74,228,216,0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(0,0,s*1.55,0,Math.PI*2);ctx.fill();
+    const p=new Path2D();p.moveTo(0,-s);p.lineTo(s*.62,-s*.34);p.lineTo(s*.48,s*.58);p.lineTo(0,s);p.lineTo(-s*.48,s*.58);p.lineTo(-s*.62,-s*.34);p.closePath();
+    const g=ctx.createLinearGradient(-s,-s,s,s);g.addColorStop(0,'#d6f4ee');g.addColorStop(.18,'#6acbc4');g.addColorStop(.55,'#316b70');g.addColorStop(1,'#17242b');fillStroke(p,g,C.brass1,2.2);
+    ctx.strokeStyle='rgba(226,255,249,.35)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,-s);ctx.lineTo(0,s);ctx.moveTo(-s*.58,-s*.3);ctx.lineTo(0,0);ctx.lineTo(s*.58,-s*.3);ctx.stroke();ctx.restore();
+  }
+  function drawAnvilBase(time){
+    const cx=800;
+    const crown=new Path2D();crown.moveTo(632,494);crown.lineTo(968,494);crown.lineTo(947,523);crown.lineTo(905,542);crown.lineTo(695,542);crown.lineTo(653,523);crown.closePath();
+    fillStroke(crown,metalGrad(632,494,336,48,'#8d948d','#464d4a','#171b1c'),C.brass2,4);
+    ctx.strokeStyle='rgba(255,255,255,.14)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(654,507);ctx.lineTo(946,507);ctx.stroke();
+    for(const x of [676,724,876,924]) bolt(x,520,2.8);
+    const saddle=new Path2D();saddle.moveTo(708,540);saddle.lineTo(892,540);saddle.lineTo(868,565);saddle.lineTo(732,565);saddle.closePath();
+    fillStroke(saddle,metalGrad(708,540,184,25,'#767d78','#3c4342','#141819'),C.brass3,3);
+    const collarOuter=new Path2D();collarOuter.moveTo(cx,520);collarOuter.lineTo(cx+55,544);collarOuter.lineTo(cx+46,591);collarOuter.lineTo(cx,615);collarOuter.lineTo(cx-46,591);collarOuter.lineTo(cx-55,544);collarOuter.closePath();
+    fillStroke(collarOuter,metalGrad(cx-55,520,110,95,'#686f6b','#2f3535','#0f1415'),C.brass1,4);
+    const collarInner=new Path2D();collarInner.moveTo(cx,531);collarInner.lineTo(cx+38,548);collarInner.lineTo(cx+31,582);collarInner.lineTo(cx,600);collarInner.lineTo(cx-31,582);collarInner.lineTo(cx-38,548);collarInner.closePath();
+    fillStroke(collarInner,'#0a0d0e','#394140',3);
+    for(let i=0;i<6;i++){const a=-Math.PI/2+i*Math.PI/3; bolt(cx+Math.cos(a)*46,558+Math.sin(a)*30,2.7);}
+    for(const side of [-1,1]){ctx.save();ctx.translate(cx+side*70,566);ctx.scale(side,1);const buttress=new Path2D();buttress.moveTo(-8,-18);buttress.lineTo(44,-18);buttress.lineTo(69,6);buttress.lineTo(44,36);buttress.lineTo(14,36);buttress.lineTo(-8,16);buttress.closePath();fillStroke(buttress,metalGrad(-8,-18,77,54,'#707773','#363d3d','#111517'),C.brass2,3);bolt(12,0,2.4);bolt(48,10,2.4);ctx.restore();}
+    const body=new Path2D();body.moveTo(694,565);body.lineTo(906,565);body.lineTo(883,650);body.lineTo(717,650);body.closePath();
+    fillStroke(body,metalGrad(694,565,212,85,'#636a67','#303637','#101516'),C.brass2,3);
+    panel(668,628,264,54,metalGrad(668,628,264,54,'#505754','#272e2f','#0e1314'),hovered==='manage'?C.amber0:C.brass3,8,3);
+    panel(724,670,152,36,C.steel3,C.brass2,6,2);
+    panel(700,590,42,22,C.steel3,C.brass3,5,2);panel(858,590,42,22,C.steel3,C.brass3,5,2);
+    drawAnvilCoreAsset(cx,575,32,time);
+    ctx.strokeStyle=C.brass1;ctx.lineWidth=7;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(cx-35,582);ctx.lineTo(cx-15,567);ctx.moveTo(cx+35,582);ctx.lineTo(cx+15,567);ctx.stroke();
+    labelPlate(715,686,170,'ANVIL CORE ▸ PARTS',hovered==='manage'?C.amber0:C.brass2,17);
+  }
+  function drawCoreReadouts(){
+    const o=ORES[selectedOre]||{tier:'—',name:'—'}, t=TEMPLATES[selectedTemplate]||{name:'—',sub:''};
+    panel(330,304,220,90,C.steel2,C.brass2,8,2);
+    ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText('ORE GRADE',350,328);
+    ctx.fillStyle=C.amber0;ctx.font='30px Impact, Arial';ctx.fillText(o.tier,350,360);
+    ctx.fillStyle='#8f988e';ctx.font='16px Arial';ctx.fillText(o.name+(o.owned===false?'  (sealed)':''),350,384);
+    panel(1050,304,220,90,C.steel2,C.brass2,8,2);
+    ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='right';ctx.fillText('FORGE TEMPLATE',1250,328);
+    ctx.fillStyle=C.teal0;ctx.font='26px Impact, Arial';ctx.fillText(t.name,1250,360);
+    ctx.fillStyle='#8f988e';ctx.font='13px Arial';ctx.fillText((t.sub||'').slice(0,34),1250,384);
+  }
+  function cubicPoint(p0,p1,p2,p3,t){const u=1-t,tt=t*t,uu=u*u;return{x:uu*u*p0.x+3*uu*t*p1.x+3*u*tt*p2.x+tt*t*p3.x,y:uu*u*p0.y+3*uu*t*p1.y+3*u*tt*p2.y+tt*t*p3.y};}
+  function leftConveyorPoint(t){return cubicPoint({x:470,y:235},{x:150,y:300},{x:95,y:515},{x:555,y:585},t);}
+  function rightConveyorPoint(t){const p=leftConveyorPoint(t);return{x:W-p.x,y:p.y};}
+  function drawPerspectiveTrack(pointFn){
+    const samples=52;
+    for(const layer of [{c:'#171918',w0:26,w1:82},{c:'#887c65',w0:22,w1:72},{c:'#c3b696',w0:18,w1:60},{c:'#30291f',w0:12,w1:43},{c:C.brass2,w0:2,w1:4}]){
+      ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=layer.c;
+      for(let i=0;i<samples;i++){const t0=i/samples,t1=(i+1)/samples,p0=pointFn(t0),p1=pointFn(t1),tm=(t0+t1)/2;ctx.lineWidth=lerp(layer.w0,layer.w1,tm);ctx.beginPath();ctx.moveTo(p0.x,p0.y);ctx.lineTo(p1.x,p1.y);ctx.stroke();}
+      ctx.restore();
+    }
+    for(let i=0;i<10;i++){const t=.05+i*.095,p=pointFn(t),pn=pointFn(Math.min(1,t+.012)),a=Math.atan2(pn.y-p.y,pn.x-p.x),s=.48+.55*t;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(a);ctx.scale(s,s);panel(-22,-33,44,15,'#c2b18e',C.brass2,4,1.1);bolt(-13,-26,1.8);bolt(13,-26,1.8);ctx.restore();}
+  }
+  const conveyorTs=[.94,.75,.56,.36,.14];
+  function slotForRel(pointFn,rel){const base=Math.floor(rel),frac=rel-base;if(base<0||base>=conveyorTs.length)return null;const t0=conveyorTs[base],t1=conveyorTs[Math.min(base+1,conveyorTs.length-1)],t=lerp(t0,t1,frac),p=pointFn(t);return{x:p.x,y:p.y,s:lerp(1.08,.53,1-t)};}
+  function drawArrowButton(x,y,dir,id){const hot=hovered===id,p=chamferPath(x-25,y-25,50,50,8);fillStroke(p,hot?'#3a2c1d':'#171c1c',hot?C.amber1:C.brass2,2);ctx.fillStyle=hot?C.amber0:'#d4b87b';ctx.beginPath();if(dir<0){ctx.moveTo(x+8,y-12);ctx.lineTo(x-10,y);ctx.lineTo(x+8,y+12);}else{ctx.moveTo(x-8,y-12);ctx.lineTo(x+10,y);ctx.lineTo(x-8,y+12);}ctx.closePath();ctx.fill();}
+  function drawFeedArms(){ctx.strokeStyle='#161a19';ctx.lineWidth=14;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(555,585);ctx.lineTo(695,515);ctx.moveTo(1045,585);ctx.lineTo(905,515);ctx.stroke();ctx.strokeStyle=C.brass2;ctx.lineWidth=5;ctx.stroke();for(const xy of [[625,550],[975,550]]){ctx.fillStyle=C.brass2;ctx.beginPath();ctx.arc(xy[0],xy[1],11,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass0;ctx.lineWidth=2;ctx.stroke();bolt(xy[0],xy[1],3);}}
+  function drawOreConveyor(){
+    labelPlate(118,525,470,'ORE GRADE SELECTOR',C.brass2,19);
+    drawPerspectiveTrack(leftConveyorPoint);
+    const d=shortestDelta(oreVisual,selectedOre,ORES.length);oreVisual+=d*.14;
+    const vis=[];for(let i=0;i<ORES.length;i++){const rel=shortestDelta(oreVisual,i,ORES.length);if(rel<-.35||rel>4.35)continue;const p=slotForRel(leftConveyorPoint,rel);if(p)vis.push({i:i,rel:rel,p:p});}
+    vis.sort((a,b)=>b.rel-a.rel);
+    for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.amber0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();if(!ORES[v.i].owned){ctx.save();ctx.globalAlpha=.45;}oreRock(v.p.x,v.p.y,38*v.p.s,ORES[v.i],sel);if(!ORES[v.i].owned)ctx.restore();if(sel){ctx.fillStyle='#f2c77c';ctx.font='15px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText(ORES[v.i].tier,v.p.x,v.p.y+62);}}
+    drawArrowButton(438,222,-1,'orePrev');drawArrowButton(585,587,1,'oreNext');
+    const o=ORES[selectedOre]||{tier:'—',name:'—',count:0};
+    panel(250,735,340,65,C.steel2,C.brass2,8,2);ctx.fillStyle='#8d927f';ctx.font='11px Arial';ctx.textAlign='center';ctx.fillText('SELECTED ORE / FORGE GRADE  ·  '+o.count+' in stores',420,754);ctx.fillStyle=C.amber0;ctx.font='22px Impact,Arial';ctx.fillText(o.tier+'  •  '+o.name,420,781);
+  }
+  function drawTemplateConveyor(){
+    labelPlate(1012,525,470,'FORGE TEMPLATE SELECTOR',C.brass2,19);
+    drawPerspectiveTrack(rightConveyorPoint);
+    const d=shortestDelta(templateVisual,selectedTemplate,TEMPLATES.length);templateVisual+=d*.14;
+    const vis=[];for(let i=0;i<TEMPLATES.length;i++){const rel=shortestDelta(templateVisual,i,TEMPLATES.length);if(rel<-.35||rel>4.35)continue;const p=slotForRel(rightConveyorPoint,rel);if(p)vis.push({i:i,rel:rel,p:p});}
+    vis.sort((a,b)=>b.rel-a.rel);
+    for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.teal0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();drawTemplateIcon(v.p.x,v.p.y,46*v.p.s,TEMPLATES[v.i],sel);}
+    drawArrowButton(1015,587,-1,'templatePrev');drawArrowButton(1162,222,1,'templateNext');
+    const t=TEMPLATES[selectedTemplate]||{name:'—'};
+    panel(1010,735,340,65,C.steel2,C.brass2,8,2);ctx.fillStyle='#8d927f';ctx.font='11px Arial';ctx.textAlign='center';ctx.fillText('SELECTED FORGE TEMPLATE',1180,754);ctx.fillStyle=C.teal0;ctx.font='20px Impact,Arial';ctx.fillText(t.name,1180,781);
+  }
+  function drawBeginForgeButton(){
+    const x=670,y=724,w=260,h=83,hot=hovered==='begin',p=chamferPath(x,y,w,h,13);shadow(p,5,6,.3);
+    fillStroke(p,hot?'#332719':'#171c1c',hot?C.amber1:C.brass2,3);
+    ctx.fillStyle='#f3c77d';ctx.font='26px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText('BEGIN FORGE',x+w/2,y+34);
+    const o=ORES[selectedOre],t=TEMPLATES[selectedTemplate];
+    ctx.fillStyle='#938a76';ctx.font='12px Arial';ctx.fillText((o?o.name:'—')+'  →  '+(t?t.name:'—'),x+w/2,y+57);
+    ctx.fillStyle='#6f7a6b';ctx.font='10px Arial';ctx.fillText('PRE-LOADS THE CRUCIBLE · OPENS THE FLUX PRESS',x+w/2,y+73);
+  }
+  function drawFooter(){ctx.fillStyle='rgba(4,7,8,.92)';ctx.fillRect(0,875,W,25);ctx.fillStyle='#c7b485';ctx.font='12px Arial';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(message,16,888);}
+  function drawScene(time){ time=time||0; refreshData(); ctx.clearRect(0,0,W,H);
+    drawBackWall(); drawUpperOriginMachines(time); drawCentralForgeThroat(time); drawFeedArms(); drawAnvilBase(time);
+    drawCoreReadouts(); drawOreConveyor(); drawTemplateConveyor(); drawBeginForgeButton(); drawFooter(); }
+
+  const HOVER_ZONES=[{id:'orePrev',x:413,y:197,w:50,h:50},{id:'oreNext',x:560,y:562,w:50,h:50},{id:'templatePrev',x:990,y:562,w:50,h:50},{id:'templateNext',x:1137,y:197,w:50,h:50},{id:'begin',x:670,y:724,w:260,h:83},{id:'manage',x:668,y:626,w:264,h:82}];
+  function evtLogical(e){const r=canvas.getBoundingClientRect();if(!r.width)return{x:-1,y:-1};return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
+  function setHover(p){hovered=null;for(const z of HOVER_ZONES){if(p.x>=z.x&&p.x<=z.x+z.w&&p.y>=z.y&&p.y<=z.y+z.h){hovered=z.id;return;}}}
+  function cycleOre(dir){ if(!ORES.length)return; selectedOre=(selectedOre+dir+ORES.length)%ORES.length; const o=ORES[selectedOre]; message='Ore grade: '+o.tier+' — '+o.name+(o.owned?'':' (sealed — recover its forge)')+'.'; }
+  function cycleTemplate(dir){ if(!TEMPLATES.length)return; selectedTemplate=(selectedTemplate+dir+TEMPLATES.length)%TEMPLATES.length; message='Template: '+TEMPLATES[selectedTemplate].name+'.'; }
+  canvas.addEventListener('pointermove',e=>{ refreshData(); setHover(evtLogical(e)); });
+  canvas.addEventListener('pointerleave',()=>{hovered=null;});
+  canvas.addEventListener('pointerdown',e=>{ refreshData(); const p=evtLogical(e); setHover(p);
+    if(hovered==='orePrev'){cycleOre(-1);return;} if(hovered==='oreNext'){cycleOre(1);return;}
+    if(hovered==='templatePrev'){cycleTemplate(1);return;} if(hovered==='templateNext'){cycleTemplate(-1);return;}
+    if(hovered==='begin'){ hooks.begin(); return; }
+    if(hovered==='manage'){ hooks.manage(); return; }
+    for(let i=0;i<ORES.length;i++){const rel=shortestDelta(oreVisual,i,ORES.length);if(rel<-.35||rel>4.35)continue;const pos=slotForRel(leftConveyorPoint,rel);if(pos&&Math.hypot(p.x-pos.x,p.y-pos.y)<48*pos.s){selectedOre=i;cycleOre(0);return;}}
+    for(let i=0;i<TEMPLATES.length;i++){const rel=shortestDelta(templateVisual,i,TEMPLATES.length);if(rel<-.35||rel>4.35)continue;const pos=slotForRel(rightConveyorPoint,rel);if(pos&&Math.hypot(p.x-pos.x,p.y-pos.y)<50*pos.s){selectedTemplate=i;cycleTemplate(0);return;}}
+  });
+  canvas.addEventListener('wheel',e=>{ if(typeof view!=='undefined'&&view!=='forge')return; refreshData(); const p=evtLogical(e); e.preventDefault(); if(p.x<800&&p.y>190&&p.y<650)cycleOre(e.deltaY>0?1:-1); else if(p.x>800&&p.y>190&&p.y<650)cycleTemplate(e.deltaY>0?1:-1); },{passive:false});
+
+  return {
+    draw:drawScene, W:W, H:H,
+    setHooks(h){ hooks=Object.assign(hooks,h||{}); },
+    getSelection(){ refreshData(); return { oreKey: ORES[selectedOre]?ORES[selectedOre].key:null, templateIndex: selectedTemplate }; },
+    setMessage(m){ message=m; }
+  };
+})();
+
 // Cores in the lab (never the seated ones) split into the three stores. Kept for count badges.
 function lapCounts(){
   const inLab=inventory.filter(c=>!seatWhere(c));
@@ -19360,6 +19633,15 @@ function lapZoneAction(id){
 }
 { const x=document.getElementById('x_corePicker'); if (x) x.onclick=closeCorePicker; }
 { const x=document.getElementById('x_potionShelf'); if (x) x.onclick=closePotionShelf; }
+{ const x=document.getElementById('x_forgeManage'); if (x) x.onclick=closeForgeManage; }
+// Wire the Forge scene: BEGIN pre-loads the crucible feed with the chosen grade and opens the flux
+// press; the ANVIL CORE plate opens the parts/anvil modal.
+if (typeof ForgeScene!=='undefined') ForgeScene.setHooks({
+  begin(){ const sel=ForgeScene.getSelection(); const tpl=FORGE_TEMPLATES[sel.templateIndex]||FORGE_TEMPLATES[0];
+    forgePart=tpl; forgeActive=false; _forgeStash={}; forgePendingFeed=sel.oreKey||null; showView('forgeb'); },
+  manage(){ openForgeManage(); }
+});
+addEventListener('resize',()=>{ if (view==='forge'){ sizeForgeScene(); if (typeof ForgeScene!=='undefined') ForgeScene.draw(performance.now()); } });
 { const s=document.getElementById('cpSearch'); if (s) s.oninput=e=>{ if (cpKind){ cpState[cpKind].q=e.target.value; cpRender(); } }; }
 { const s=document.getElementById('cpSort');   if (s) s.onchange=e=>{ if (cpKind){ cpState[cpKind].sort=e.target.value; cpRender(); } }; }
 addEventListener('resize',()=>{ if (view==='lapidary'){ drawLapScene();
@@ -19772,13 +20054,14 @@ document.getElementById('modeBtn').onclick=()=>{
    their parent overlay's display. Show only the exit for whichever overlay is on top — the core
    picker when it's open (it covers the lapidary), otherwise the single open hub overlay. */
 function syncCloseX(){
-  const map={x_lapidary:'lapidary', x_forge:'forge', x_brew:'brew', x_lab:'lab', x_corePicker:'corePicker', x_potionShelf:'potionShelf'};
-  // The picker and the potion store are foreground overlays — whichever is open owns the corner.
-  const topOn=document.getElementById('corePicker').classList.contains('on')||document.getElementById('potionShelf').classList.contains('on');
+  const map={x_lapidary:'lapidary', x_forge:'forge', x_brew:'brew', x_lab:'lab', x_corePicker:'corePicker', x_potionShelf:'potionShelf', x_forgeManage:'forgeManage'};
+  // The picker, the potion store and the forge-parts modal are foreground overlays — whichever is open owns the corner.
+  const _fgIds=['x_corePicker','x_potionShelf','x_forgeManage'];
+  const topOn=document.getElementById('corePicker').classList.contains('on')||document.getElementById('potionShelf').classList.contains('on')||document.getElementById('forgeManage').classList.contains('on');
   for (const id in map){
     const ov=document.getElementById(map[id]);
     let show=!!ov && ov.classList.contains('on');
-    if (id!=='x_corePicker' && id!=='x_potionShelf' && topOn) show=false;
+    if (!_fgIds.includes(id) && topOn) show=false;
     const el=document.getElementById(id); if (el) el.style.display=show?'':'none';
   }
 }
@@ -19808,6 +20091,9 @@ function showView(name){
     if (cp && cp.classList.contains('on')){ cp.classList.remove('on'); cpKind=null; clearThumbs(); }
     if (typeof cancelLapCore==='function') cancelLapCore();
     if (typeof LapLine!=='undefined') LapLine.clearStations(); }   // stop any running machine and drop a mid-drag core
+  // The forge-parts modal lives only inside the Forge wing; close it whenever we navigate elsewhere.
+  if (name!=='forge'){ const fm=document.getElementById('forgeManage');
+    if (fm && fm.classList.contains('on')){ fm.classList.remove('on'); document.getElementById('nav').style.display=''; clearThumbs(); } }
   syncCloseX();   // exits are root-level now — show the one for the overlay on top
   document.getElementById('chips').classList.toggle('on',isMachine);
   // The core-suitability spider rides the SHAPING benches (where you refine the stone), with a core on.
@@ -19825,7 +20111,7 @@ function showView(name){
   // The shaping benches AND the forge hide the reagent rail — glassware/ores are no use mid-cut,
   // and the forge shows its ores in the top feed strip already, so the bulky rail is redundant there.
   // A class, not an inline display, so the stylesheet stays in control.
-  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb'||name==='lapidary');
+  document.getElementById('instrumentRail').classList.toggle('hid',isMachine||name==='forgeb'||name==='brewb'||name==='lapidary'||name==='forge');
   // The italic hp/dust/power/air/drill strip only belongs at a shaping/cleaning bench, where
   // dust and power actually matter. On expedition the milled dial cluster IS the HUD; on the
   // wing HUBS (lapidary/forge/brew/suit) it's just clutter the player called out, so show it
@@ -20819,6 +21105,7 @@ let t=0, lastNow=0;
         lapCore.el.style.transform=(typeof p.rot==='number')?('rotate('+p.rot+'rad)'):''; } }
     const _fg=document.getElementById('lapFg');                                              // seating claws grip OVER the core
     if (_fg){ const fc=_fg.getContext('2d'); fc.clearRect(0,0,1600,900); if (_dockSeat) LapLine.drawForeground(fc,'seating',_t); } }
+  if (view==='forge' && typeof ForgeScene!=='undefined') ForgeScene.draw(performance.now());   // run the forge scene's machines/conveyors while on the hub
   renderer.render(scene,camera);
   if (typeof thumbTick==='function') thumbTick();   // spin the live 3D item thumbnails
   if (typeof guideTick==='function') guideTick(now); // render the cube-alien guide when it's on screen
