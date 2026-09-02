@@ -19414,9 +19414,13 @@ const ForgeScene=(function(){
     const hx=1188, hy=162;
     ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(1060,118);ctx.lineTo(1316,118);ctx.moveTo(1060,198);ctx.lineTo(1316,198);ctx.stroke();
     ctx.strokeStyle=C.brass2;ctx.lineWidth=2.5;ctx.stroke();
-    const travel=.5+.5*Math.sin(time*.0014), gx=1078+220*travel;
-    panel(gx-15,108,30,100,metalGrad(gx-15,108,30,100,'#6c746f','#303736','#101516'),C.teal3,5,1.6);
-    panel(gx-23,132,46,18,C.steel2,C.teal3,4,1.3);
+    // The scanner/print head sweeps the gantry. It passes IN FRONT of the template + atom structure on
+    // the left→right stroke (travel rising, cos>0) and BEHIND on the right→left return — so it reads as
+    // a head orbiting the build, not a flat sprite. Same head draw, two z-slots chosen by direction.
+    const th=time*.0014, travel=.5+.5*Math.sin(th), gx=1078+220*travel, movingRight=Math.cos(th)>0;
+    const drawPrintHead=()=>{ panel(gx-15,108,30,100,metalGrad(gx-15,108,30,100,'#6c746f','#303736','#101516'),C.teal3,5,1.6);
+      panel(gx-23,132,46,18,C.steel2,C.teal3,4,1.3); };
+    if(!movingRight) drawPrintHead();                       // returning: behind the build
     for(const spec of [[66,.00080,.57],[52,-.00118,.43],[39,.00162,.66]]){
       const r=spec[0],spd=spec[1],ys=spec[2];
       ctx.save();ctx.translate(hx,hy);ctx.rotate(time*spd);ctx.scale(1,ys);ctx.strokeStyle='rgba(77,238,224,.52)';ctx.lineWidth=2.3;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();
@@ -19426,6 +19430,7 @@ const ForgeScene=(function(){
     const build=(time*.00036)%1;
     for(let i=0;i<10;i++){const f=i/9;if(f>build)continue;ctx.save();ctx.translate(hx,hy+29-f*58);ctx.scale(.50+.5*f,.16);ctx.strokeStyle='rgba(91,246,231,'+(.13+.55*f)+')';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,39,39,0,0,Math.PI*2);ctx.stroke();ctx.restore();}
     drawHoloTemplateWire(hx,hy,1.04,time,.96);
+    if(movingRight) drawPrintHead();                        // advancing: in front of the build
     const scanX=hx-40+80*((time*.00082)%1);ctx.strokeStyle='rgba(211,255,252,.72)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(scanX,hy-36);ctx.lineTo(scanX,hy+36);ctx.stroke();
     panel(1128,204,120,10,C.steel3,C.brass3,4,1.2);
   }
@@ -19443,12 +19448,25 @@ const ForgeScene=(function(){
     ctx.strokeStyle=C.brass3;ctx.lineWidth=3;ctx.beginPath();ctx.arc(cx,cy,82,0,Math.PI*2);ctx.stroke();
     const bed=ctx.createLinearGradient(cx,cy+18,cx,cy+92);bed.addColorStop(0,'rgba(255,209,111,.08)');bed.addColorStop(.38,'rgba(239,120,34,'+(.48*pulse)+')');bed.addColorStop(.82,'rgba(179,58,12,'+(.22*pulse)+')');bed.addColorStop(1,'rgba(90,24,5,.1)');ctx.fillStyle=bed;ctx.beginPath();ctx.ellipse(cx,cy+44,74,28,0,0,Math.PI*2);ctx.fill();
   }
+  // The gem in the anvil socket is the player's SEATED Forge Anvil core (forgeAnvil), drawn in that
+  // core's own hue. With nothing seated it reads as a dim empty socket — a cue to carve + seat one.
   function drawAnvilCoreAsset(x,y,s,time){s=s||36;time=time||0;
+    const seated=(typeof forgeAnvil!=='undefined')&&forgeAnvil;
+    let hi='#d6f4ee', glow='#2fd0ac', mid='#316b70', haloRGB='74,228,216';
+    if(seated){ const hue=(typeof CORE_HUES!=='undefined'&&CORE_HUES[seated.hueIdx||0])||null;
+      if(hue){ const g='#'+((hue.glow>>>0)).toString(16).padStart(6,'0').slice(-6), b='#'+((hue.base>>>0)).toString(16).padStart(6,'0').slice(-6);
+        hi=lighten(g,.45); glow=g; mid=b; const n=hue.glow>>>0; haloRGB=((n>>16)&255)+','+((n>>8)&255)+','+(n&255); } }
     ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(time*.0012)*.03);
-    const halo=ctx.createRadialGradient(0,0,2,0,0,s*1.55);halo.addColorStop(0,'rgba(74,228,216,.18)');halo.addColorStop(1,'rgba(74,228,216,0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(0,0,s*1.55,0,Math.PI*2);ctx.fill();
+    const halo=ctx.createRadialGradient(0,0,2,0,0,s*1.55);halo.addColorStop(0,'rgba('+haloRGB+','+(seated?.26:.08)+')');halo.addColorStop(1,'rgba('+haloRGB+',0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(0,0,s*1.55,0,Math.PI*2);ctx.fill();
     const p=new Path2D();p.moveTo(0,-s);p.lineTo(s*.62,-s*.34);p.lineTo(s*.48,s*.58);p.lineTo(0,s);p.lineTo(-s*.48,s*.58);p.lineTo(-s*.62,-s*.34);p.closePath();
-    const g=ctx.createLinearGradient(-s,-s,s,s);g.addColorStop(0,'#d6f4ee');g.addColorStop(.18,'#6acbc4');g.addColorStop(.55,'#316b70');g.addColorStop(1,'#17242b');fillStroke(p,g,C.brass1,2.2);
-    ctx.strokeStyle='rgba(226,255,249,.35)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,-s);ctx.lineTo(0,s);ctx.moveTo(-s*.58,-s*.3);ctx.lineTo(0,0);ctx.lineTo(s*.58,-s*.3);ctx.stroke();ctx.restore();
+    if(seated){
+      const g=ctx.createLinearGradient(-s,-s,s,s);g.addColorStop(0,hi);g.addColorStop(.35,glow);g.addColorStop(.7,mid);g.addColorStop(1,'#141a1e');fillStroke(p,g,C.brass1,2.2);
+      ctx.strokeStyle='rgba(255,255,255,.32)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,-s);ctx.lineTo(0,s);ctx.moveTo(-s*.58,-s*.3);ctx.lineTo(0,0);ctx.lineTo(s*.58,-s*.3);ctx.stroke();
+    } else {
+      ctx.fillStyle='rgba(18,28,32,.6)';ctx.fill(p);
+      ctx.setLineDash([4,4]);ctx.strokeStyle='rgba(120,150,150,.55)';ctx.lineWidth=1.5;ctx.stroke(p);ctx.setLineDash([]);
+    }
+    ctx.restore();
   }
   function drawAnvilBase(time){
     const cx=800;
@@ -19458,14 +19476,16 @@ const ForgeScene=(function(){
     for(const x of [676,724,876,924]) bolt(x,520,2.8);
     const saddle=new Path2D();saddle.moveTo(708,540);saddle.lineTo(892,540);saddle.lineTo(868,565);saddle.lineTo(732,565);saddle.closePath();
     fillStroke(saddle,metalGrad(708,540,184,25,'#767d78','#3c4342','#141819'),C.brass3,3);
+    // The flat anvil body/plinth is drawn HERE (behind the collar + buttresses) so the decorative
+    // core-holding elements sit in front of it, not the reverse.
+    const body=new Path2D();body.moveTo(694,565);body.lineTo(906,565);body.lineTo(883,650);body.lineTo(717,650);body.closePath();
+    fillStroke(body,metalGrad(694,565,212,85,'#636a67','#303637','#101516'),C.brass2,3);
     const collarOuter=new Path2D();collarOuter.moveTo(cx,520);collarOuter.lineTo(cx+55,544);collarOuter.lineTo(cx+46,591);collarOuter.lineTo(cx,615);collarOuter.lineTo(cx-46,591);collarOuter.lineTo(cx-55,544);collarOuter.closePath();
     fillStroke(collarOuter,metalGrad(cx-55,520,110,95,'#686f6b','#2f3535','#0f1415'),C.brass1,4);
     const collarInner=new Path2D();collarInner.moveTo(cx,531);collarInner.lineTo(cx+38,548);collarInner.lineTo(cx+31,582);collarInner.lineTo(cx,600);collarInner.lineTo(cx-31,582);collarInner.lineTo(cx-38,548);collarInner.closePath();
     fillStroke(collarInner,'#0a0d0e','#394140',3);
     for(let i=0;i<6;i++){const a=-Math.PI/2+i*Math.PI/3; bolt(cx+Math.cos(a)*46,558+Math.sin(a)*30,2.7);}
     for(const side of [-1,1]){ctx.save();ctx.translate(cx+side*70,566);ctx.scale(side,1);const buttress=new Path2D();buttress.moveTo(-8,-18);buttress.lineTo(44,-18);buttress.lineTo(69,6);buttress.lineTo(44,36);buttress.lineTo(14,36);buttress.lineTo(-8,16);buttress.closePath();fillStroke(buttress,metalGrad(-8,-18,77,54,'#707773','#363d3d','#111517'),C.brass2,3);bolt(12,0,2.4);bolt(48,10,2.4);ctx.restore();}
-    const body=new Path2D();body.moveTo(694,565);body.lineTo(906,565);body.lineTo(883,650);body.lineTo(717,650);body.closePath();
-    fillStroke(body,metalGrad(694,565,212,85,'#636a67','#303637','#101516'),C.brass2,3);
     panel(668,628,264,54,metalGrad(668,628,264,54,'#505754','#272e2f','#0e1314'),hovered==='manage'?C.amber0:C.brass3,8,3);
     panel(724,670,152,36,C.steel3,C.brass2,6,2);
     panel(700,590,42,22,C.steel3,C.brass3,5,2);panel(858,590,42,22,C.steel3,C.brass3,5,2);
@@ -19473,16 +19493,23 @@ const ForgeScene=(function(){
     ctx.strokeStyle=C.brass1;ctx.lineWidth=7;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(cx-35,582);ctx.lineTo(cx-15,567);ctx.moveTo(cx+35,582);ctx.lineTo(cx+15,567);ctx.stroke();
     labelPlate(715,686,170,'ANVIL CORE ▸ PARTS',hovered==='manage'?C.amber0:C.brass2,17);
   }
-  function drawCoreReadouts(){
-    const o=ORES[selectedOre]||{tier:'—',name:'—'}, t=TEMPLATES[selectedTemplate]||{name:'—',sub:''};
-    panel(330,304,220,90,C.steel2,C.brass2,8,2);
-    ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText('ORE GRADE',350,328);
-    ctx.fillStyle=C.amber0;ctx.font='30px Impact, Arial';ctx.fillText(o.tier,350,360);
-    ctx.fillStyle='#8f988e';ctx.font='16px Arial';ctx.fillText(o.name+(o.owned===false?'  (sealed)':'  ·  '+(o.count||0)+' in stores'),350,384);
-    panel(1050,304,220,90,C.steel2,C.brass2,8,2);
-    ctx.fillStyle='#d8caa6';ctx.font='14px Arial';ctx.textAlign='right';ctx.fillText('FORGE TEMPLATE',1250,328);
-    ctx.fillStyle=C.teal0;ctx.font='26px Impact, Arial';ctx.fillText(t.name,1250,360);
-    ctx.fillStyle='#8f988e';ctx.font='13px Arial';ctx.fillText((t.sub||'').slice(0,34),1250,384);
+  // The two readout panels sit LOW and EITHER SIDE of the core (symmetric about the core centre x=800),
+  // not crammed in the middle. Wide enough to read at a glance.
+  function drawOreReadout(){
+    const o=ORES[selectedOre]||{tier:'—',name:'—',count:0,owned:true};
+    panel(250,690,300,74,C.steel2,C.brass2,8,2);
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';
+    ctx.fillStyle='#8d927f';ctx.font='12px Arial';ctx.fillText('ORE GRADE',272,714);
+    ctx.fillStyle=C.amber0;ctx.font='26px Impact, Arial';ctx.fillText(o.tier+'  •  '+o.name,272,744);
+    ctx.fillStyle='#8f988e';ctx.font='13px Arial';ctx.fillText(o.owned===false?'sealed — recover its forge':(o.count||0)+' in stores',272,760);
+  }
+  function drawTemplateReadout(){
+    const t=TEMPLATES[selectedTemplate]||{name:'—',sub:''};
+    panel(1050,690,300,74,C.steel2,C.brass2,8,2);
+    ctx.textAlign='right';ctx.textBaseline='alphabetic';
+    ctx.fillStyle='#8d927f';ctx.font='12px Arial';ctx.fillText('FORGE TEMPLATE',1328,714);
+    ctx.fillStyle=C.teal0;ctx.font='22px Impact, Arial';ctx.fillText(t.name,1328,742);
+    ctx.fillStyle='#8f988e';ctx.font='12px Arial';ctx.fillText((t.sub||'').slice(0,40),1328,759);
   }
   function cubicPoint(p0,p1,p2,p3,t){const u=1-t,tt=t*t,uu=u*u;return{x:uu*u*p0.x+3*uu*t*p1.x+3*u*tt*p2.x+tt*t*p3.x,y:uu*u*p0.y+3*uu*t*p1.y+3*u*tt*p2.y+tt*t*p3.y};}
   function leftConveyorPoint(t){return cubicPoint({x:470,y:235},{x:150,y:300},{x:95,y:515},{x:555,y:585},t);}
@@ -19501,24 +19528,22 @@ const ForgeScene=(function(){
   function drawArrowButton(x,y,dir,id){const hot=hovered===id,p=chamferPath(x-25,y-25,50,50,8);fillStroke(p,hot?'#3a2c1d':'#171c1c',hot?C.amber1:C.brass2,2);ctx.fillStyle=hot?C.amber0:'#d4b87b';ctx.beginPath();if(dir<0){ctx.moveTo(x+8,y-12);ctx.lineTo(x-10,y);ctx.lineTo(x+8,y+12);}else{ctx.moveTo(x-8,y-12);ctx.lineTo(x+10,y);ctx.lineTo(x-8,y+12);}ctx.closePath();ctx.fill();}
   function drawFeedArms(){ctx.strokeStyle='#161a19';ctx.lineWidth=14;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(555,585);ctx.lineTo(695,515);ctx.moveTo(1045,585);ctx.lineTo(905,515);ctx.stroke();ctx.strokeStyle=C.brass2;ctx.lineWidth=5;ctx.stroke();for(const xy of [[625,550],[975,550]]){ctx.fillStyle=C.brass2;ctx.beginPath();ctx.arc(xy[0],xy[1],11,0,Math.PI*2);ctx.fill();ctx.strokeStyle=C.brass0;ctx.lineWidth=2;ctx.stroke();bolt(xy[0],xy[1],3);}}
   function drawOreConveyor(){
-    labelPlate(118,525,470,'ORE GRADE SELECTOR',C.brass2,19);
     drawPerspectiveTrack(leftConveyorPoint);
     const d=shortestDelta(oreVisual,selectedOre,ORES.length);oreVisual+=d*.14;
     const vis=[];for(let i=0;i<ORES.length;i++){const rel=shortestDelta(oreVisual,i,ORES.length);if(rel<-.35||rel>4.35)continue;const p=slotForRel(leftConveyorPoint,rel);if(p)vis.push({i:i,rel:rel,p:p});}
     vis.sort((a,b)=>b.rel-a.rel);
     for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.amber0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();if(!ORES[v.i].owned){ctx.save();ctx.globalAlpha=.45;}oreRock(v.p.x,v.p.y,38*v.p.s,ORES[v.i],sel);if(!ORES[v.i].owned)ctx.restore();if(sel){ctx.fillStyle='#f2c77c';ctx.font='15px Impact,Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText(ORES[v.i].tier,v.p.x,v.p.y+62);}}
     drawArrowButton(438,222,-1,'orePrev');drawArrowButton(585,587,1,'oreNext');
-    // (the ORE GRADE readout beside the conveyor already names the selection — no duplicate panel here)
+    drawOreReadout();
   }
   function drawTemplateConveyor(){
-    labelPlate(1012,525,470,'FORGE TEMPLATE SELECTOR',C.brass2,19);
     drawPerspectiveTrack(rightConveyorPoint);
     const d=shortestDelta(templateVisual,selectedTemplate,TEMPLATES.length);templateVisual+=d*.14;
     const vis=[];for(let i=0;i<TEMPLATES.length;i++){const rel=shortestDelta(templateVisual,i,TEMPLATES.length);if(rel<-.35||rel>4.35)continue;const p=slotForRel(rightConveyorPoint,rel);if(p)vis.push({i:i,rel:rel,p:p});}
     vis.sort((a,b)=>b.rel-a.rel);
     for(const v of vis){const sel=Math.abs(v.rel)<.38,r=25*v.p.s;ctx.fillStyle='#0c1010';ctx.beginPath();ctx.ellipse(v.p.x,v.p.y+28*v.p.s,r*1.15,r*.34,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=sel?C.teal0:C.brass1;ctx.lineWidth=sel?5:Math.max(1.6,3*v.p.s);ctx.stroke();drawTemplateIcon(v.p.x,v.p.y,46*v.p.s,TEMPLATES[v.i],sel);}
     drawArrowButton(1015,587,-1,'templatePrev');drawArrowButton(1162,222,1,'templateNext');
-    // (the FORGE TEMPLATE readout beside the conveyor already names the selection — no duplicate panel here)
+    drawTemplateReadout();
   }
   function drawBeginForgeButton(){
     const x=670,y=724,w=260,h=83,hot=hovered==='begin',p=chamferPath(x,y,w,h,13);shadow(p,5,6,.3);
@@ -19531,7 +19556,7 @@ const ForgeScene=(function(){
   function drawFooter(){ctx.fillStyle='rgba(4,7,8,.92)';ctx.fillRect(0,875,W,25);ctx.fillStyle='#c7b485';ctx.font='12px Arial';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(message,16,888);}
   function drawScene(time){ time=time||0; refreshData(); ctx.clearRect(0,0,W,H);
     drawBackWall(); drawUpperOriginMachines(time); drawCentralForgeThroat(time); drawFeedArms(); drawAnvilBase(time);
-    drawCoreReadouts(); drawOreConveyor(); drawTemplateConveyor(); drawBeginForgeButton(); drawFooter(); }
+    drawOreConveyor(); drawTemplateConveyor(); drawBeginForgeButton(); drawFooter(); }
 
   const HOVER_ZONES=[{id:'orePrev',x:413,y:197,w:50,h:50},{id:'oreNext',x:560,y:562,w:50,h:50},{id:'templatePrev',x:990,y:562,w:50,h:50},{id:'templateNext',x:1137,y:197,w:50,h:50},{id:'begin',x:670,y:724,w:260,h:83},{id:'manage',x:668,y:626,w:264,h:82}];
   function evtLogical(e){const r=canvas.getBoundingClientRect();if(!r.width)return{x:-1,y:-1};return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
