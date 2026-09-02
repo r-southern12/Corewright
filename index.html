@@ -19361,10 +19361,9 @@ const ForgeScene=(function(){
   // fitted to the current grid. Loops cleanly off `time`.
   function drawOreClaw(time,cols,cw,ch,gxGap,gyGap,rx,ry){
     if(!ORES.length) return;
+    // railY/railX2 are the carriage's PATH only — the rail members themselves are not drawn (they read
+    // as stray horizontal/vertical lines). The carriage still parks and travels along this path.
     const railY=ry+2*(ch+gyGap)+8, railX2=rx+cols*(cw+gxGap)-gxGap-6;
-    // the L-rail the carriage runs on
-    ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(rx-4,railY);ctx.lineTo(railX2,railY);ctx.moveTo(railX2,ry-6);ctx.lineTo(railX2,railY);ctx.stroke();
-    ctx.strokeStyle=C.brass2;ctx.lineWidth=2.4;ctx.stroke();
     const selCol=selectedOre%cols, selRow=Math.floor(selectedOre/cols);
     const targetX=rx+selCol*(cw+gxGap)+cw/2, targetY=ry+selRow*(ch+gyGap)+ch/2;
     const parkX=railX2-22, parkY=railY, cycle=(time*.00030)%1;
