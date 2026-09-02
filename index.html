@@ -19397,6 +19397,9 @@ const ForgeScene=(function(){
     const hx=1188, hy=162;
     ctx.strokeStyle='#151919';ctx.lineWidth=8;ctx.beginPath();ctx.moveTo(1060,118);ctx.lineTo(1316,118);ctx.moveTo(1060,198);ctx.lineTo(1316,198);ctx.stroke();
     ctx.strokeStyle=C.brass2;ctx.lineWidth=2.5;ctx.stroke();
+    // The white scan line sweeps BEHIND everything — drawn first, so the print head, template and atom
+    // rings all sit in front of it.
+    const scanX=hx-40+80*((time*.00082)%1);ctx.strokeStyle='rgba(211,255,252,.72)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(scanX,hy-36);ctx.lineTo(scanX,hy+36);ctx.stroke();
     // The scanner/print head sweeps the gantry. It passes IN FRONT of the template + atom structure on
     // the left→right stroke (travel rising, cos>0) and BEHIND on the right→left return — so it reads as
     // a head orbiting the build, not a flat sprite. Same head draw, two z-slots chosen by direction.
@@ -19414,7 +19417,6 @@ const ForgeScene=(function(){
     for(let i=0;i<10;i++){const f=i/9;if(f>build)continue;ctx.save();ctx.translate(hx,hy+29-f*58);ctx.scale(.50+.5*f,.16);ctx.strokeStyle='rgba(91,246,231,'+(.13+.55*f)+')';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,39,39,0,0,Math.PI*2);ctx.stroke();ctx.restore();}
     drawHoloTemplateWire(hx,hy,1.04,time,.96);
     if(movingRight) drawPrintHead();                        // advancing: in front of the build
-    const scanX=hx-40+80*((time*.00082)%1);ctx.strokeStyle='rgba(211,255,252,.72)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(scanX,hy-36);ctx.lineTo(scanX,hy+36);ctx.stroke();
     panel(1128,204,120,10,C.steel3,C.brass3,4,1.2);
   }
   function drawCentralForgeThroat(time){
