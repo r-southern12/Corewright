@@ -19355,12 +19355,51 @@ const ForgeScene=(function(){
     ctx.restore();
   }
 
+  // THE RETRIEVAL BOT — a little pick-and-place gantry head that glides along the top lane of the rack
+  // to the SELECTED ore, dips a telescoping arm down, grabs it (the ore rides up in its claw), then
+  // returns home and repeats. No rails drawn — the bot is the whole element. Loops cleanly off `time`.
+  function drawOreBot(time,cols,cw,ch,gxGap,gyGap,rx,ry){
+    if(!ORES.length) return;
+    const topY=ry-11;                                   // glide lane, just above the grid
+    const gridW=cols*(cw+gxGap)-gxGap, homeX=rx+gridW-6;
+    const selCol=selectedOre%cols, selRow=Math.floor(selectedOre/cols);
+    const targetX=rx+selCol*(cw+gxGap)+cw/2, cellY=ry+selRow*(ch+gyGap)+ch/2;
+    const reach=cellY-(topY+8);
+    const cyc=(time*.00035)%1;
+    let hx=homeX, armLen=0, grab=0;                     // grab 0..1 how closed the claw is
+    if(cyc<.30){ hx=lerp(homeX,targetX,cyc/.30); }
+    else if(cyc<.48){ hx=targetX; const t=(cyc-.30)/.18; armLen=reach*t; grab=Math.max(0,(t-.7)/.3); }
+    else if(cyc<.60){ hx=targetX; armLen=reach; grab=1; }
+    else if(cyc<.78){ hx=targetX; const t=(cyc-.60)/.18; armLen=reach*(1-t); grab=1-Math.min(1,t/.4); }
+    else { hx=lerp(targetX,homeX,(cyc-.78)/.22); }
+    const armEndY=topY+8+armLen;
+    ctx.save();
+    // arm shaft (only when extended)
+    if(armLen>1){
+      ctx.strokeStyle=C.steel1;ctx.lineWidth=5;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(hx,topY+7);ctx.lineTo(hx,armEndY);ctx.stroke();
+      ctx.strokeStyle=C.brass2;ctx.lineWidth=2;ctx.stroke();
+      // claw prongs — open when reaching, closed when holding
+      const spread=6-4*grab;
+      ctx.strokeStyle=C.brass1;ctx.lineWidth=2.4;ctx.lineCap='round';ctx.beginPath();
+      ctx.moveTo(hx-2,armEndY-2);ctx.lineTo(hx-spread,armEndY+7);
+      ctx.moveTo(hx+2,armEndY-2);ctx.lineTo(hx+spread,armEndY+7);ctx.stroke();
+      // the grabbed ore rides in the claw while held
+      if(grab>0.5) oreMiniRock(hx,armEndY+4,7.5,time,.3);
+    }
+    // body: a chamfered head with an amber sensor eye + a mount tab to the rack ceiling
+    ctx.strokeStyle=C.steel2;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(hx,topY-9);ctx.lineTo(hx,topY-4);ctx.stroke();  // short mount tab
+    const head=chamferPath(hx-13,topY-8,26,16,4);shadow(head,2,3,.3);fillStroke(head,metalGrad(hx-13,topY-8,26,16,'#6b736f','#333a39','#12181a'),C.amber2,4,1.6);
+    bolt(hx-8,topY,2);bolt(hx+8,topY,2);
+    const eye=ctx.createRadialGradient(hx-1,topY-1,0,hx,topY,4.5);eye.addColorStop(0,'#fff0c1');eye.addColorStop(.5,C.amber1);eye.addColorStop(1,C.amber3);
+    ctx.fillStyle=eye;ctx.beginPath();ctx.arc(hx,topY,3.4,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
   function drawUpperOriginMachines(time){
     smallMachineLabel(272,76,286,'MECHANICAL ORE RETRIEVAL RACK');
     panel(268,104,290,106,metalGrad(268,104,290,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
-    // Clean ore grid filling the rack (the rails / travelling claw / delivery snout were removed — they
-    // read as stray line clutter). The grid IS the selector; the selected cell lights amber.
-    const cols=5, cw=46, ch=30, gxGap=8, gyGap=10, rx=282, ry=122;
+    // Ore grid filling the rack (the stray rail LINES + delivery snout are gone). A top lane is kept
+    // clear for the retrieval bot, which glides to the selected ore and dips its arm to grab it.
+    const cols=5, cw=46, ch=30, gxGap=8, gyGap=8, rx=282, ry=126;
     for(let i=0;i<ORES.length;i++){
       const col=i%cols,row=Math.floor(i/cols),x=rx+col*(cw+gxGap),y=ry+row*(ch+gyGap),sel=i===selectedOre;
       panel(x,y,cw,ch,sel?'#302718':'#151919',sel?C.amber0:C.brass3,5,sel?2.0:1.1);
@@ -19368,6 +19407,7 @@ const ForgeScene=(function(){
       oreRock(x+cw/2,y+ch/2,sel?12:10,ORES[i],sel);
       if(!ORES[i].owned)ctx.restore();
     }
+    drawOreBot(time, cols, cw, ch, gxGap, gyGap, rx, ry);
 
     smallMachineLabel(1042,76,292,'GANTRY / ORBITAL TEMPLATE PRINTER',C.teal3);
     panel(1038,104,296,106,metalGrad(1038,104,296,106,'#59615e','#272e2e','#101415'),C.brass2,10,2.5);
