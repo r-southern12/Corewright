@@ -12777,9 +12777,15 @@ function spawnEnemy(){
     if (Math.hypot(x-player.x,y-player.y)<9) continue;     // never right on top of the player
     if (lab.placed && x>lab.x-3 && x<lab.x+LAB_W+3 && y>lab.y-3 && y<lab.y+LAB_H+2) continue;   // never inside/at the ship
     const mult=1+(tier-1)*0.24;                            // same kind, nastier deeper
-    enemies.push({kind,x:x+0.5,y:y+0.9,vx:0,vy:0,
+    const en={kind,x:x+0.5,y:y+0.9,vx:0,vy:0,
       hp:Math.round(T.hp*mult), hpMax:Math.round(T.hp*mult), dmg:Math.round(T.dmg*mult),
-      hurtT:0, hopT:Math.random()*2, fireT:(T.cd||0)*Math.random(), bore:0, wob:Math.random()*6.28});
+      hurtT:0, hopT:Math.random()*2, fireT:(T.cd||0)*Math.random(), bore:0, wob:Math.random()*6.28};
+    if (kind==='grub'){                                    // one of five crawling grub variants (0..4); variant 1 is the surface-hugging snail
+      en.grubVariant=Math.floor(Math.random()*5);
+      en.grubAttackP=-1; en.grubGrounded=false; en.grubCrawl=0; en.grubCd=0.6+Math.random()*1.2;
+      en.grubPhase=Math.random()*6.28; en.cn=null;         // cn = snail surface-cling normal (set on first snail step)
+    }
+    enemies.push(en);
     return;
   }
 }
@@ -12832,6 +12838,74 @@ function enemyFire(e,T,dxp,dyp){
   const d=Math.hypot(dxp,dyp)||1;
   projectiles.push({x:e.x,y:e.y-0.3,vx:dxp/d*0.30,vy:dyp/d*0.30-0.05,life:2.4,hostile:true,dmg:Math.round(T.fireDmg*(1+(depthTier()-1)*0.24))});
 }
+/* THE GRUB FAMILY — five variants of kind 'grub', selected by e.grubVariant (0..4). They CRAWL
+   (caterpillar/slug), they do NOT hop as travel. An attack is a jaw wind-up→snap driven by grubAttackP
+   (0..1); at the 0.40 launch, Seam(0) and Knuckle(4) leap, the others lunge along the ground. Damage
+   stays on the shared body-contact check below, so the bite lands when the lunge connects (no double-hit).
+   Variant 1 (Geode / snail) hugs surfaces instead of falling — see snailStep. */
+const GRUB_ATK_DUR=0.7;
+function grubStep(e,T,dxp,dyp,distp,seen,dt){
+  const v=e.grubVariant||0, jumpV=(v===0||v===4);
+  e.grubCd=Math.max(0,(e.grubCd||0)-dt);
+  // advance an active attack; fire the one-time lunge at the 0.40 launch crossing
+  if (e.grubAttackP>=0){
+    const prev=e.grubAttackP; e.grubAttackP=Math.min(1,e.grubAttackP+dt/GRUB_ATK_DUR);
+    if (prev<0.40 && e.grubAttackP>=0.40 && v!==1){       // the snail bites in place; the rest lunge
+      const dir=Math.sign(dxp)||1;
+      if (jumpV){ e.vy=-0.34; e.vx=dir*T.speed*1.5; } else { e.vx=dir*T.speed*1.3; }
+    }
+    if (e.grubAttackP>=1){ e.grubAttackP=-1; e.grubCd=1.5+Math.random()*1.1; }
+  }
+  // start an attack when close, seen and off cooldown
+  if (e.grubAttackP<0 && seen && e.grubCd<=0 && distp<1.9) e.grubAttackP=0;
+  if (v===1){ snailStep(e,T,dxp,dyp,distp,seen,dt); return; }
+  // ground crawl (0,2,3,4): ease into a crawl toward the player; gravity + walls + ledges via moveGround
+  const attacking=e.grubAttackP>=0;
+  if (solid(tileAt(e.x,e.y+0.14)) && !attacking){
+    const want=seen?Math.sign(dxp)*T.speed:0;
+    e.vx += (want-e.vx)*0.22;                              // continuous crawl, never the old hop impulse
+  }
+  const g=moveGround(e,T);                                 // grubs have no climb → they stop at walls / fall off ledges
+  e.grubGrounded=g;
+  e.grubCrawl=(g&&!attacking)?Math.min(1,Math.abs(e.vx)/T.speed):0;
+}
+/* THE SNAIL (grubVariant 1) — hugs the surface it is on instead of falling. It follows the terrain with a
+   fixed hand rule: at a ledge it wraps the corner and heads DOWN the wall toward the player (slowly); at an
+   inside corner it turns onto the new face. If it reaches a CEILING above the player within 3 tiles it lets
+   go and drops onto them; beyond 3 tiles a ceiling doesn't trigger the drop. cn = the cling normal (unit
+   vector pointing from the snail INTO its surface): (0,1)=floor, (0,-1)=ceiling, (±1,0)=walls. */
+function snailStep(e,T,dxp,dyp,distp,seen,dt){
+  const S=T.speed*0.4;                                     // deliberately slow
+  const cell=(ax,ay)=>solid(tileAt(ax+0.5,ay+0.5));
+  const cw=d=>({x:-d.y,y:d.x}), ccw=d=>({x:d.y,y:-d.x});   // screen y-down rotations
+  if (!e.cn){                                              // land on the floor beneath the spawn cell
+    e.cn={x:0,y:1}; e.tX=Math.floor(e.x); e.tY=Math.floor(e.y);
+    if (!cell(e.tX,e.tY+1)){ for(let k=0;k<8&&!cell(e.tX,e.tY+1);k++) e.tY++; }
+  }
+  // CEILING DROP: clinging above the player, roughly overhead, within 3 tiles → let go and fall on them
+  if (!e.snailDrop && e.cn.y<0 && seen && dyp>0.2 && dyp<=3.0 && Math.abs(dxp)<1.3) e.snailDrop=true;
+  if (e.snailDrop){
+    e.vy=Math.min(0.45,(e.vy||0)+0.035); let ny=e.y+e.vy;
+    if (e.vy>0 && solid(tileAt(e.x,ny+0.05))){ ny=Math.floor(ny+0.05)-0.051; e.vy=0; e.snailDrop=false;
+      e.cn={x:0,y:1}; e.tX=Math.floor(e.x); e.tY=Math.floor(e.y); }
+    e.y=ny; e.grubGrounded=false; e.grubCrawl=0; return;
+  }
+  e.grubGrounded=true; e.grubCrawl=1;
+  if (e.grubAttackP>=0) return;                            // hold on the surface through the bite
+  const n=e.cn;
+  const tcx=e.tX+0.5+n.x*0.45, tcy=e.tY+0.5+n.y*0.45;      // sit hugged against the surface
+  const ddx=tcx-e.x, ddy=tcy-e.y, dd=Math.hypot(ddx,ddy);
+  if (dd>S){ e.x+=ddx/dd*S; e.y+=ddy/dd*S; return; }
+  e.x=tcx; e.y=tcy;
+  // at the cell centre: pick the tangent toward the player, then wall-follow to turn the corner
+  const p1=ccw(n), p2=cw(n);
+  const h=((p1.x*dxp+p1.y*dyp)>=(p2.x*dxp+p2.y*dyp))?p1:p2;
+  const aheadSolid=cell(e.tX+h.x,e.tY+h.y);
+  const surfAhead=cell(e.tX+h.x+n.x,e.tY+h.y+n.y);
+  if (aheadSolid){ e.cn={x:h.x,y:h.y}; }                   // concave: the wall ahead becomes the new surface
+  else if (!surfAhead){ e.tX+=h.x; e.tY+=h.y; e.cn={x:-h.x,y:-h.y}; }  // convex ledge: wrap around it
+  else { e.tX+=h.x; e.tY+=h.y; }                           // straight along the surface
+}
 function killEnemy(e,T,i){
   for (let p=0;p<10;p++)
     particles.push({x:e.x,y:e.y-0.3,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.15,life:24,col:T.col});
@@ -12852,7 +12926,9 @@ function stepEnemies(dt){
     const seen=distp < (T.ai==='range'||T.ai==='bore'?24:13);
     e.hurtT=Math.max(0,e.hurtT-dt);
 
-    if (T.ai==='fly'){
+    if (e.kind==='grub'){
+      grubStep(e,T,dxp,dyp,distp,seen,dt);                 // five crawling variants; snail (v1) hugs surfaces
+    } else if (T.ai==='fly'){
       if (seen){ const s=T.speed, cap=s*2.4, w=0.8+0.4*Math.sin(e.wob+=dt*5);
         e.vx=Math.max(-cap,Math.min(cap, e.vx+Math.sign(dxp)*s*0.35*w));
         e.vy=Math.max(-cap,Math.min(cap, e.vy+Math.sign(dyp)*s*0.35*w));
@@ -12892,15 +12968,215 @@ function stepEnemies(dt){
   }
 }
 
+/* ==== GRUB PACK — five crawling grub variants (imported renderer, CorewrightGrubPack).
+   Pure Canvas2D: no DOM/images/AI/state writes. Reads e.grubVariant/grubGrounded/grubCrawl/
+   grubAttackP/grubMouth/grubCompress and T.col/T.eye/T.r. Created ONCE as drawGrub below.
+   Grubs deliberately do NOT flash white on hit (per the pack) — the shared HP bar shows damage. */
+function createCorewrightGrubRenderer(ctx, getTileSize, getPlayerX) {
+  const palettes = new WeakMap();
+  let P, eyeColour, fx = 1;
+  const clamp = v => Math.max(0, Math.min(1,v));
+  function mix(hex,to,k) {
+   const a=parseInt(hex.slice(1),16),b=parseInt(to.slice(1),16);
+   return 'rgb('+Math.round((a>>16)*(1-k)+(b>>16)*k)+','+Math.round((a>>8&255)*(1-k)+(b>>8&255)*k)+','+Math.round((a&255)*(1-k)+(b&255)*k)+')';
+  }
+  function palette(T) {
+   let p=palettes.get(T);
+   if(!p || p.base!==T.col) {
+    if(!/^#[0-9a-f]{6}$/i.test(T.col))throw new TypeError('Grub T.col must be a six-digit hex colour.');
+    p={base:T.col,deep:mix(T.col,'#000000',.83),dark:mix(T.col,'#000000',.59),shade:mix(T.col,'#000000',.32),light:mix(T.col,'#ffffff',.37),rim:mix(T.col,'#ffffff',.72),glow:mix(T.col,'#ffffff',.50)};
+    palettes.set(T,p);
+   }
+   return p;
+  }
+ function fill(c){ctx.fillStyle=c;ctx.fill();}
+ function stroke(c,w){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.stroke();}
+ let gait=0,phase=0,variant=0,mouth=0;
+ function wx(x,y){
+   if(variant===1)return x+gait*.075*Math.sin(phase-x*3)*Math.exp(y*2);
+   if(variant===2)return 1+(x-1)*(1-gait*.16*(.5+.5*Math.sin(phase)));
+   if(variant===3)return x+gait*.095*Math.sin(phase-x*2.8);
+   if(variant===4)return 1+(x-1)*(1-gait*.12*(.5+.5*Math.sin(phase)));
+   return x+gait*.13*Math.sin(phase-x*2.6);
+ }
+ function wy(x,y){
+   if(variant===1)return y*(1+gait*.018*Math.sin(phase-x*3));
+   if(variant===2)return y*(1+gait*.52*(.5+.5*Math.sin(phase))*Math.max(0,1-x*x));
+   if(variant===3)return y*(1+gait*.14*Math.sin(phase-x*2.8));
+   if(variant===4)return y*(1+gait*.13*(.5+.5*Math.sin(phase)));
+   return y*(1+gait*.22*Math.sin(phase-x*2.6));
+ }
+ function M(x,y){ctx.moveTo(wx(x,y),wy(x,y));}
+ function L(x,y){ctx.lineTo(wx(x,y),wy(x,y));}
+ function Q(x,y,a,b){ctx.quadraticCurveTo(wx(x,y),wy(x,y),wx(a,b),wy(a,b));}
+ function B(x,y,a,b,c,d){ctx.bezierCurveTo(wx(x,y),wy(x,y),wx(a,b),wy(a,b),wx(c,d),wy(c,d));}
+ function E(x,y,rx,ry,rot,a,b){ctx.ellipse(wx(x,y),wy(x,y),rx,ry*(1+gait*.08*Math.sin(phase-x*2.6)),rot,a,b);}
+ function sole(t,slug){
+   ctx.beginPath();M(-1.16,-.18);Q(-.30,-.37,.85,-.20);L(.87,-.04);
+   for(let i=8;i>=0;i--){const x=-1.14+i*.24;L(x,-.025-gait*.035*(1+Math.sin(phase-x*3.8)));}
+   ctx.closePath();fill(P.shade);
+   ctx.beginPath();
+   for(let i=0;i<7;i++){
+     const x=-.98+i*.27,p=phase-i*.86,lift=gait*Math.max(0,Math.sin(p))*.09;
+     if(slug){M(x,-.15);Q(x+.09,-.20-lift,x+.16,-.075);}
+     else {M(x-.09,-.20);L(x+.11,-.18);L(x+.12,-.008-lift);L(x-.08,-.008-lift);ctx.closePath();}
+   }
+   if(slug)stroke(P.light,.031);else fill(P.dark);
+ }
+ function ellipse(x,y,rx,ry,c){ctx.beginPath();E(x,y,rx,ry,0,0,Math.PI*2);fill(c);}
+ function quad(x,y,w,h,c){ctx.beginPath();M(x-w,y);L(x-w*.46,y-h);L(x+w*.52,y-h*.88);L(x+w,y-h*.25);L(x+w*.42,y+h*.19);L(x-w*.67,y+h*.17);ctx.closePath();fill(c);}
+ function eye(x,y,s){
+   ctx.beginPath();M(x-s,y-s*.35);L(x+s,y-s*.8);L(x+s*.58,y+s*.53);L(x-s*.82,y+s*.28);ctx.closePath();ctx.fillStyle=eyeColour;ctx.fill();
+ }
+ function begin(e,T,ex,ey,now){
+   const r=T.r*getTileSize(); fx=Math.sign(getPlayerX()-e.x)||1;
+   ctx.save();ctx.translate(ex,ey);ctx.scale(r*fx,r);ctx.lineJoin='round';ctx.lineCap='round';
+   const attacking=Number.isFinite(e.grubAttackP)&&e.grubAttackP>=0&&e.grubAttackP<=1;
+   gait=(attacking||e.grubGrounded===false)?0:clamp(Number.isFinite(e.grubCrawl)?e.grubCrawl:Math.abs(e.vx||0)/Math.max(.001,T.speed||.09));
+   phase=now*.001*(variant===1?3.6:variant===4?4.0:5.6)+(e.grubPhase||0);
+   mouth=gait>.01?.12+.075*(1+Math.sin(now*.0035)):.08+.045*(1+Math.sin(now*.0022));
+   let compression=0;
+   if(attacking){
+     const p=e.grubAttackP;
+     if(p<.16)mouth=.12;
+     else if(p<.40){const a=(p-.16)/.24;compression=a*.9;mouth=.12+.88*a;}
+     else if(p<.70){const a=(p-.40)/.30;mouth=a<.45?1:Math.max(.025,1-(a-.45)/.12);}
+     else{const a=(p-.70)/.30;mouth=.025+.10*a;if(variant===0||variant===4)compression=Math.max(0,1-a*5);}
+   }
+   if(Number.isFinite(e.grubMouth))mouth=clamp(e.grubMouth);
+   if(Number.isFinite(e.grubCompress))compression=clamp(e.grubCompress);
+   ctx.scale(1+.13*compression,1-.16*compression);
+   sole(now*.001,variant===1||variant===3);
+   return now*.001;
+ }
+ function end(){ctx.restore();}
+ function rim(x,y,rx,ry){
+   ctx.beginPath();E(x,y,rx,ry,0,fx>0?3.48:4.60,fx>0?4.88:5.92);stroke(P.rim,.026);
+ }
+ function jaw(x,y,a){
+   y=Math.min(y,-.36);a=mouth;
+   const px=wx(x-.14,y),py=wy(x-.14,y);
+   ctx.save();ctx.translate(px,py);
+   ctx.beginPath();ctx.ellipse(.06,0,.19,.17,0,0,Math.PI*2);fill(P.deep);
+   ctx.save();ctx.rotate(-.12-a*.73);
+   ctx.beginPath();ctx.moveTo(-.10,-.15);ctx.lineTo(.16,-.20);ctx.lineTo(.56,-.10);ctx.lineTo(.43,.10);ctx.lineTo(.34,-.015);ctx.lineTo(.04,.035);ctx.closePath();fill(P.base);
+   ctx.beginPath();ctx.moveTo(-.08,-.15);ctx.lineTo(.16,-.20);ctx.lineTo(.55,-.10);ctx.lineTo(.34,-.105);ctx.lineTo(.06,-.05);ctx.closePath();fill(fx>0?P.rim:P.light);
+   ctx.restore();ctx.save();ctx.translate(0,.015);ctx.rotate(.08+a*.40);
+   ctx.beginPath();ctx.moveTo(-.11,-.005);ctx.lineTo(.32,.035);ctx.lineTo(.45,-.09);ctx.lineTo(.57,.10);ctx.lineTo(.17,.18);ctx.lineTo(-.10,.12);ctx.closePath();fill(P.shade);
+   ctx.beginPath();ctx.moveTo(.02,0);ctx.lineTo(.32,.035);ctx.lineTo(.45,-.09);ctx.lineTo(.48,.015);ctx.lineTo(.31,.10);ctx.lineTo(.03,.065);ctx.closePath();fill(P.light);
+   ctx.restore();ctx.beginPath();ctx.ellipse(-.035,-.01,.083,.083,0,0,Math.PI*2);fill(P.dark);ctx.restore();
+ }
+ function drawSeamGrub(e,T,ex,ey,now){
+   const t=begin(e,T,ex,ey,now),run=Math.min(1,Math.abs(e.vx)/.12),bite=run*.6;
+   ellipse(-.10,-.27,1.04,.23,P.deep);
+   for(let i=0;i<5;i++){
+     const x=-.92+i*.38,y=-.43-Math.sin(i*.7)*.12+Math.sin(t*3-i*.9)*(.025+run*.035),rx=.29+i*.026,ry=.31+Math.sin(i*.62)*.12;
+     ellipse(x,y,rx,ry,P.dark);
+     ctx.beginPath();E(x,y-.07,rx*.94,ry*.88,0,Math.PI,Math.PI*3);fill(P.base);
+     ctx.beginPath();M(x-rx*.84,y+.02);Q(x,y+ry*.80,x+rx*.78,y+.01);Q(x,y+ry*.32,x-rx*.84,y+.02);fill(P.shade);
+     rim(x,y-.07,rx*.88,ry*.83);
+   }
+   ctx.beginPath();M(-1.08,-.42);B(-.65,-.27,-.27,-.50,.38,-.38);stroke(P.glow,.065);
+   for(let i=0;i<4;i++){ellipse(-.78+i*.34,-.37+Math.sin(i*2)*.025,.047,.046,P.rim);}
+   quad(.78,-.47,.39,.38,P.shade);
+   ctx.beginPath();M(.40,-.65);L(.73,-.90);L(1.02,-.77);L(.86,-.54);ctx.closePath();fill(fx>0?P.light:P.base);
+   jaw(1.00,-.35,bite);eye(.85,-.66,.085);
+   ctx.beginPath();M(.67,-.85);L(.65,-1.02);L(.72,-.96);stroke(P.light,.048);
+   end();
+ }
+ function drawGeodeGrub(e,T,ex,ey,now){
+   const t=begin(e,T,ex,ey,now),pulse=Math.sin(t*2.6)*.025,run=Math.min(1,Math.abs(e.vx)/.12);
+   ellipse(-.18,-.20,.86,.20,P.dark);
+   ctx.beginPath();M(-1,-.24);L(-1.12,-.82);L(-.85,-1.34);L(-.38,-1.59-pulse);L(.23,-1.44);L(.59,-1.02);L(.62,-.49);L(.22,-.18);ctx.closePath();fill(P.deep);
+   ctx.beginPath();M(-1,-.24);L(-1.12,-.82);L(-.85,-1.34);L(-.38,-1.59-pulse);L(-.43,-1.17);L(-.76,-.94);L(-.80,-.39);ctx.closePath();fill(fx>0?P.light:P.shade);
+   ctx.beginPath();M(-.38,-1.59-pulse);L(.23,-1.44);L(.59,-1.02);L(.35,-.90);L(.08,-1.14);L(-.43,-1.17);ctx.closePath();fill(P.base);
+   ctx.beginPath();M(-.80,-.39);L(-.56,-.66);L(.17,-.62);L(.35,-.90);L(.59,-1.02);L(.62,-.49);L(.22,-.18);L(-1,-.24);ctx.closePath();fill(P.shade);
+   ellipse(-.20,-.85,.42,.42,P.dark);
+   ctx.beginPath();
+   for(let i=0;i<7;i++){const a=i*Math.PI*2/7,cs=Math.cos(a),sn=Math.sin(a);M(-.20+cs*.42-sn*.10,-.86+sn*.42+cs*.10);L(-.20+cs*.17,-.86+sn*.17);L(-.20+cs*.42+sn*.10,-.86+sn*.42-cs*.10);ctx.closePath();}fill(P.base);
+   ellipse(-.20,-.86,.16+pulse,.18+pulse,P.glow);
+   ctx.beginPath();M(-.32,-.97);L(-.18,-1.04);L(-.10,-.87);L(-.23,-.74);ctx.closePath();fill(P.rim);
+   ctx.beginPath();M(-.43,-1.53);L(-.48,-1.27);L(-.32,-1.14);M(.45,-.53);L(.18,-.48);L(.08,-.31);stroke(P.glow,.035);
+   ellipse(.53+run*.06,-.34,.39,.29,P.base);
+   quad(.70+run*.11,-.35,.33,.31,P.shade);jaw(.96+run*.11,-.26,run);eye(.78+run*.11,-.55,.085);
+   ctx.beginPath();M(fx>0?-.99:.44,-.91);L(fx>0?-.81:.17,-1.30);L(-.38,-1.51);stroke(P.rim,.03);
+   end();
+ }
+ function drawShaleGrub(e,T,ex,ey,now){
+   const t=begin(e,T,ex,ey,now),run=Math.min(1,Math.abs(e.vx)/.12);
+   ellipse(-.10,-.23,1.13,.22,P.deep);
+   ctx.beginPath();M(-1.23,-.30);Q(-.50,-.65,.90,-.39);stroke(P.glow,.12);
+   for(let i=0;i<5;i++){
+     const x=-1.05+i*.37,y=-.37+Math.sin(t*(2+run*5)-i*.85)*(.018+run*.035),h=.40+Math.sin(i*.57)*.27;
+     ctx.beginPath();M(x-.27,y);L(x-.36,y-h*.73);L(x-.06,y-h);L(x+.32,y-h*.74);L(x+.38,y-.04);L(x+.16,y+.13);ctx.closePath();fill(P.dark);
+     ctx.beginPath();M(x-.36,y-h*.73);L(x-.06,y-h);L(x+.32,y-h*.74);L(x+.17,y-h*.43);L(x-.15,y-h*.36);ctx.closePath();fill(P.base);
+     ctx.beginPath();M(x-.15,y-h*.36);L(x+.17,y-h*.43);L(x+.38,y-.04);L(x+.16,y+.13);ctx.closePath();fill(P.shade);
+     ctx.beginPath();M(fx>0?x-.31:x+.28,y-h*.73);L(x-.06,y-h+.015);stroke(P.rim,.028);
+     ctx.beginPath();M(x+.23,y-h*.64);L(x+.27,y-.10);stroke(P.glow,.029);
+   }
+   ctx.beginPath();M(.62,-.24);L(.71,-.81);L(1.12,-.75);L(1.40,-.44);L(1.13,-.18);ctx.closePath();fill(P.dark);
+   ctx.beginPath();M(.71,-.81);L(1.12,-.75);L(1.40,-.44);L(.89,-.49);ctx.closePath();fill(P.base);
+   ctx.beginPath();M(.73,-.79);L(1.09,-.73);stroke(P.rim,.035);
+   jaw(1.27,-.32,run*.6);eye(1.04,-.59,.085);
+   end();
+ }
+ function drawGlassGrub(e,T,ex,ey,now){
+   const t=begin(e,T,ex,ey,now),run=Math.min(1,Math.abs(e.vx)/.12),wave=Math.sin(t*3)*.055;
+   ctx.beginPath();M(-1.48,-.20);B(-.96,-.35,-1.05,-.88,-.35,-1.04+wave);B(.17,-1.17,.64,-.86,.95,-.52);L(.78,-.18);B(-.14,.02,-.73,-.12,-1.48,-.20);ctx.closePath();fill(P.deep);
+   ctx.globalAlpha=.75;
+   ctx.beginPath();M(-1.45,-.22);B(-.93,-.42,-1.04,-.88,-.35,-1.04+wave);B(.17,-1.17,.64,-.86,.95,-.52);L(.73,-.27);B(-.02,-.01,-.68,-.20,-1.45,-.22);ctx.closePath();fill(P.base);ctx.globalAlpha=1;
+   ctx.beginPath();M(-1.16,-.25);B(-.56,-.32,-.43,-.76,.34,-.45);L(.67,-.36);stroke(P.dark,.20);stroke(P.glow,.075);
+   for(let i=0;i<4;i++){const x=-.61+i*.30;ellipse(x,-.47-Math.sin(i*.8)*.10,.055+Math.sin(t*3-i)*.008,.075,P.rim);}
+   ctx.globalAlpha=.35;
+   ctx.beginPath();M(-.98,-.60);L(-.35,-1.04+wave);L(.18,-.94);L(-.22,-.66);ctx.closePath();fill(P.rim);ctx.globalAlpha=1;
+   ctx.beginPath();
+   for(let i=0;i<4;i++){let x=-.83+i*.34;M(x,-.67-Math.sin(i*.85)*.30);Q(x+.32,-.47,x+.12,-.19);}stroke(P.shade,.033);
+   ctx.beginPath();M(fx>0?-1.10:.64,fx>0?-.45:-.66);Q(-.25,-1.18,-.04,-1.02);stroke(P.rim,.027);
+   quad(.81,-.42,.34,.34,P.shade);
+   ctx.beginPath();M(.48,-.67);L(.69,-.89);L(1.02,-.69);L(.91,-.52);ctx.closePath();fill(P.light);
+   jaw(1.04,-.32,run);eye(.89,-.61,.085);
+   end();
+ }
+ function drawKnuckleGrub(e,T,ex,ey,now){
+   const t=begin(e,T,ex,ey,now),run=Math.min(1,Math.abs(e.vx)/.12),breathe=Math.sin(t*2.4)*.025;
+   ellipse(-.15,-.27,.95,.25,P.dark);
+   ctx.beginPath();M(-1.10,-.33);Q(-.94,-1.09,-.30,-1.21);Q(.32,-1.34,.64,-.42);L(.37,-.19);L(-.82,-.17);ctx.closePath();fill(P.base);
+   for(let i=0;i<4;i++){
+     const x=-.83+i*.37,y=-.46-Math.sin(i*.85)*.40+breathe,h=.46+Math.sin(i*.80)*.17;
+     quad(x,y,.34,h,P.dark);
+     ctx.beginPath();M(x-.34,y);L(x-.16,y-h);L(x+.18,y-h*.88);L(x+.05,y-h*.31);ctx.closePath();fill(fx>0?P.light:P.shade);
+     ctx.beginPath();M(x+.18,y-h*.88);L(x+.34,y-h*.25);L(x+.14,y+h*.19);L(x+.05,y-h*.31);ctx.closePath();fill(fx>0?P.shade:P.light);
+     ctx.beginPath();M(x-.25,y+.02);L(x-.08,y-.08);L(x+.14,y+.07);stroke(P.glow,.044);
+     ctx.beginPath();M(fx>0?x-.29:x+.29,y-h*.20);L(fx>0?x-.16:x+.18,y-h*.94);stroke(P.rim,.025);
+   }
+   const hx=.61+run*.19;
+   ellipse(hx-.10,-.37,.39,.30,P.shade);
+   ctx.beginPath();M(hx-.31,-.57);Q(hx-.12,-.71,hx+.06,-.61);stroke(P.glow,.045);
+   quad(hx+.19,-.33,.37,.39,P.dark);
+   ctx.beginPath();M(hx-.17,-.61);L(hx+.09,-.83);L(hx+.39,-.61);L(hx+.16,-.48);ctx.closePath();fill(P.base);
+   ctx.beginPath();M(hx-.13,-.62);L(hx+.09,-.80);stroke(P.rim,.028);
+   jaw(hx+.47,-.24,run*.85);eye(hx+.24,-.57,.085);
+   end();
+ }
+  const designs=[drawSeamGrub,drawGeodeGrub,drawShaleGrub,drawGlassGrub,drawKnuckleGrub];
+  return function drawCorewrightGrub(e,T,ex,ey,now) {
+   const v=e.grubVariant ?? T.grubVariant ?? 0;
+   variant=Number.isInteger(v)&&v>=0&&v<5?v:0;
+   P=palette(T);eyeColour=T.eye;
+   ctx.save();
+   try { designs[variant](e,T,ex,ey,now); }
+   finally { ctx.restore(); }
+  };
+}
+const drawGrub = createCorewrightGrubRenderer(ctx, ()=>TS, ()=>player.x);
+
 // Each kind gets its own silhouette so a threat reads at a glance — a borer's drill-head is not something
 // you mistake for a grub. All hand-drawn on the 2D world canvas; `hurtT` flashes them white on a hit.
 function drawEnemy(e,T,ex,ey,now){
   const flash=e.hurtT>0, body=flash?'#ffffff':T.col, fx=Math.sign(player.x-e.x)||1, r=T.r*TS;
   ctx.save();
   if (e.kind==='grub'){
-    const squish=solid(tileAt(e.x,e.y+0.14))?1:0.82;
-    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.8,r,r*squish,0,0,7); ctx.fill();
-    ctx.fillStyle=T.eye; ctx.fillRect(ex+fx*2-2,ey-r,4,4);
+    drawGrub(e,T,ex,ey,now);   // five crawling variants (grubVariant 0–4); ignores hurtT, no white flash
   } else if (e.kind==='spiker'){
     ctx.fillStyle=body; ctx.beginPath(); ctx.arc(ex,ey-r,r*0.8,0,7); ctx.fill();
     ctx.strokeStyle=body; ctx.lineWidth=2;

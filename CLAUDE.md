@@ -260,6 +260,22 @@ worth not re-breaking: the ground `grounded` probe reads `e.y+0.14`, not `+0.05`
 `+0.05` probe, so at `+0.05` ground types never register as grounded and never
 chase (which is why they used to "just sit there").
 
+**The grub family.** `kind:'grub'` is now five visual variants (`e.grubVariant`
+0–4: Seam, Geode/snail, Shale, Glass, Knuckle), drawn by an imported Canvas2D
+renderer (`createCorewrightGrubRenderer` → `drawGrub`, created once). Grubs are
+intercepted in `stepEnemies` by `kind==='grub'` *before* the `T.ai` switch (their
+`ai` field is now vestigial) and run `grubStep`: they **crawl** (continuous
+`grubCrawl`/`grubGrounded` fed to the renderer), never the old hop, and fall off
+ledges normally. An attack is a jaw wind-up→snap on `grubAttackP` (0→1); at the
+0.40 launch Seam(0)/Knuckle(4) leap, the rest lunge — damage still lands via the
+shared body-contact check (no separate bite-hit, so balance is unchanged). Grubs
+do **not** white-flash on hit (the renderer ignores `hurtT`; the shared HP bar
+shows damage). Variant 1 (Geode/snail) is the exception to gravity: `snailStep`
+hugs its surface via a cling normal `e.cn`, wraps ledges and heads **down walls**
+toward the player, and if it reaches a **ceiling within 3 tiles above the player**
+it detaches and drops — beyond 3 the ceiling doesn't trigger. Variants are rolled
+at spawn; enemies aren't saved so there's no `SAVE_VERSION` cost.
+
 **Lab.** A placed world structure with four wings (`LAB_WINGS`): Lapidary,
 Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
 `LAB_RECALL_DIST`.
