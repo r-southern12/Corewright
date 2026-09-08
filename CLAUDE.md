@@ -276,6 +276,19 @@ toward the player, and if it reaches a **ceiling within 3 tiles above the player
 it detaches and drops — beyond 3 the ceiling doesn't trigger. Variants are rolled
 at spawn; enemies aren't saved so there's no `SAVE_VERSION` cost.
 
+**The crawler family.** Same pattern as the grubs: `kind:'crawler'` is five visual
+variants (`e.crawlerVariant` 0–4: Shingleback, Rift Walker, Shield crawler,
+Glassback, Faultjaw) drawn by `createCorewrightCrawlerRenderer` → `drawCrawler`
+(created once). Crawlers keep the normal **walk** AI — `stepEnemies` intercepts
+`kind==='crawler'` and runs `crawlerStep`, which is the walk pursuit + `moveGround`
+(gravity, walls, `climb` ledge-hop) with no travel hops, feeding
+`crawlerGrounded`/`crawlerWalk` to the renderer. An attack is a grounded jaw pose
+on `crawlerAttackP` (the renderer maps each variant to its approved style — Rift
+*rears and strikes in place*, a pose, not a jump), and damage lands via the shared
+body-contact check (no separate bite-hit; balance unchanged). No white flash
+(renderer ignores `hurtT`). `stalker` also uses `ai:'walk'` but is NOT a crawler —
+it stays on the generic walk path, so the `kind==='crawler'` guard matters.
+
 **Lab.** A placed world structure with four wings (`LAB_WINGS`): Lapidary,
 Forge, Brewing, Suit & Systems. Recalled and re-landed if you wander past
 `LAB_RECALL_DIST`.

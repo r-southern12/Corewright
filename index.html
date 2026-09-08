@@ -12785,6 +12785,11 @@ function spawnEnemy(){
       en.grubAttackP=-1; en.grubGrounded=false; en.grubCrawl=0; en.grubCd=0.6+Math.random()*1.2;
       en.grubPhase=Math.random()*6.28; en.cn=null;         // cn = snail surface-cling normal (set on first snail step)
     }
+    if (kind==='crawler'){                                 // one of five crawler variants (0..4); walk AI, grounded attacks
+      en.crawlerVariant=Math.floor(Math.random()*5);
+      en.crawlerAttackP=-1; en.crawlerGrounded=false; en.crawlerWalk=0; en.crawlerCd=0.9+Math.random()*1.4;
+      en.crawlerPhase=Math.random()*6.28;
+    }
     enemies.push(en);
     return;
   }
@@ -12906,6 +12911,28 @@ function snailStep(e,T,dxp,dyp,distp,seen,dt){
   else if (!surfAhead){ e.tX+=h.x; e.tY+=h.y; e.cn={x:-h.x,y:-h.y}; }  // convex ledge: wrap around it
   else { e.tX+=h.x; e.tY+=h.y; }                           // straight along the surface
 }
+/* THE CRAWLER FAMILY — five variants of kind 'crawler', selected by e.crawlerVariant (0..4). These keep
+   the normal WALK AI (moveGround: pursue, gravity, climb ledge-hop) — no travel hops. An attack is a
+   grounded jaw pose driven by crawlerAttackP (0..1); the renderer maps each variant to its approved
+   attack style (Rift rears and strikes IN PLACE — a pose, not a jump). Damage stays on the shared
+   body-contact check below, so the bite lands as the head reaches (no double-hit, balance unchanged). */
+const CRAWLER_ATK_DUR=1.0;
+function crawlerStep(e,T,dxp,dyp,distp,seen,dt){
+  e.crawlerCd=Math.max(0,(e.crawlerCd||0)-dt);
+  if (e.crawlerAttackP>=0){
+    e.crawlerAttackP=Math.min(1,e.crawlerAttackP+dt/CRAWLER_ATK_DUR);
+    if (e.crawlerAttackP>=1){ e.crawlerAttackP=-1; e.crawlerCd=1.6+Math.random()*1.2; }
+  }
+  const attacking=e.crawlerAttackP>=0, grounded=solid(tileAt(e.x,e.y+0.14));
+  if (attacking){ e.vx*=0.6; }                              // hold ground through the rear / bite pose
+  else if (grounded){
+    e.vx=Math.sign(dxp)*T.speed*(seen?1:0.15);
+    if (seen && e.crawlerCd<=0 && distp<2.0 && Math.abs(dyp)<1.4) e.crawlerAttackP=0;
+  }
+  const g=moveGround(e,T);                                  // walk + climb ledge-hop (T.climb) + gravity + walls
+  e.crawlerGrounded=g;
+  e.crawlerWalk=(g&&!attacking)?Math.min(1,Math.abs(e.vx)/T.speed):0;
+}
 function killEnemy(e,T,i){
   for (let p=0;p<10;p++)
     particles.push({x:e.x,y:e.y-0.3,vx:(Math.random()-0.5)*0.18,vy:-Math.random()*0.15,life:24,col:T.col});
@@ -12928,6 +12955,8 @@ function stepEnemies(dt){
 
     if (e.kind==='grub'){
       grubStep(e,T,dxp,dyp,distp,seen,dt);                 // five crawling variants; snail (v1) hugs surfaces
+    } else if (e.kind==='crawler'){
+      crawlerStep(e,T,dxp,dyp,distp,seen,dt);              // five crawler variants; walk AI + grounded jaw attacks
     } else if (T.ai==='fly'){
       if (seen){ const s=T.speed, cap=s*2.4, w=0.8+0.4*Math.sin(e.wob+=dt*5);
         e.vx=Math.max(-cap,Math.min(cap, e.vx+Math.sign(dxp)*s*0.35*w));
@@ -13170,6 +13199,268 @@ function createCorewrightGrubRenderer(ctx, getTileSize, getPlayerX) {
 }
 const drawGrub = createCorewrightGrubRenderer(ctx, ()=>TS, ()=>player.x);
 
+/* ==== CRAWLER PACK — five crawler variants (imported renderer, CorewrightCrawlerPack). Pure Canvas2D;
+   reads e.crawlerVariant/crawlerAttackStyle/crawlerAttackP/crawlerGrounded/crawlerWalk/crawlerPhase and
+   T.col/T.eye/T.r. Created ONCE as drawCrawler below. Ignores hurtT (no white flash); HP bar shows damage. */
+function createCorewrightCrawlerRenderer(ctx,getTileSize,getPlayerX){
+  let P,T,selectedAttack=0;
+  const defaults=[0,3,1,0,2],cache=new WeakMap();
+ const configs=[
+   {legs:6,start:-.95,end:.78,hip:-.33,reach:.28,knee:.24,rate:6.1,stride:.20,bodyY:-.43},
+   {legs:8,start:-1.34,end:.94,hip:-.34,reach:.34,knee:.25,rate:8.3,stride:.24,bodyY:-.47},
+   {legs:4,start:-.83,end:.76,hip:-.43,reach:.37,knee:.29,rate:4.5,stride:.19,bodyY:-.53},
+   {legs:4,start:-.71,end:.61,hip:-.61,reach:.50,knee:.43,rate:6.8,stride:.26,bodyY:-.72},
+   {legs:6,start:-1.00,end:.87,hip:-.31,reach:.32,knee:.24,rate:8.7,stride:.22,bodyY:-.41}
+ ];
+ function mix(hex,target,k){const a=parseInt(hex.slice(1),16),b=parseInt(target.slice(1),16);return 'rgb('+Math.round((a>>16)*(1-k)+(b>>16)*k)+','+Math.round((a>>8&255)*(1-k)+(b>>8&255)*k)+','+Math.round((a&255)*(1-k)+(b&255)*k)+')';}
+ function getPalette(type){
+  let p=cache.get(type);
+  if(!p||p.body!==type.col){
+   if(!/^#[0-9a-f]{6}$/i.test(type.col))throw new TypeError('Crawler T.col must be six-digit hex.');
+   p={body:type.col,deep:mix(type.col,'#000000',.88),dark:mix(type.col,'#000000',.66),shade:mix(type.col,'#000000',.37),light:mix(type.col,'#ffffff',.32),rim:mix(type.col,'#ffffff',.66),vein:mix(type.col,'#ffffff',.48)};
+   cache.set(type,p);
+  }
+  return p;
+ }
+ let cfg,fx=1,variant=0,walk=0,phase=0,time=0,open=.13,brace=0,thrust=0;
+ let attacking=false,bodyPush=0,bunch=0,headReach=0,grip=0,attackStyle=0;
+ let rear=0,rearStrike=false;
+ function ease(a,b,p){const q=clamp((p-a)/(b-a));return q*q*(3-2*q);}
+ function windowPose(a,b,c,d,p){return ease(a,b,p)*(1-ease(c,d,p));}
+ function attackPose(p,style){
+   open=.12;bodyPush=0;bunch=0;headReach=0;grip=0;
+   if(variant===1&&style===3){
+     rearStrike=true;
+     rear=windowPose(.12,.35,.46,.55,p);
+     const strike=windowPose(.46,.54,.68,.90,p);
+     grip=windowPose(.10,.24,.73,.94,p);
+     bodyPush=-.06*rear+.47*strike;
+     open=clamp(.12+.80*ease(.17,.35,p)-.89*ease(.535,.565,p)+.09*ease(.80,.93,p));
+     return;
+   }
+   if(style===0){
+     const load=windowPose(.12,.32,.40,.48,p),hit=windowPose(.38,.44,.58,.83,p);
+     grip=windowPose(.13,.27,.64,.86,p);bunch=.17*load;
+     bodyPush=-.11*load+.35*hit;headReach=-.09*load+.14*hit;
+     open=.12+.72*ease(.16,.32,p)-.82*ease(.44,.47,p)+.10*ease(.74,.85,p);
+   }else if(style===1){
+     const reach=windowPose(.26,.42,.73,.90,p);
+     grip=windowPose(.13,.26,.76,.94,p);headReach=.48*reach;
+     bodyPush=-.055*grip;bunch=.045*grip;
+     open=.12+.76*ease(.16,.31,p)-.87*ease(.43,.55,p)+.31*ease(.73,.79,p)-.20*ease(.86,.95,p);
+   }else{
+     const hit1=windowPose(.29,.34,.38,.46,p),hit2=windowPose(.52,.57,.66,.86,p);
+     const load=windowPose(.13,.26,.29,.36,p);
+     grip=windowPose(.13,.25,.72,.90,p);bunch=.11*load;
+     bodyPush=-.075*load+.17*hit1+.37*hit2;headReach=.10*hit1+.16*hit2;
+     open=.12+.62*ease(.16,.27,p)-.70*ease(.34,.37,p)+.77*ease(.42,.50,p)-.78*ease(.57,.60,p)+.09*ease(.77,.88,p);
+   }
+   if(variant===2){bodyPush*=.65;headReach*=.42;bunch*=.20;}
+   if(variant===3){bodyPush*=1.25;headReach*=.80;bunch*=.35;}
+   if(variant===4){headReach*=.85;bunch*=.65;}
+   open=clamp(open);
+ }
+ const riftX=new Float64Array(8),riftY=new Float64Array(8),riftScale=new Float64Array(8);
+ const riftAngle=new Float64Array(8);
+ let riftHeadScale=1;
+ function prepareRift(){
+   riftHeadScale=1+.10*walk*Math.sin(phase);
+   for(let i=7;i>=0;i--){
+     const s=1+.30*walk*Math.sin(phase-(8-i)*.85);
+     riftScale[i]=s;
+     riftX[i]=i===7?1.14-.205*s:riftX[i+1]-.325*(s+riftScale[i+1])*.5;
+     riftY[i]=-.45+brace*.055;
+     riftAngle[i]=0;
+   }
+   if(rearStrike){
+     for(let i=0;i<8;i++){
+       const angle=-.88*rear*clamp((i-2)/5);
+       riftAngle[i]=angle;
+       if(i===0){riftX[i]=-1.34;riftY[i]=-.45;}
+       else{
+         riftX[i]=riftX[i-1]+.325*Math.cos(angle);
+         riftY[i]=riftY[i-1]+.325*Math.sin(angle);
+       }
+     }
+   }
+ }
+ function fill(c){ctx.fillStyle=c;ctx.fill();}
+ function stroke(c,w){ctx.strokeStyle=c;ctx.lineWidth=w;ctx.stroke();}
+ function ell(x,y,rx,ry,c){ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);fill(c);}
+ function clamp(n){return Math.max(0,Math.min(1,n));}
+ function bodyWave(x){return walk*Math.sin(phase-x*2.7)*.027;}
+ function begin(e,T,ex,ey,now){
+   cfg=configs[variant];fx=Math.sign(getPlayerX()-e.x)||1;time=now*.001;
+   walk=e.crawlerGrounded===false?0:clamp(Number.isFinite(e.crawlerWalk)?e.crawlerWalk:Math.abs(e.vx||0)/Math.max(.001,T.speed||.055));phase=time*cfg.rate+(e.crawlerPhase||0);brace=0;thrust=0;
+   attacking=Number.isFinite(e.crawlerAttackP)&&e.crawlerAttackP>=0&&e.crawlerAttackP<=1;attackStyle=selectedAttack;bodyPush=0;bunch=0;headReach=0;grip=0;rear=0;rearStrike=false;
+   open=.10+.065*(1+Math.sin(time*2.3));
+   const p=attacking?e.crawlerAttackP:-1;
+   if(p>=0){walk=0;attackPose(p,attackStyle);thrust=headReach/(1-bunch);}
+   if(variant===1)prepareRift();
+   ctx.save();ctx.translate(ex,ey);ctx.scale(T.r*getTileSize()*fx,T.r*getTileSize());ctx.lineJoin='round';ctx.lineCap='round';
+   legs(true);
+   ctx.save();ctx.translate(bodyPush,0);ctx.scale(1-bunch,1);
+ }
+ function finish(){ctx.restore();legs(false);ctx.restore();}
+ function legs(far){
+   const n=cfg.legs,offset=far?Math.PI:0,thick=variant===2?.074:variant===3?.043:.051;
+   for(let pass=0;pass<2;pass++){
+     ctx.beginPath();
+     for(let i=0;i<n;i++){
+       const sectionScale=variant===1?riftScale[i]:1;
+       const restHip=variant===1?riftX[i]:cfg.start+(cfg.end-cfg.start)*i/(n-1),side=i<n*.48?-1:1;
+       const hipX=restHip*(1-bunch)+bodyPush;
+       const legPhase=variant===1?phase-(8-i)*.85+offset:phase-i*.92+offset;
+       const q=((legPhase)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)/(Math.PI*2);
+       const stance=q<.64,a=stance?q/.64:(q-.64)/.36;
+       const sweep=walk*cfg.stride*(stance?1-2*a:-Math.cos(a*Math.PI))*sectionScale;
+       const lift=walk*(stance?0:Math.sin(a*Math.PI))*(variant===3?.23:.16)*sectionScale;
+       const bodyLift=rearStrike?riftY[i]+.45:0;
+       const hy=cfg.hip+bodyLift+brace*.075+(far?-.035:0),kx=hipX+side*cfg.reach*.65*sectionScale+sweep*.35;
+       let ky=hy*.60-cfg.knee*.14-lift*.25;
+       let footX=attacking?restHip+side*cfg.reach+grip*side*.05:hipX+side*cfg.reach*sectionScale+sweep+brace*side*.065;
+       let fy=-.018-lift-(far?.04:0);
+       if(rearStrike){
+         const fold=rear*clamp((i-2)/3);
+         footX=footX*(1-fold)+(hipX+side*.20)*fold;
+         fy=fy*(1-fold)+(hy+.20)*fold;
+         ky=hy*.55+fy*.45-.035;
+       }
+       const width=thick*sectionScale;
+       if(pass===0){
+         ctx.moveTo(hipX-width,hy);ctx.lineTo(kx-width,ky);ctx.lineTo(footX-.04*sectionScale,fy-.055*sectionScale);ctx.lineTo(footX+side*.105*sectionScale,fy);ctx.lineTo(footX+.025*sectionScale,fy+.007);ctx.lineTo(kx+width,ky+.035*sectionScale);ctx.lineTo(hipX+width,hy+.055*sectionScale);ctx.closePath();
+       }else{
+         ctx.moveTo(hipX,hy-.015);ctx.lineTo(kx,ky-.015);ctx.lineTo(footX,fy-.055);
+       }
+     }
+     if(pass===0)fill(far?P.deep:P.dark);else stroke(far?P.shade:P.light,far?.016:.024);
+   }
+ }
+ function antenna(x,y,len){
+   const a=Math.sin(time*2.6+variant)*.045+open*.065;
+   ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+len*.42,y-len*.28-a);ctx.lineTo(x+len,y-len*.10-a);stroke(P.dark,.045);
+   ctx.beginPath();ctx.moveTo(x+len*.42,y-len*.28-a);ctx.lineTo(x+len,y-len*.10-a);stroke(P.vein,.021);
+ }
+ function eye(x,y){ctx.beginPath();ctx.moveTo(x-.085,y-.025);ctx.lineTo(x+.085,y-.065);ctx.lineTo(x+.06,y+.04);ctx.lineTo(x-.065,y+.047);ctx.closePath();fill(T.eye);}
+ function plate(x,y,w,h,skew=0){
+   ctx.beginPath();ctx.moveTo(x-w,y+.035);ctx.lineTo(x-w*.88+skew,y-h*.69);ctx.lineTo(x-w*.12+skew,y-h);ctx.lineTo(x+w*.86,y-h*.67);ctx.lineTo(x+w,y-.005);ctx.lineTo(x+w*.27,y+.13);ctx.closePath();fill(P.dark);
+   ctx.beginPath();ctx.moveTo(x-w*.88+skew,y-h*.69);ctx.lineTo(x-w*.12+skew,y-h);ctx.lineTo(x+w*.86,y-h*.67);ctx.lineTo(x+w*.31,y-h*.42);ctx.lineTo(x-w*.46,y-h*.38);ctx.closePath();fill(P.body);
+   ctx.beginPath();ctx.moveTo(x-w*.46,y-h*.38);ctx.lineTo(x+w*.31,y-h*.42);ctx.lineTo(x+w,y-.005);ctx.lineTo(x+w*.27,y+.13);ctx.closePath();fill(P.shade);
+   ctx.beginPath();ctx.moveTo(fx>0?x-w*.83+skew:x+w*.79,y-h*.66);ctx.lineTo(x-w*.12+skew,y-h+.015);stroke(P.rim,.025);
+ }
+ function jaws(x,y,style){
+   const len=style===1?.58:style===4?.69:style===2?.44:.43;
+   ctx.save();ctx.translate(x+thrust,y+brace*.055);
+   ell(0,0,.16,.155,P.deep);
+   for(let side=-1;side<=1;side+=2){
+     ctx.save();ctx.rotate(side*(.09+open*(style===2?.47:.73)));
+     ctx.beginPath();ctx.moveTo(-.13,side*.015);ctx.lineTo(.04,side*.17);ctx.lineTo(len*.70,side*(style===1?.19:.14));ctx.lineTo(len,side*.035);ctx.lineTo(len*.76,-side*.065);ctx.lineTo(len*.55,side*.05);ctx.lineTo(.01,-side*.065);ctx.closePath();fill(side<0?P.body:P.shade);
+     ctx.beginPath();ctx.moveTo(-.04,side*.10);ctx.lineTo(.045,side*.17);ctx.lineTo(len*.70,side*(style===1?.19:.14));ctx.lineTo(len,side*.035);ctx.lineTo(len*.62,side*.08);ctx.closePath();fill(side<0?P.rim:P.light);
+     ctx.restore();
+   }
+   ell(-.05,0,.072,.083,P.dark);ctx.restore();
+ }
+ function head(x,y,w,h,style){
+   const hx=x+thrust;
+   if(attacking){
+     ctx.beginPath();ctx.moveTo(x-w*.55,y-.03);ctx.lineTo(hx-w*.35,y-.03);stroke(P.deep,.24);stroke(P.shade,.14);
+   }
+   ctx.save();ctx.translate(hx,y+brace*.06);
+   const feeler=style===0?.54:style===1?.70:style===3?.63:0;
+   if(feeler)antenna(-w*.35,-h*.87,feeler);
+   ctx.beginPath();ctx.moveTo(-w,-.05);ctx.lineTo(-w*.63,-h);ctx.lineTo(w*.37,-h*.93);ctx.lineTo(w,-h*.30);ctx.lineTo(w*.91,.10);ctx.lineTo(-w*.58,.15);ctx.closePath();fill(P.dark);
+   ctx.beginPath();ctx.moveTo(-w*.63,-h);ctx.lineTo(w*.37,-h*.93);ctx.lineTo(w,-h*.30);ctx.lineTo(-w*.32,-h*.38);ctx.closePath();fill(P.body);
+   ctx.beginPath();ctx.moveTo(-w*.59,-h+.015);ctx.lineTo(w*.33,-h*.90);stroke(P.rim,.024);
+   eye(w*.48,-h*.40);ctx.restore();
+   jaws(x+w*.88,y+.035,style);
+ }
+ function drawShingleback(e,T,ex,ey,now){
+   begin(e,T,ex,ey,now);
+   const b=brace*.08;
+   ell(-.08,-.41+b,1.03,.22,P.deep);
+   for(let i=0;i<6;i++){
+     const x=-.99+i*.34,y=-.40+b+bodyWave(x),h=.28+.60*Math.sin((i+1)/7*Math.PI);
+     plate(x,y,.31,h,.04);
+     ctx.beginPath();ctx.moveTo(x+.19,y-h*.60);ctx.lineTo(x+.22,y-.025);stroke(P.vein,.03);
+   }
+   head(.93,-.41+b,.27,.39,0);finish();
+ }
+ function drawRiftCentipede(e,T,ex,ey,now){
+   begin(e,T,ex,ey,now);
+   const tilt=riftAngle[7];
+   const hx=rearStrike?riftX[7]+.225*Math.cos(tilt):1.16;
+   const hy=rearStrike?riftY[7]+.225*Math.sin(tilt)+.04:-.41;
+   ctx.beginPath();ctx.moveTo(riftX[0]-.14*riftScale[0],riftY[0]);
+   for(let i=0;i<8;i++)ctx.lineTo(riftX[i],riftY[i]);
+   ctx.lineTo(hx-.04*Math.cos(tilt),hy-.02);stroke(P.deep,.23);stroke(P.vein,.071);
+   for(let i=0;i<8;i++){
+     const x=riftX[i],y=riftY[i],s=riftScale[i],h=(.28+.085*Math.sin(i*.5))*s;
+     ctx.save();ctx.translate(x,y);ctx.rotate(riftAngle[i]);
+     plate(0,0,.205*s,h,.035*s);
+     ctx.beginPath();ctx.moveTo(-.11*s,-h*.46);ctx.lineTo(.015*s,-.05*s);stroke(P.light,.023*s);ctx.restore();
+   }
+   ctx.save();ctx.translate(riftX[0],riftY[0]);ctx.scale(riftScale[0],riftScale[0]);
+   ctx.beginPath();ctx.moveTo(-.14,0);ctx.lineTo(-.45,-.12);ctx.lineTo(-.26,.14);ctx.moveTo(-.12,.07);ctx.lineTo(-.37,.26);stroke(P.shade,.038);ctx.restore();
+   if(rearStrike){
+     ctx.save();ctx.translate(hx,hy);ctx.rotate(tilt);head(0,0,.25,.38,1);ctx.restore();
+   }else{
+     const headX=1.16+thrust,headY=-.41+brace*.06;
+     ctx.save();ctx.translate(headX,headY);ctx.scale(riftHeadScale,riftHeadScale);ctx.translate(-headX,-headY);
+     head(1.16,-.41,.25,.38,1);ctx.restore();
+   }
+   finish();
+ }
+ function drawShieldCrawler(e,T,ex,ey,now){
+   begin(e,T,ex,ey,now);const y=-.46+brace*.07;
+   ell(-.05,y,1.02,.20,P.deep);
+   for(let i=0;i<3;i++)plate(-.85+i*.27,y,.32,.38+i*.12,-.045);
+   ctx.beginPath();ctx.moveTo(-.61,y-.20);ctx.lineTo(-.69,y-.68);ctx.lineTo(-.30,y-.91);ctx.lineTo(.41,y-.94);ctx.lineTo(.94,y-.57);ctx.lineTo(1.17,y-.10);ctx.lineTo(.60,y+.13);ctx.lineTo(-.45,y+.10);ctx.closePath();fill(P.dark);
+   ctx.beginPath();ctx.moveTo(-.69,y-.68);ctx.lineTo(-.30,y-.91);ctx.lineTo(.41,y-.94);ctx.lineTo(.94,y-.57);ctx.lineTo(.16,y-.49);ctx.lineTo(-.43,y-.36);ctx.closePath();fill(P.body);
+   ctx.beginPath();ctx.moveTo(.16,y-.49);ctx.lineTo(.94,y-.57);ctx.lineTo(1.17,y-.10);ctx.lineTo(.60,y+.13);ctx.lineTo(-.45,y+.10);ctx.lineTo(-.43,y-.36);ctx.closePath();fill(P.shade);
+   ctx.beginPath();ctx.moveTo(-.64,y-.68);ctx.lineTo(-.29,y-.87);ctx.lineTo(.39,y-.90);stroke(P.rim,.035);
+   ctx.beginPath();ctx.moveTo(.04,y-.83);ctx.lineTo(.16,y-.49);ctx.lineTo(.02,y-.20);ctx.lineTo(.24,y+.02);stroke(P.vein,.036);
+   ctx.beginPath();ctx.moveTo(-.22,y-.39);ctx.lineTo(-.06,y-.13);ctx.moveTo(.39,y-.40);ctx.lineTo(.64,y-.15);stroke(P.dark,.054);
+   head(.95,y-.02,.27,.27,2);finish();
+ }
+ function drawGlassback(e,T,ex,ey,now){
+   begin(e,T,ex,ey,now);const y=-.62+brace*.07+Math.sin(time*2.4)*.014;
+   ctx.beginPath();ctx.moveTo(-1.02,y);ctx.lineTo(-.83,y-.42);ctx.lineTo(-.34,y-.78);ctx.lineTo(.24,y-.67);ctx.lineTo(.73,y-.25);ctx.lineTo(.61,y+.13);ctx.lineTo(-.61,y+.17);ctx.closePath();fill(P.deep);
+   ctx.globalAlpha=.82;
+   ctx.beginPath();ctx.moveTo(-1.02,y);ctx.lineTo(-.83,y-.42);ctx.lineTo(-.34,y-.78);ctx.lineTo(.24,y-.67);ctx.lineTo(.73,y-.25);ctx.lineTo(.61,y+.13);ctx.lineTo(-.61,y+.17);ctx.closePath();fill(P.body);ctx.globalAlpha=1;
+   ctx.beginPath();ctx.moveTo(-.83,y-.42);ctx.lineTo(-.34,y-.78);ctx.lineTo(-.20,y-.30);ctx.lineTo(-.57,y-.12);ctx.closePath();fill(fx>0?P.light:P.shade);
+   ctx.beginPath();ctx.moveTo(-.34,y-.78);ctx.lineTo(.24,y-.67);ctx.lineTo(.73,y-.25);ctx.lineTo(-.20,y-.30);ctx.closePath();fill(P.shade);
+   ctx.beginPath();ctx.moveTo(-.78,y+.01);ctx.lineTo(-.20,y-.30);ctx.lineTo(.48,y-.04);stroke(P.dark,.075);stroke(P.vein,.031);
+   ctx.beginPath();ctx.moveTo(-.40,y-.31);ctx.lineTo(-.18,y-.56);ctx.lineTo(.02,y-.29);ctx.lineTo(-.13,y-.08);ctx.closePath();fill(P.vein);
+   ctx.beginPath();ctx.moveTo(-.18,y-.56);ctx.lineTo(-.10,y-.27);ctx.lineTo(-.13,y-.08);ctx.lineTo(.02,y-.29);ctx.closePath();fill(P.rim);
+   ctx.beginPath();ctx.moveTo(fx>0?-.96:.65,y-.03);ctx.lineTo(fx>0?-.79:.22,y-.41);ctx.lineTo(-.34,y-.74);stroke(P.rim,.026);
+   head(.79,y+.045,.26,.34,3);finish();
+ }
+ function drawFaultjaw(e,T,ex,ey,now){
+   begin(e,T,ex,ey,now);const y=-.34+brace*.045;
+   ctx.beginPath();ctx.moveTo(-1.47,y);ctx.lineTo(-.87,y-.30);ctx.lineTo(.78,y-.25);ctx.lineTo(1.09,y-.04);ctx.lineTo(.49,y+.11);ctx.lineTo(-.84,y+.10);ctx.closePath();fill(P.deep);
+   for(let i=0;i<5;i++){
+     const x=-1.0+i*.35,yy=y+bodyWave(x),h=.25+Math.sin((i+1)*.49)*.26;
+     ctx.beginPath();ctx.moveTo(x-.41,yy+.06);ctx.lineTo(x-.24,yy-h*.53);ctx.lineTo(x+.04,yy-h);ctx.lineTo(x+.34,yy-h*.74);ctx.lineTo(x+.24,yy);ctx.lineTo(x-.07,yy+.14);ctx.closePath();fill(P.dark);
+     ctx.beginPath();ctx.moveTo(x-.41,yy+.06);ctx.lineTo(x+.04,yy-h);ctx.lineTo(x+.34,yy-h*.74);ctx.lineTo(x+.02,yy-.12);ctx.closePath();fill(P.body);
+     ctx.beginPath();ctx.moveTo(x-.30,yy-.025);ctx.lineTo(x+.04,yy-h+.018);ctx.lineTo(x+.28,yy-h*.72);stroke(P.rim,.025);
+     ctx.beginPath();ctx.moveTo(x+.24,yy-h*.50);ctx.lineTo(x+.17,yy-.04);stroke(P.vein,.029);
+   }
+   head(.99,y-.045,.29,.34,4);finish();
+ }
+ const draw=[drawShingleback,drawRiftCentipede,drawShieldCrawler,drawGlassback,drawFaultjaw];
+ return function drawCorewrightCrawler(e,type,ex,ey,now){
+  T=type;P=getPalette(type);
+  const v=e.crawlerVariant??type.crawlerVariant??0;
+  variant=Number.isInteger(v)&&v>=0&&v<5?v:0;
+  const a=e.crawlerAttackStyle??defaults[variant];
+  selectedAttack=Number.isInteger(a)&&a>=0&&a<=2?a:(a===3&&variant===1?3:defaults[variant]);
+  ctx.save();
+  try { draw[variant](e,type,ex,ey,now); }
+  finally { ctx.restore(); }
+ };
+}
+const drawCrawler = createCorewrightCrawlerRenderer(ctx, ()=>TS, ()=>player.x);
+
 // Each kind gets its own silhouette so a threat reads at a glance — a borer's drill-head is not something
 // you mistake for a grub. All hand-drawn on the 2D world canvas; `hurtT` flashes them white on a hit.
 function drawEnemy(e,T,ex,ey,now){
@@ -13185,12 +13476,7 @@ function drawEnemy(e,T,ex,ey,now){
       ctx.lineTo(ex+Math.cos(a)*r*1.25,ey-r+Math.sin(a)*r*1.25); ctx.stroke(); }
     ctx.fillStyle=T.eye; ctx.fillRect(ex-2,ey-r-2,4,4);
   } else if (e.kind==='crawler'){
-    // a low segmented body with little scurrying legs
-    ctx.strokeStyle=body; ctx.lineWidth=2;
-    for (let l=-1;l<=1;l++){ const lx=ex+l*r*0.5, lp=Math.sin(now*0.02+l)*r*0.3;
-      ctx.beginPath(); ctx.moveTo(lx,ey-r*0.5); ctx.lineTo(lx-lp,ey); ctx.stroke(); }
-    ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(ex,ey-r*0.7,r*1.15,r*0.6,0,0,7); ctx.fill();
-    ctx.fillStyle=T.eye; ctx.fillRect(ex+fx*(r*0.7)-2,ey-r*0.8,3,3);
+    drawCrawler(e,T,ex,ey,now);   // five crawler variants (crawlerVariant 0–4); ignores hurtT, no white flash
   } else if (e.kind==='flitter'){
     // a mote with two beating wings
     const beat=0.5+0.5*Math.abs(Math.sin(now*0.02));
