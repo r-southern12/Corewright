@@ -2629,8 +2629,8 @@ const FORGE_TEMPLATES=[
   {id:'drillBit',   part:'bit',      shape:'bit',        label:'Drill Bit',            desc:'the cutting edge that bites the stone'},
   {id:'mortar',     part:'brew',     shape:'mortar',     pair:'pestle', label:'Mortar & Pestle',      desc:'a brewing vessel — houses a power core. Two parts: forge the cup AND the pestle (toggle in the press)'},
   {id:'calcinator', part:'brew',     shape:'calcinator', label:'Calcinator',           desc:'a brewing dish — houses a power core'},
-  {id:'wardFrame',  part:'suitFrame', system:'forgePrism', label:'Elemental Ward Frame', desc:'a suit frame carrying the elemental ward'},
-  {id:'aegisFrame', part:'suitFrame', system:'alembic',    label:'Aegis Plate Frame',    desc:'a suit frame — the armour plating'},
+  {id:'wardFrame',  part:'suitFrame', system:'forgePrism', shape:'ward',  label:'Elemental Ward Frame', desc:'a warded boss — the ward prism sets into the crown'},
+  {id:'aegisFrame', part:'suitFrame', system:'alembic',    shape:'aegis', label:'Aegis Plate Frame',    desc:'a domed buckler — the aegis torus seats in the race'},
   {id:'scanFrame',  part:'suitFrame', system:'coil',       label:'Scanner Frame',        desc:'a suit frame to mount the scanning coil'},
   {id:'lifeFrame',  part:'suitFrame', system:'life',       label:'Life Frame',           desc:'a suit frame for the air system'}
 ];
@@ -15817,6 +15817,31 @@ const CALC_CAV=[[-1,0],[1,5.0],[3,7.0],[8.7,7.0]];                              
 const CALC_SOCK_PY=5.0;
 const _calcBodyP=(px,py,pz)=> py>=-CALC_HY-0.01 && py<=8.6+0.01 && Math.hypot(px,pz)<=_vprof(CALC_OUT,py)+0.4;
 const _calcSeat=(px,py,pz)=>{ if (py<-1.01||py>8.7) return false; return Math.hypot(px,pz)<=_vprof(CALC_CAV,py); };
+// ---------- SUIT FRAMES: forged the same way (a revolved chunky body + a real core seat) but NOT vessels ----------
+// The Ward and Aegis frames are NOT the drill-housing box. Each is a round forged plate the suit's core
+// mounts into, revolved (lathe ghost) so a turn never sheds it and thick-walled so the melt actually fills
+// it. The seat is the suit's OWN core component (prism / torus), so the recess reflects the alloy bonus
+// exactly like the drill frame: forgeAlloySeatFrac counts alloy cells lining that void, and a crown-open
+// seat lets a final ALLOY pour run down the seat walls and coat it -> resonance with a matching core.
+// WARD FRAME — a round warded BOSS: a stepped plate with the octahedral Ward Prism set point-DOWN into a
+// bezel at its crown (gem-setting fashion). The lower pyramid sits embedded in the crown (the bezel walls
+// are the seat), the upper pyramid stands proud as the visible ward. Alloy poured over the crown runs down
+// the four bezel faces and lines the socket. Chunky by design so the pour fills it; no thin necks.
+const WARD_HY=6;
+const WARD_OUT=[[-6,6.6],[-5,8.8],[-3.4,8.8],[-3,7.3],[0,7.1],[2,8.6],[5,8.6],[6,8.1]];   // base -> flared foot -> waist -> flared crown rim
+const WARD_SOCK_PY=6;                                    // prism centre AT the crown: bezel below (embedded, the seat), gem above (proud)
+const _PRISM_R=1.55*SEAT_PER;                            // octahedron centre-to-point in cells (~6.6) — for the insert-mouth ring
+const _wardBodyP=(px,py,pz)=> py>=-WARD_HY-0.01 && py<=WARD_HY+0.01 && Math.hypot(px,pz)<=_vprof(WARD_OUT,py)+0.4;
+// AEGIS FRAME — a round AEGIS BUCKLER: a shallow domed shield-plate with a raised central hub and a broad
+// outer rim, and an annular RACE between them where the ring-shaped Aegis Torus seats. The torus void alone
+// would be buried under the dome, so _aegisSeat opens the race UP to the crown (an annular slot at the ring
+// radius): a top-down pour of alloy reaches the groove and lines the ring. Thick dome, no wire spokes.
+const AEGIS_HY=6;
+const AEGIS_OUT=[[-6,5.5],[-5,9.6],[-3,9.8],[-1,9.6],[1.5,9.0],[3,8.4],[4.5,7.2],[5.5,5.6],[6,4.0]];  // underside -> broad rim -> shallow dome to a small hub
+const AEGIS_SOCK_PY=1.6;                                 // torus lies at mid-height; the race opens up through the dome to the crown
+const _TORUS_MAJ=0.95*SEAT_PER, _TORUS_TUBE=0.45*SEAT_PER;  // ring radius (~4.1) and tube (~1.9) in cells
+const _aegisBodyP=(px,py,pz)=> py>=-AEGIS_HY-0.01 && py<=AEGIS_HY+0.01 && Math.hypot(px,pz)<=_vprof(AEGIS_OUT,py)+0.4;
+const _aegisSeat=(px,py,pz)=>{ const r=Math.hypot(px,pz); return py>=AEGIS_SOCK_PY-0.01 && py<=AEGIS_HY+0.6 && Math.abs(r-_TORUS_MAJ)<=_TORUS_TUBE; };   // annular race, open at the crown
 // hx/hy/hz are the FLOOR-REST/turn bounds (the tight body). castHx/castHy/castHz are the REORIENT
 // bounds: the box a turn treats as "part of the cast that rides the rotation". For the bit these must
 // clear the PROUD spiral thread (which reaches RMAX+PROUD, past the shank hx) — otherwise the thread
@@ -15837,6 +15862,10 @@ const FORGE_SHAPES={
     insert:{c:[_vprof(MORT_OUT,MORT_SOCK_PY),MORT_SOCK_PY,0], axis:[1,0,0], r:_MORT_THROAT_R, depth:_vprof(MORT_OUT,MORT_SOCK_PY)-VCORE_R}},   // core slides in the +x SIDE
   pestle:{hx:5, hy:PEST_HY, hz:5, castHx:5.4, castHy:8.4, castHz:5.4, bodyP:_pestBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:-100, noSeat:true, ghost:'lathe', ghostP:PEST_OUT, oreFixed:4, bowlDrop:0.6},
   calcinator:{hx:10.4, hy:CALC_HY, hz:10.4, castHx:10.8, castHy:CALC_HY+0.6, castHz:10.8, bodyP:_calcBodyP, socketComp:'cell', socketPer:SEAT_PER, socketPy:CALC_SOCK_PY, seatExtra:_calcSeat, ghost:'lathe', ghostP:CALC_OUT, oreFixed:7, oreVoid:200},
+  ward:{hx:8.8, hy:WARD_HY, hz:8.8, castHx:9.2, castHy:9.2, castHz:9.2, bodyP:_wardBodyP, socketComp:'prism', socketPer:SEAT_PER, socketPy:WARD_SOCK_PY, ghost:'lathe', ghostP:WARD_OUT, bowlDrop:0.6,
+    insert:{c:[0,WARD_HY,0], axis:[0,1,0], r:_PRISM_R, depth:_PRISM_R}},                                        // prism drops in point-down from the crown
+  aegis:{hx:9.8, hy:AEGIS_HY, hz:9.8, castHx:10.2, castHy:10.2, castHz:10.2, bodyP:_aegisBodyP, socketComp:'torus', socketPer:SEAT_PER, socketPy:AEGIS_SOCK_PY, seatExtra:_aegisSeat, ghost:'lathe', ghostP:AEGIS_OUT, bowlDrop:0.6,
+    insert:{c:[0,AEGIS_HY,0], axis:[0,1,0], r:_TORUS_MAJ, depth:AEGIS_HY-AEGIS_SOCK_PY+_TORUS_TUBE}},           // ring drops into the annular race from the crown
 };
 function forgeShape(){ const id=forgePart&&(forgePart.shape||(forgePart.part==='bit'?'bit':'box')); return FORGE_SHAPES[id]||FORGE_SHAPES.box; }
 // Socket test in the PART frame: the core's own component inside() (so a sphere/cube drops in as data),
